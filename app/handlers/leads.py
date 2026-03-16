@@ -7,6 +7,7 @@ Handles /start with campaign parameter and normal messages; returns reply text.
 
 import logging
 from datetime import datetime
+from typing import Optional, Tuple
 
 from sqlalchemy.orm import Session
 
@@ -16,7 +17,7 @@ from app.config import WELCOME_MESSAGE, MESSAGE_REPLY
 logger = logging.getLogger(__name__)
 
 
-def extract_start_source(text: str | None) -> str | None:
+def extract_start_source(text: Optional[str]) -> Optional[str]:
     """
     Extract campaign source from /start command.
     Telegram sends '/start vip' when user opens t.me/BOT?start=vip.
@@ -29,7 +30,7 @@ def extract_start_source(text: str | None) -> str | None:
     return parts[1].strip() or None
 
 
-def is_start_command(text: str | None) -> bool:
+def is_start_command(text: Optional[str]) -> bool:
     """Return True if the message is a /start command."""
     if not text or not text.strip():
         return False
@@ -39,8 +40,8 @@ def is_start_command(text: str | None) -> bool:
 def ensure_user(
     db: Session,
     user_id: int,
-    username: str | None,
-    source: str | None,
+    username: Optional[str],
+    source: Optional[str],
 ) -> User:
     """
     Get or create a user by Telegram user_id. Updates last_seen and optionally
@@ -70,7 +71,7 @@ def ensure_user(
     return user
 
 
-def record_message(db: Session, user_id: int, message_text: str | None) -> Message:
+def record_message(db: Session, user_id: int, message_text: Optional[str]) -> Message:
     """Insert a new message for the given user."""
     msg = Message(user_id=user_id, message_text=message_text or "")
     db.add(msg)
@@ -79,7 +80,7 @@ def record_message(db: Session, user_id: int, message_text: str | None) -> Messa
     return msg
 
 
-def process_lead_update(update: dict, db: Session) -> tuple[str | None, int | None]:
+def process_lead_update(update: dict, db: Session) -> Tuple[Optional[str], Optional[int]]:
     """
     Process one Telegram update that contains a private-chat message.
     Performs DB writes and returns (reply_text, chat_id).
@@ -111,4 +112,5 @@ def process_lead_update(update: dict, db: Session) -> tuple[str | None, int | No
     # Normal message: ensure user exists (may have started without /start param)
     ensure_user(db, user_id, username, None)
     record_message(db, user_id, text)
+    logger.info("Lead recorded (user_id=%s)", user_id)
     return MESSAGE_REPLY, chat_id

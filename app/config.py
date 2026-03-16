@@ -20,6 +20,9 @@ WEBHOOK_SECRET: str = os.getenv("WEBHOOK_SECRET", "").strip()
 # Database: empty = SQLite for local dev
 DATABASE_URL: str = os.getenv("DATABASE_URL", "").strip()
 
+# Server port (for gunicorn/uvicorn: -b 0.0.0.0:$PORT)
+PORT: str = os.getenv("PORT", "8000").strip() or "8000"
+
 # Signal mirroring: source channel (Signal Feed) and destination VIP channels
 SOURCE_CHANNEL_ID: str = os.getenv("SOURCE_CHANNEL_ID", "").strip()
 _DESTINATION_RAW: str = os.getenv("DESTINATION_CHANNEL_IDS", "").strip()

@@ -6,7 +6,7 @@ Handles errors per channel so one failure does not stop the rest.
 """
 
 import logging
-from typing import List
+from typing import List, Optional
 
 import requests
 
@@ -56,7 +56,7 @@ def copy_message(
 def copy_signal_to_all_destinations(
     source_channel_id: str,
     message_id: int,
-    destination_channel_ids: List[str] | None = None,
+    destination_channel_ids: Optional[List[str]] = None,
 ) -> None:
     """
     Copy the given message to each destination channel. Logs and continues

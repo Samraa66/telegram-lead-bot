@@ -6,7 +6,7 @@ from SOURCE_CHANNEL_ID and copies them to all VIP destination channels.
 """
 
 import logging
-from typing import Optional
+from typing import Optional, Tuple
 
 from app.config import SOURCE_CHANNEL_ID, DESTINATION_CHANNEL_IDS
 from app.services.forwarding import copy_signal_to_all_destinations
@@ -19,10 +19,14 @@ def _get_channel_post(update: dict) -> Optional[dict]:
     post = update.get("channel_post")
     if post is not None:
         return post
-    return update.get("edited_channel_post")
+    edited = update.get("edited_channel_post")
+    if edited is not None:
+        logger.debug("Edited channel post received; processing as signal")
+        return edited
+    return None
 
 
-def _get_chat_id_and_message_id(post: dict) -> tuple[Optional[str], Optional[int]]:
+def _get_chat_id_and_message_id(post: dict) -> Tuple[Optional[str], Optional[int]]:
     """Extract chat_id and message_id from a channel post. chat_id as string for API."""
     if not post:
         return None, None
