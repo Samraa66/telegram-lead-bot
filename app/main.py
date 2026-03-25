@@ -74,15 +74,22 @@ async def webhook(request: Request, db: Session = Depends(get_db)):
     logger.info("Webhook received (update_id=%s)", update_id)
 
     try:
-        # Route by update type; run sync handlers in thread pool to avoid blocking event loop
+        # Route by update type.
+        #
+        # IMPORTANT: lead tracking uses a synchronous SQLAlchemy session (`db`).
+        # Passing that session into another thread can break DB writes (especially with SQLite).
+        # So we keep DB work in this request thread, and only move outbound HTTP calls to a thread.
         if body.get("message") is not None:
-            reply_text, chat_id = await asyncio.to_thread(process_lead_update, body, db)
+            reply_text, chat_id = process_lead_update(body, db)
             if reply_text and chat_id is not None:
-                await asyncio.to_thread(send_message, chat_id, reply_text)
+                loop = asyncio.get_running_loop()
+                await loop.run_in_executor(None, send_message, chat_id, reply_text)
             return {"ok": True}
 
         if body.get("channel_post") is not None or body.get("edited_channel_post") is not None:
-            await asyncio.to_thread(process_signal_update, body)
+            # Signal forwarding performs outbound HTTP calls only; safe to run in a thread.
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, process_signal_update, body)
             return {"ok": True}
 
         # Other update types (e.g. callback_query) — acknowledge and ignore

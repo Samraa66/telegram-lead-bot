@@ -31,6 +31,7 @@ project/
     telegram-bot.service.example   # systemd unit for VPS
   scripts/
     send_message.py     # Send a message via the bot
+    set_webhook.py      # Set/remove webhook (for local testing)
 ```
 
 ## 1. Install dependencies
@@ -71,18 +72,77 @@ For **signal mirroring** the bot must be able to read from the source channel an
 
 To receive `channel_post` updates from a channel, the bot must be added to that channel. Telegram sends updates when someone posts in the channel.
 
-## 3. Run locally
+## 3. Test the bot locally (no VPS)
+
+You can test **lead tracking** with only a tunnel (e.g. ngrok) and `BOT_TOKEN`. Signal mirroring needs channels configured too.
+
+### Step 1 — Minimal `.env` for local testing
+
+In your project folder, ensure `.env` has at least:
+
+- **BOT_TOKEN** — from [@BotFather](https://t.me/BotFather) (required).
+- **WEBHOOK_URL** — leave empty for now; you’ll set it to your ngrok URL in Step 3.
+- **DATABASE_URL** — leave empty to use SQLite (`leadbot.db` in the project root).
+- **SOURCE_CHANNEL_ID** / **DESTINATION_CHANNEL_IDS** — only needed to test signal mirroring; can stay empty to test leads only.
+
+### Step 2 — Start the app
 
 ```bash
+cd /path/to/Telegram_bot
+source venv/bin/activate   # or: venv\Scripts\activate on Windows
 uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
-For webhooks you need a public URL. Example with ngrok:
+Leave this terminal open. You should see something like: `Application startup complete`.
+
+### Step 3 — Expose your machine with ngrok
+
+Telegram must send webhooks to a **public HTTPS** URL. Use [ngrok](https://ngrok.com/) (free tier is enough):
+
+1. Install ngrok: `brew install ngrok` (macOS) or download from ngrok.com.
+2. In a **second terminal** run:
+   ```bash
+   ngrok http 8000
+   ```
+3. Copy the **HTTPS** URL ngrok shows (e.g. `https://abc123.ngrok-free.app`). Do **not** add `/webhook` — the script adds it.
+
+### Step 4 — Point Telegram to your app
+
+In a third terminal (or after stopping the server temporarily), from the project folder:
 
 ```bash
-ngrok http 8000
-# Set WEBHOOK_URL to the https URL (e.g. https://abc123.ngrok.io)
+source venv/bin/activate
+python scripts/set_webhook.py https://YOUR-NGROK-URL.ngrok-free.app
 ```
+
+Replace with your actual ngrok URL (no trailing slash). If you use `WEBHOOK_SECRET` in `.env`, the script sends it to Telegram automatically.
+
+To remove the webhook later (e.g. before deploying to VPS):
+
+```bash
+python scripts/set_webhook.py --delete
+```
+
+### Step 5 — Test lead tracking
+
+1. In Telegram, open your bot (search by username or use the link from BotFather).
+2. Send **/start** — you should get the welcome message and see logs like: `Received lead message`, `Webhook received`.
+3. Send any other message — you should get “Thanks, your request was sent.” and see `Lead recorded` in the logs.
+4. Check that data was stored:
+   ```bash
+   curl http://localhost:8000/stats/today
+   curl http://localhost:8000/health
+   ```
+
+### Step 6 — (Optional) Test signal mirroring
+
+You need a **Signal Feed** channel and at least one **VIP** channel, with the bot added as admin in both.
+
+1. Set `SOURCE_CHANNEL_ID` and `DESTINATION_CHANNEL_IDS` in `.env` (comma-separated IDs).
+2. Restart the app (Step 2). Keep ngrok running and webhook set (same URL).
+3. Post a message in the Signal Feed channel — it should be copied to the VIP channel(s). Logs: `Received signal from Signal Feed`, `Copied signal to VIP channel`.
+
+---
 
 ## 4. Set the webhook
 
@@ -128,6 +188,35 @@ git push -u origin main
 3. **Set secrets for deployment**: In your repo go to **Settings → Secrets and variables → Actions** (or use your host’s env/config) and add `BOT_TOKEN`, `WEBHOOK_URL`, `WEBHOOK_SECRET`, `DATABASE_URL`, `SOURCE_CHANNEL_ID`, `DESTINATION_CHANNEL_IDS` so they are not in the code.
 
 ## 6. Deploy on a VPS (Ubuntu)
+
+**VPS already set up?** Use it directly — no ngrok. SSH into the server and do the following. Your **WEBHOOK_URL** is your VPS domain with HTTPS (e.g. `https://yourdomain.com`). Once the app is running and the webhook is set, anyone (e.g. your friend) can message the bot and it will work.
+
+### Quick steps on the VPS
+
+1. **Install** on the server: Python 3.9+, pip, venv; Nginx (or Caddy) with SSL for your domain. PostgreSQL optional (leave `DATABASE_URL` empty for SQLite).
+2. **Clone and install** (use your repo URL):
+   ```bash
+   cd /opt && sudo git clone https://github.com/Samraa66/telegram-lead-bot.git telegram-bot && cd telegram-bot
+   sudo chown -R $USER:$USER /opt/telegram-bot
+   python3 -m venv venv && source venv/bin/activate
+   pip install -r requirements.txt
+   ```
+3. **Configure** `.env`: `cp .env.example .env`, then set at least **BOT_TOKEN** and **WEBHOOK_URL** (your VPS HTTPS URL, e.g. `https://yourdomain.com`). Leave `DATABASE_URL` empty for SQLite.
+4. **Run the app** (for testing you can run in the foreground; for production use systemd):
+   ```bash
+   gunicorn app.main:app -w 1 -k uvicorn.workers.UvicornWorker -b 0.0.0.0:8000
+   ```
+   If you use Nginx, point it to `http://127.0.0.1:8000` and ensure your domain has SSL (e.g. Let’s Encrypt).
+5. **Set the webhook** (from your laptop or the VPS, replace with your real BOT_TOKEN and WEBHOOK_URL):
+   ```bash
+   python scripts/set_webhook.py https://yourdomain.com
+   ```
+   Or in a browser: `https://api.telegram.org/bot<BOT_TOKEN>/setWebhook?url=https://yourdomain.com/webhook`
+6. **Test**: Have your friend (or you) open the bot in Telegram, send `/start` and a message. Check `curl https://yourdomain.com/health` and `curl https://yourdomain.com/stats/today`.
+
+---
+
+### Full deployment details
 
 1. **Install** on the server: Python 3.9+, pip, venv; PostgreSQL (optional); Nginx or Caddy for SSL.
 2. **Clone and install**: `cd /opt && sudo git clone <YOUR_REPO> telegram-bot && cd telegram-bot`, then `python3 -m venv venv && source venv/bin/activate && pip install -r requirements.txt`.
