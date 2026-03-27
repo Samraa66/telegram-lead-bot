@@ -47,8 +47,9 @@ function leadNameFromUsername(username: string | null, id: number): string {
   return base || `User ${id}`;
 }
 
-export async function fetchContacts(): Promise<Lead[]> {
-  const contacts = (await apiFetch("/contacts")) as ContactDto[];
+export async function fetchContacts(includeNoise = false): Promise<Lead[]> {
+  const path = includeNoise ? "/contacts?include_noise=true" : "/contacts";
+  const contacts = (await apiFetch(path)) as ContactDto[];
   return contacts.map((c) => {
     const username = c.username ? `@${String(c.username).replace(/^@/, "")}` : `@user_${c.id}`;
     const lastTs = c.last_message_at || new Date().toISOString();

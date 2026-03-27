@@ -35,6 +35,8 @@ export function LeadList({ leads, selectedLeadId, onSelectLead }: LeadListProps)
 
   const filtered = leads
     .filter((l) => {
+      // Noise contacts are only shown when the Noise tab is explicitly selected
+      if (classFilter === "all" && l.classification === "noise") return false;
       if (classFilter !== "all" && l.classification !== classFilter) return false;
       if (search && !l.name.toLowerCase().includes(search.toLowerCase()) && !l.username.toLowerCase().includes(search.toLowerCase())) return false;
       return true;

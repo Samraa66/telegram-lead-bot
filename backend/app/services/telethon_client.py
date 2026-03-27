@@ -62,14 +62,18 @@ async def _on_new_message(event) -> None:
     try:
         contact = db.query(Contact).filter(Contact.id == user_id).first()
 
+        # A contact is a real lead if their first message is /start (link click).
+        # Plain DMs from people who already know the operator are saved as noise.
+        is_tracked = text.startswith("/start")
+
         if not contact:
             contact = Contact(
                 id=user_id,
                 username=username,
                 source=source,
-                classification="new_lead",
-                current_stage=1,
-                stage_entered_at=now,
+                classification="new_lead" if is_tracked else "noise",
+                current_stage=1 if is_tracked else None,
+                stage_entered_at=now if is_tracked else None,
                 first_seen=now,
                 last_seen=now,
             )
@@ -78,8 +82,14 @@ async def _on_new_message(event) -> None:
         else:
             contact.username = username
             contact.last_seen = now
+            # If a noise contact later sends /start (e.g. clicked the link after
+            # a prior random DM), promote them into the pipeline.
             if source and not contact.source:
                 contact.source = source
+            if is_tracked and contact.classification == "noise":
+                contact.classification = "new_lead"
+                contact.current_stage = 1
+                contact.stage_entered_at = now
 
         contact.classification = classify_contact(
             db, user_id, contact.source, existing=contact

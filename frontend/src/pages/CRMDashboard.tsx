@@ -31,7 +31,7 @@ export default function CRMDashboard() {
     setLoading(true);
     setError(null);
     try {
-      const contacts = await fetchContacts();
+      const contacts = await fetchContacts(true);
       setLeads(contacts);
       if (!selectedLeadId && contacts.length > 0) {
         setSelectedLeadId(contacts[0].id);

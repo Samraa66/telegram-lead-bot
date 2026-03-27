@@ -178,9 +178,9 @@ class NotesRequest(BaseModel):
 
 
 @app.get("/contacts")
-def contacts_list(db: Session = Depends(get_db)):
-    """List all contacts with current_stage and last message timestamp."""
-    return get_contacts(db)
+def contacts_list(include_noise: bool = False, db: Session = Depends(get_db)):
+    """List contacts. Noise contacts are excluded by default; pass ?include_noise=true to include them."""
+    return get_contacts(db, include_noise=include_noise)
 
 
 @app.get("/contacts/{contact_id}/messages")

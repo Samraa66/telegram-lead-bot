@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 from app.database.models import Message, User
 
 
-def get_contacts(db: Session) -> List[Dict[str, Any]]:
+def get_contacts(db: Session, include_noise: bool = False) -> List[Dict[str, Any]]:
     """
     List all contacts with:
     - current_stage
@@ -30,7 +30,7 @@ def get_contacts(db: Session) -> List[Dict[str, Any]]:
         .subquery()
     )
 
-    rows = (
+    q = (
         db.query(
             User.id,
             User.username,
@@ -42,8 +42,10 @@ def get_contacts(db: Session) -> List[Dict[str, Any]]:
         )
         .outerjoin(last_msg_subq, User.id == last_msg_subq.c.user_id)
         .order_by(User.first_seen.desc())
-        .all()
     )
+    if not include_noise:
+        q = q.filter(User.classification != "noise")
+    rows = q.all()
 
     result: List[Dict[str, Any]] = []
     for user_id, username, current_stage, classification, notes, stage_entered_at, last_ts in rows:
