@@ -8,7 +8,7 @@ so signal mirroring stays in the forwarding layer.
 import logging
 import requests
 
-from app.config import BOT_TOKEN
+from app.config import BOT_TOKEN, DRY_RUN_SEND
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +17,10 @@ TELEGRAM_API_BASE = "https://api.telegram.org/bot"
 
 def send_message(chat_id: int, text: str) -> bool:
     """Send a text message to a Telegram chat via the Bot API."""
+    if DRY_RUN_SEND:
+        logger.info("DRY_RUN_SEND enabled: skipping Telegram sendMessage for chat_id=%s", chat_id)
+        return True
+
     if not BOT_TOKEN:
         logger.error("BOT_TOKEN not set; cannot send message")
         return False

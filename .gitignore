@@ -3,6 +3,9 @@
 .env.local
 *.env
 
+# Frontend
+frontend/node_modules/
+
 # Python
 __pycache__/
 *.py[cod]
@@ -15,7 +18,8 @@ env/
 
 # Database (local SQLite)
 *.db
-leadbot.db
+*.db-shm
+*.db-wal
 
 # IDE
 .idea/
@@ -29,3 +33,6 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Claude local worktrees/cache
+.claude/

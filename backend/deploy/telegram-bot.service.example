@@ -1,0 +1,23 @@
+# Systemd unit for BullishxWalid Telegram bot (VPS deployment).
+# Copy to /etc/systemd/system/telegrambot.service (overwrite existing).
+# Then: sudo systemctl daemon-reload && sudo systemctl restart telegrambot
+
+[Unit]
+Description=BullishxWalid Telegram CRM Bot
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/telegram-lead-bot/backend
+EnvironmentFile=/root/telegram-lead-bot/backend/.env
+ExecStart=/root/telegram-lead-bot/venv/bin/uvicorn app.main:app \
+    --host 0.0.0.0 \
+    --port 8443 \
+    --ssl-keyfile /root/telegram-lead-bot/key.pem \
+    --ssl-certfile /root/telegram-lead-bot/cert.pem
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

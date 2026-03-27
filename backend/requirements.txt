@@ -1,6 +1,8 @@
 fastapi
 uvicorn
 gunicorn
+aiofiles
+apscheduler
 python-dotenv
 requests
 sqlalchemy

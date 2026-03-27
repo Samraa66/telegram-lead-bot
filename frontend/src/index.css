@@ -1,0 +1,151 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 220 20% 7%;
+    --foreground: 210 20% 92%;
+
+    --card: 220 18% 10%;
+    --card-foreground: 210 20% 92%;
+
+    --popover: 220 18% 10%;
+    --popover-foreground: 210 20% 92%;
+
+    --primary: 152 60% 48%;
+    --primary-foreground: 220 20% 7%;
+
+    --secondary: 220 16% 14%;
+    --secondary-foreground: 210 20% 80%;
+
+    --muted: 220 14% 16%;
+    --muted-foreground: 215 12% 52%;
+
+    --accent: 220 16% 18%;
+    --accent-foreground: 210 20% 92%;
+
+    --destructive: 0 72% 56%;
+    --destructive-foreground: 210 40% 98%;
+
+    --border: 220 14% 16%;
+    --input: 220 14% 18%;
+    --ring: 152 60% 48%;
+
+    --radius: 0.75rem;
+
+    --sidebar-background: 220 20% 5%;
+    --sidebar-foreground: 215 12% 52%;
+    --sidebar-primary: 152 60% 48%;
+    --sidebar-primary-foreground: 220 20% 7%;
+    --sidebar-accent: 220 16% 12%;
+    --sidebar-accent-foreground: 210 20% 92%;
+    --sidebar-border: 220 14% 12%;
+    --sidebar-ring: 152 60% 48%;
+
+    /* Custom tokens */
+    --signal-buy: 152 60% 48%;
+    --signal-sell: 0 72% 56%;
+    --signal-pending: 38 92% 50%;
+
+    /* CRM Stage colors */
+    --stage-new: 210 100% 56%;
+    --stage-qualified: 45 93% 47%;
+    --stage-hesitant: 25 95% 53%;
+    --stage-link-sent: 270 60% 60%;
+    --stage-deposited: 152 60% 48%;
+    --chart-1: 152 60% 48%;
+    --chart-2: 200 70% 50%;
+    --chart-3: 38 92% 50%;
+    --chart-4: 280 60% 60%;
+    --chart-5: 0 72% 56%;
+
+    /* iOS-style tokens */
+    --ios-separator: 220 14% 13%;
+    --ios-grouped-bg: 220 20% 5%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    -webkit-tap-highlight-color: transparent;
+    overscroll-behavior: none;
+  }
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+
+  .glass-card {
+    @apply bg-card border border-border/50 rounded-xl;
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.2), 0 1px 2px rgba(0, 0, 0, 0.1);
+  }
+
+  .glass-card:hover {
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3), 0 2px 4px rgba(0, 0, 0, 0.15);
+  }
+
+  .stat-glow {
+    box-shadow: 0 0 20px hsl(var(--primary) / 0.1);
+  }
+
+  /* iOS safe area support */
+  .safe-top {
+    padding-top: env(safe-area-inset-top, 0px);
+  }
+
+  .safe-bottom {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  .ios-card {
+    @apply bg-card rounded-2xl;
+  }
+
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* Scrollbar styling for desktop */
+@media (min-width: 768px) {
+  ::-webkit-scrollbar {
+    width: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: hsl(var(--background));
+  }
+  ::-webkit-scrollbar-thumb {
+    background: hsl(var(--muted));
+    border-radius: 3px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--muted-foreground));
+  }
+}
+
+/* Hide scrollbars on mobile for native feel */
+@media (max-width: 767px) {
+  ::-webkit-scrollbar {
+    display: none;
+  }
+  * {
+    scrollbar-width: none;
+  }
+}

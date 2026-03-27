@@ -46,3 +46,7 @@ MESSAGE_REPLY: str = os.getenv(
     "MESSAGE_REPLY",
     "Thanks, your request was sent.",
 )
+
+# Local testing switch:
+# when true, outbound send_message() returns success without calling Telegram.
+DRY_RUN_SEND: bool = os.getenv("DRY_RUN_SEND", "false").strip().lower() in ("1", "true", "yes", "on")

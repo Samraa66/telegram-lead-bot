@@ -64,7 +64,7 @@ class Message(Base):
     Inbound/outbound chat message tied to a contact.
 
     The DB column is named 'user_id' for backward compatibility with existing rows
-    and the stage_pipeline.py code that creates Message(user_id=...).
+    and the pipeline.py code that creates Message(user_id=...).
     """
 
     __tablename__ = "messages"

@@ -13,9 +13,15 @@ Migration order in init_db():
 """
 
 import os
+from pathlib import Path
 from typing import Iterable, Tuple
 
-from sqlalchemy import create_engine, inspect, text
+from dotenv import load_dotenv
+from sqlalchemy import create_engine, event, inspect, text
+
+# Load .env before reading DATABASE_URL — database/__init__.py is often imported
+# before config.py, so we must call load_dotenv() here as well.
+load_dotenv(Path(__file__).parent.parent.parent / ".env")
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -29,11 +35,31 @@ if not _db_url:
     _db_url = f"sqlite:///{sqlite_path}"
 
 if _db_url.startswith("sqlite"):
-    engine = create_engine(
-        _db_url,
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
+    # SQLite notes:
+    # - Use WAL + busy_timeout to reduce "database is locked" under concurrent writes
+    #   (webhook/API + scheduler).
+    # - Avoid StaticPool for file-based DBs because it forces one shared connection.
+    # - Keep StaticPool only for in-memory sqlite where one shared connection is needed.
+    is_memory = _db_url in ("sqlite://", "sqlite:///:memory:", "sqlite+pysqlite:///:memory:")
+    if is_memory:
+        engine = create_engine(
+            _db_url,
+            connect_args={"check_same_thread": False, "timeout": 30},
+            poolclass=StaticPool,
+        )
+    else:
+        engine = create_engine(
+            _db_url,
+            connect_args={"check_same_thread": False, "timeout": 30},
+        )
+
+    @event.listens_for(engine, "connect")
+    def _set_sqlite_pragmas(dbapi_connection, _connection_record):
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL;")
+        cursor.execute("PRAGMA synchronous=NORMAL;")
+        cursor.execute("PRAGMA busy_timeout=30000;")
+        cursor.close()
 else:
     engine = create_engine(_db_url)
 
