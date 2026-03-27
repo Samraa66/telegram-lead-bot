@@ -50,3 +50,11 @@ MESSAGE_REPLY: str = os.getenv(
 # Local testing switch:
 # when true, outbound send_message() returns success without calling Telegram.
 DRY_RUN_SEND: bool = os.getenv("DRY_RUN_SEND", "false").strip().lower() in ("1", "true", "yes", "on")
+
+# Telegram MTProto — operator account (receives and sends lead messages)
+TELEGRAM_API_ID: int = int(os.getenv("TELEGRAM_API_ID", "0") or "0")
+TELEGRAM_API_HASH: str = os.getenv("TELEGRAM_API_HASH", "").strip()
+SESSION_FILE: str = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "operator.session",
+)

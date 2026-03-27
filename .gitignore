@@ -21,6 +21,9 @@ env/
 *.db-shm
 *.db-wal
 
+# Telethon session (contains auth credentials — never commit)
+*.session
+
 # IDE
 .idea/
 .vscode/

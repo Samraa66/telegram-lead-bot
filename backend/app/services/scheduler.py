@@ -272,8 +272,9 @@ def _fire_pending_follow_ups() -> None:
             text = _get_template_text(db, fup.stage, fup.sequence_num)
 
             try:
-                from app.bot import send_message
-                sent = send_message(contact.id, text)
+                from app.services.telethon_client import send_as_operator_sync, get_client
+                from app.bot import send_message as bot_send
+                sent = send_as_operator_sync(contact.id, text) if get_client() else bot_send(contact.id, text)
             except Exception as e:
                 logger.exception("Error sending follow-up id=%s: %s", fup.id, e)
                 continue

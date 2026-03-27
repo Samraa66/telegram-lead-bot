@@ -44,8 +44,14 @@ async def lifespan(app: FastAPI):
     """Create DB tables on startup and log server start."""
     init_db()
     start_scheduler()
+    from app.config import TELEGRAM_API_ID, TELEGRAM_API_HASH, SESSION_FILE
+    from app.services.telethon_client import start_telethon
+    if TELEGRAM_API_ID and TELEGRAM_API_HASH:
+        await start_telethon(SESSION_FILE, TELEGRAM_API_ID, TELEGRAM_API_HASH)
     logger.info("Server starting; database initialized")
     yield
+    from app.services.telethon_client import stop_telethon
+    await stop_telethon()
     stop_scheduler()
     logger.info("Server shutting down")
 
@@ -195,7 +201,11 @@ def send_message_to_contact(req: SendMessageRequest, db: Session = Depends(get_d
     if not contact:
         raise HTTPException(status_code=404, detail="contact not found")
 
-    ok = send_message(contact.id, req.message)
+    from app.services.telethon_client import send_as_operator_sync, get_client
+    if get_client():
+        ok = send_as_operator_sync(contact.id, req.message)
+    else:
+        ok = send_message(contact.id, req.message)
     if not ok:
         raise HTTPException(status_code=502, detail="telegram send failed")
 

@@ -1,12 +1,12 @@
 """
-Outbound handler: process a message sent by Talal to a lead.
+Outbound handler: process a message sent by the operator to a contact.
 
 Scans the message text for stage keywords and advances the contact's stage
 via the pipeline. Also schedules follow-ups for the new stage if a transition
 occurred.
 
 Called from:
-  - POST /api/leads/{id}/message  (REST API)
+  - POST /send-message  (REST API)
 """
 
 from __future__ import annotations
