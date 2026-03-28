@@ -13,7 +13,7 @@ User = Contact alias kept so existing code that imports User continues to work.
 
 from datetime import date, datetime
 
-from sqlalchemy import Boolean, Column, Date, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import BigInteger, Boolean, Column, Date, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import relationship
 from sqlalchemy.ext.declarative import declarative_base
 
@@ -28,7 +28,7 @@ class Contact(Base):
 
     __tablename__ = "contacts"
 
-    id = Column(Integer, primary_key=True)  # Telegram user id
+    id = Column(BigInteger, primary_key=True)  # Telegram user id (64-bit)
     username = Column(String(255), nullable=True)
     source = Column(String(255), nullable=True)  # campaign tag from /start param
 
@@ -72,7 +72,7 @@ class Message(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     # DB column kept as 'user_id' — existing rows and FK constraints stay valid after
     # the users→contacts table rename.
-    user_id = Column(Integer, ForeignKey("contacts.id"), nullable=False)
+    user_id = Column(BigInteger, ForeignKey("contacts.id"), nullable=False)
 
     # Kept for backward compatibility with existing analytics code
     message_text = Column(Text, nullable=True)
@@ -92,7 +92,7 @@ class StageHistory(Base):
     __tablename__ = "stage_history"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    contact_id = Column(Integer, ForeignKey("contacts.id"), nullable=False)
+    contact_id = Column(BigInteger, ForeignKey("contacts.id"), nullable=False)
 
     from_stage = Column(Integer, nullable=True)
     to_stage = Column(Integer, nullable=False)
@@ -112,7 +112,7 @@ class FollowUpQueue(Base):
     __tablename__ = "follow_up_queue"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    contact_id = Column(Integer, ForeignKey("contacts.id"), nullable=False)
+    contact_id = Column(BigInteger, ForeignKey("contacts.id"), nullable=False)
 
     stage = Column(Integer, nullable=False)
     sequence_num = Column(Integer, nullable=False)  # position in the follow-up sequence
