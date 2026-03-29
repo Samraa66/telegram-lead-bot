@@ -27,9 +27,8 @@ export default function CRMDashboard() {
     (a, b) => new Date(a.stageEnteredAt).getTime() - new Date(b.stageEnteredAt).getTime(),
   );
 
-  const loadContacts = useCallback(async () => {
-    setLoading(true);
-    setError(null);
+  const loadContacts = useCallback(async (silent = false) => {
+    if (!silent) { setLoading(true); setError(null); }
     try {
       const contacts = await fetchContacts(true);
       setLeads(contacts);
@@ -37,9 +36,9 @@ export default function CRMDashboard() {
         setSelectedLeadId(contacts[0].id);
       }
     } catch (e: any) {
-      setError(e?.message || "Failed to load contacts");
+      if (!silent) setError(e?.message || "Failed to load contacts");
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [selectedLeadId]);
 
@@ -55,9 +54,23 @@ export default function CRMDashboard() {
     }
   }, []);
 
+  // Initial load
   useEffect(() => {
     loadContacts();
   }, [loadContacts]);
+
+  // Poll for new contacts every 10 seconds
+  useEffect(() => {
+    const interval = setInterval(() => loadContacts(true), 10_000);
+    return () => clearInterval(interval);
+  }, [loadContacts]);
+
+  // Poll for new messages on selected lead every 5 seconds
+  useEffect(() => {
+    if (!selectedLeadId) return;
+    const interval = setInterval(() => loadMessagesForLead(selectedLeadId), 5_000);
+    return () => clearInterval(interval);
+  }, [selectedLeadId, loadMessagesForLead]);
 
   useEffect(() => {
     if (selectedLeadId) {
