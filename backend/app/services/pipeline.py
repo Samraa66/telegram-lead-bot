@@ -26,6 +26,7 @@ from typing import Optional, Tuple
 from sqlalchemy.orm import Session, object_session
 
 from app.database.models import Contact, Message, StageHistory
+from app.services.classifier import classify_contact
 
 logger = logging.getLogger(__name__)
 
@@ -123,9 +124,10 @@ def advance_stage(
                 trigger_keyword=keyword,
             )
         )
+        contact.classification = classify_contact(session, contact.id, contact.source, existing=contact)
         logger.info(
-            "Stage transition: contact_id=%s %s→%s (keyword=%r, by=%s)",
-            contact.id, from_stage, target_stage, keyword, moved_by,
+            "Stage transition: contact_id=%s %s→%s (keyword=%r, by=%s, classification=%s)",
+            contact.id, from_stage, target_stage, keyword, moved_by, contact.classification,
         )
         session.commit()
         return target_stage
@@ -167,9 +169,10 @@ def set_stage_manual(
                 trigger_keyword=None,
             )
         )
+        contact.classification = classify_contact(session, contact.id, contact.source, existing=contact)
         logger.info(
-            "Manual stage override: contact_id=%s %s→%s (by=%s)",
-            contact.id, from_stage, new_stage, moved_by,
+            "Manual stage override: contact_id=%s %s→%s (by=%s, classification=%s)",
+            contact.id, from_stage, new_stage, moved_by, contact.classification,
         )
 
     session.commit()

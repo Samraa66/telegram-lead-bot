@@ -43,18 +43,30 @@ def classify_contact(
         return "affiliate"
 
     if contact:
+        # Affiliate wins over stage-based classification
+        if contact.is_affiliate:
+            return "affiliate"
+
+        # Noise contacts stay noise unless manually promoted
+        if contact.classification == "noise":
+            return "noise"
+
+        stage = contact.current_stage or 1
+
         # VIP: deposit confirmed OR stage 7-8
-        if contact.deposit_confirmed or (contact.current_stage or 1) >= 7:
+        if contact.deposit_confirmed or stage >= 7:
             return "vip"
 
-        # Warm lead: in DB, stages 1-6, no deposit
-        stage = contact.current_stage or 1
-        if 1 <= stage <= 6:
+        # New lead: stage 1 (first contact, not yet qualified)
+        if stage == 1:
+            return "new_lead"
+
+        # Warm lead: stage 2-6, interacting, no deposit yet
+        if 2 <= stage <= 6:
             return "warm_lead"
 
-    # Not in DB (new contact)
+    # Not in DB — classify by source
     if source:
         return "new_lead"
 
-    # No tracked source, not in DB
     return "noise"

@@ -29,6 +29,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 
 from app.database import SessionLocal
 from app.database.models import Contact, FollowUpQueue, FollowUpTemplate, Message, StageHistory
+from app.services.classifier import classify_contact
 
 logger = logging.getLogger(__name__)
 
@@ -183,6 +184,7 @@ def _handle_post_sequence(db, contact: Contact, action: str, from_stage: int) ->
                 trigger_keyword="follow_up_revert",
             )
         )
+        contact.classification = classify_contact(db, contact.id, contact.source, existing=contact)
         db.commit()
         schedule_follow_ups(contact.id, 3, now)
         logger.info("Reverted contact %s to stage 3", contact.id)
