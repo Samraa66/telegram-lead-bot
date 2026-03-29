@@ -205,6 +205,33 @@ def _seed_templates() -> None:
 # Public API
 # ---------------------------------------------------------------------------
 
+def _sync_classifications() -> None:
+    """
+    Re-classify all contacts based on current stage and flags.
+    Runs on startup to fix any contacts whose classification drifted.
+    Skips noise and affiliate contacts (those are explicitly set).
+    """
+    db = SessionLocal()
+    try:
+        from app.database.models import Contact as C
+        contacts = db.query(C).filter(
+            C.classification.notin_(["noise", "affiliate"])
+        ).all()
+        for contact in contacts:
+            stage = contact.current_stage or 1
+            if contact.deposit_confirmed or stage >= 7:
+                new_cls = "vip"
+            else:
+                new_cls = "warm_lead"
+            if contact.classification != new_cls:
+                contact.classification = new_cls
+        db.commit()
+    except Exception:
+        db.rollback()
+    finally:
+        db.close()
+
+
 def init_db() -> None:
     """
     Migrate schema and initialise tables on startup.
@@ -214,6 +241,7 @@ def init_db() -> None:
     Step 2: create_all — creates any still-missing tables.
     Step 3: ensure new columns exist (older deployments).
     Step 4: seed follow_up_templates.
+    Step 5: sync classifications.
     """
     _migrate_users_to_contacts()
     Base.metadata.create_all(bind=engine)
@@ -222,6 +250,10 @@ def init_db() -> None:
     except Exception:
         pass
     _seed_templates()
+    try:
+        _sync_classifications()
+    except Exception:
+        pass
 
 
 def get_db():

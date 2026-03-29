@@ -43,7 +43,7 @@ def classify_contact(
         return "affiliate"
 
     if contact:
-        # Affiliate wins over stage-based classification
+        # Affiliate wins over everything
         if contact.is_affiliate:
             return "affiliate"
 
@@ -57,15 +57,11 @@ def classify_contact(
         if contact.deposit_confirmed or stage >= 7:
             return "vip"
 
-        # New lead: stage 1 (first contact, not yet qualified)
-        if stage == 1:
-            return "new_lead"
+        # Warm lead: in DB, stages 1-6, no deposit yet
+        # (once a contact is in the DB they are warm, not new)
+        return "warm_lead"
 
-        # Warm lead: stage 2-6, interacting, no deposit yet
-        if 2 <= stage <= 6:
-            return "warm_lead"
-
-    # Not in DB — classify by source
+    # Not yet in DB — transient new_lead state
     if source:
         return "new_lead"
 

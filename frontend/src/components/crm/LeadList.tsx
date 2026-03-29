@@ -22,7 +22,6 @@ type ClassificationFilter = "all" | "new_lead" | "warm_lead" | "vip" | "affiliat
 
 const CLASSIFICATION_FILTERS: { key: ClassificationFilter; label: string }[] = [
   { key: "all",       label: "All" },
-  { key: "new_lead",  label: "New Lead" },
   { key: "warm_lead", label: "Warm Lead" },
   { key: "vip",       label: "VIP" },
   { key: "affiliate", label: "Affiliate" },
