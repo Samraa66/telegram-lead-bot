@@ -5,7 +5,7 @@ import { ChatPanel } from "../components/crm/ChatPanel";
 import { LeadDetails } from "../components/crm/LeadDetails";
 import { Lead, Message, formatTimeInStage, uiStageToBackend } from "../data/crmData";
 import { useIsMobile } from "../hooks/use-mobile";
-import { fetchContacts, fetchContactMessages, sendMessageToContact, setContactStage, saveContactNotes, escalateContact, toggleAffiliate } from "../api/crm";
+import { fetchContacts, fetchContactMessages, sendMessageToContact, setContactStage, saveContactNotes, escalateContact, toggleAffiliate, markAsNoise } from "../api/crm";
 import { clearAuth } from "../api/auth";
 
 type MobileView = "list" | "chat" | "details";
@@ -154,6 +154,16 @@ export default function CRMDashboard() {
     }
   }, [selectedLeadId]);
 
+  const handleMarkAsNoise = useCallback(async () => {
+    if (!selectedLeadId) return;
+    try {
+      await markAsNoise(selectedLeadId);
+      await loadContacts(true);
+    } catch (e: any) {
+      setError(e?.message || "Failed to mark as noise");
+    }
+  }, [selectedLeadId, loadContacts]);
+
   const handleToggleAffiliate = useCallback(async () => {
     if (!selectedLeadId) return;
     try {
@@ -236,7 +246,7 @@ export default function CRMDashboard() {
               <span className="text-sm font-semibold text-foreground ml-auto mr-3">Details</span>
             </div>
             <div className="flex-1 overflow-y-auto">
-              <LeadDetails lead={selectedLead} onUpdateLead={handleUpdateLead} onSaveNotes={handleSaveNotes} onEscalate={handleEscalate} onToggleAffiliate={handleToggleAffiliate} />
+              <LeadDetails lead={selectedLead} onUpdateLead={handleUpdateLead} onSaveNotes={handleSaveNotes} onEscalate={handleEscalate} onToggleAffiliate={handleToggleAffiliate} onMarkAsNoise={handleMarkAsNoise} />
             </div>
           </div>
         )}
@@ -276,7 +286,7 @@ export default function CRMDashboard() {
       </div>
       {selectedLead && showDetails && (
         <div className="w-72 shrink-0">
-          <LeadDetails lead={selectedLead} onUpdateLead={handleUpdateLead} onSaveNotes={handleSaveNotes} onEscalate={handleEscalate} onToggleAffiliate={handleToggleAffiliate} />
+          <LeadDetails lead={selectedLead} onUpdateLead={handleUpdateLead} onSaveNotes={handleSaveNotes} onEscalate={handleEscalate} onToggleAffiliate={handleToggleAffiliate} onMarkAsNoise={handleMarkAsNoise} />
         </div>
       )}
     </div>

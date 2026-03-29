@@ -88,7 +88,10 @@ async def _on_new_message(event) -> None:
     text: str = event.message.text or ""
     now = datetime.utcnow()
 
-    # Extract /start source parameter if present (e.g. "/start meta_jan")
+    # Extract /start source parameter for campaign analytics (e.g. "/start meta_jan").
+    # NOTE: /start is NOT used to gate lead entry — @WalidxBullish_Support is a personal
+    # account, not a bot. Telegram never auto-sends /start for personal accounts.
+    # Every new DM is treated as a potential lead; noise is tagged manually by the operator.
     source: Optional[str] = None
     if text.startswith("/start"):
         parts = text.split(maxsplit=1)
@@ -99,38 +102,31 @@ async def _on_new_message(event) -> None:
     try:
         contact = db.query(Contact).filter(Contact.id == user_id).first()
 
-        # A contact is a real lead if their first message is /start (link click).
-        # Plain DMs from people who already know the operator are saved as noise.
-        is_tracked = text.startswith("/start")
-
         if not contact:
+            # New contact — enter pipeline as new_lead at stage 1.
             contact = Contact(
                 id=user_id,
                 username=username,
                 source=source,
-                classification="new_lead" if is_tracked else "noise",
-                current_stage=1 if is_tracked else None,
-                stage_entered_at=now if is_tracked else None,
+                classification="new_lead",
+                current_stage=1,
+                stage_entered_at=now,
                 first_seen=now,
                 last_seen=now,
             )
             db.add(contact)
             db.flush()
+            logger.info("New lead created: user_id=%s username=%s source=%s", user_id, username, source)
         else:
             contact.username = username
             contact.last_seen = now
-            # If a noise contact later sends /start (e.g. clicked the link after
-            # a prior random DM), promote them into the pipeline.
+            # Update source if we now have one (e.g. they sent /start with a param later)
             if source and not contact.source:
                 contact.source = source
-            if is_tracked and contact.classification == "noise":
-                contact.classification = "new_lead"
-                contact.current_stage = 1
-                contact.stage_entered_at = now
-
-        contact.classification = classify_contact(
-            db, user_id, contact.source, existing=contact
-        )
+            # Re-classify based on current stage (handles noise → lead promotion if needed)
+            contact.classification = classify_contact(
+                db, user_id, contact.source, existing=contact
+            )
 
         db.add(Message(
             user_id=user_id,

@@ -1,4 +1,4 @@
-import { ChevronRight, AlertTriangle, StickyNote, Star } from "lucide-react";
+import { ChevronRight, AlertTriangle, StickyNote, Star, VolumeX } from "lucide-react";
 import { useState, useEffect } from "react";
 import { Lead, Stage, STAGES, STAGE_COLORS, STAGE_TEXT_COLORS, BUSINESS_OWNER_NAME, formatTimeInStage, classificationLabel, classificationColor } from "../../data/crmData";
 import { Button } from "../ui/button";
@@ -12,9 +12,10 @@ interface LeadDetailsProps {
   onSaveNotes: (notes: string) => Promise<void>;
   onEscalate: () => Promise<void>;
   onToggleAffiliate: () => Promise<void>;
+  onMarkAsNoise: () => Promise<void>;
 }
 
-export function LeadDetails({ lead, onUpdateLead, onSaveNotes, onEscalate, onToggleAffiliate }: LeadDetailsProps) {
+export function LeadDetails({ lead, onUpdateLead, onSaveNotes, onEscalate, onToggleAffiliate, onMarkAsNoise }: LeadDetailsProps) {
   const [notes, setNotes] = useState(lead.notes);
   const [escalated, setEscalated] = useState(false);
   const currentIdx = STAGES.indexOf(lead.stage);
@@ -116,6 +117,17 @@ export function LeadDetails({ lead, onUpdateLead, onSaveNotes, onEscalate, onTog
             <AlertTriangle className="h-3 w-3 mr-1" />
             {escalated ? `Escalated to ${BUSINESS_OWNER_NAME} ✓` : `Escalate to ${BUSINESS_OWNER_NAME}`}
           </Button>
+          {lead.classification !== "noise" && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={onMarkAsNoise}
+              className="w-full text-xs text-muted-foreground rounded-xl"
+            >
+              <VolumeX className="h-3 w-3 mr-1" />
+              Mark as Noise
+            </Button>
+          )}
           {showAffiliateToggle && (
             <Button
               variant="outline"

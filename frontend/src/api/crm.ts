@@ -120,3 +120,7 @@ export async function escalateContact(contactId: string): Promise<void> {
 export async function toggleAffiliate(contactId: string): Promise<{ is_affiliate: boolean }> {
   return apiFetch(`/contacts/${contactId}/affiliate`, { method: "POST" });
 }
+
+export async function markAsNoise(contactId: string): Promise<void> {
+  await apiFetch(`/contacts/${contactId}/noise`, { method: "POST" });
+}

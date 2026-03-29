@@ -287,6 +287,19 @@ def escalate_contact(contact_id: int, db: Session = Depends(get_db), _=Depends(g
     return {"ok": True}
 
 
+@app.post("/contacts/{contact_id}/noise")
+def mark_as_noise(contact_id: int, db: Session = Depends(get_db), _=Depends(get_current_user)):
+    """Mark a contact as noise (spam/unrelated). Removes them from the lead pipeline."""
+    contact = db.query(User).filter(User.id == contact_id).first()
+    if not contact:
+        raise HTTPException(status_code=404, detail="contact not found")
+    contact.classification = "noise"
+    contact.current_stage = None
+    contact.stage_entered_at = None
+    db.commit()
+    return {"ok": True}
+
+
 @app.post("/contacts/{contact_id}/affiliate")
 def toggle_affiliate(
     contact_id: int,

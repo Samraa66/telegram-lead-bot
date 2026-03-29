@@ -221,8 +221,10 @@ def _sync_classifications() -> None:
             stage = contact.current_stage or 1
             if contact.deposit_confirmed or stage >= 7:
                 new_cls = "vip"
-            else:
+            elif stage >= 2:
                 new_cls = "warm_lead"
+            else:
+                new_cls = "new_lead"
             if contact.classification != new_cls:
                 contact.classification = new_cls
         db.commit()
