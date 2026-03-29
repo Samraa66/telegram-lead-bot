@@ -3,7 +3,7 @@ import { ArrowLeft, PanelRightOpen } from "lucide-react";
 import { LeadList } from "../components/crm/LeadList";
 import { ChatPanel } from "../components/crm/ChatPanel";
 import { LeadDetails } from "../components/crm/LeadDetails";
-import { Lead, Message, formatTimeInStage } from "../data/crmData";
+import { Lead, Message, formatTimeInStage, uiStageToBackend } from "../data/crmData";
 import { useIsMobile } from "../hooks/use-mobile";
 import { fetchContacts, fetchContactMessages, sendMessageToContact, setContactStage, saveContactNotes, escalateContact } from "../api/crm";
 
@@ -126,28 +126,7 @@ export default function CRMDashboard() {
     async (updated: Lead) => {
       setLeads((prev) => prev.map((l) => (l.id === updated.id ? updated : l)));
       try {
-        // Manual stage override endpoint
-        await setContactStage(updated.id, ((): number => {
-          switch (updated.stage) {
-            case "New":
-              return 1;
-            case "Contacted":
-            case "Qualified":
-              return 2;
-            case "Hesitant":
-              return 3;
-            case "Link Sent":
-              return 4;
-            case "Registered":
-              return 5;
-            case "Deposited":
-              return 7;
-            case "VIP":
-              return 8;
-            default:
-              return 1;
-          }
-        })());
+        await setContactStage(updated.id, uiStageToBackend(updated.stage));
         await loadContacts();
       } catch (e: any) {
         setError(e?.message || "Failed to update stage");
