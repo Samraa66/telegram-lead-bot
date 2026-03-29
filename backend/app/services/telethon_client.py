@@ -127,6 +127,8 @@ async def send_as_operator(chat_id: int, text: str) -> bool:
         logger.error("Telethon client not running — cannot send message")
         return False
     try:
+        if not _client.is_connected():
+            await _client.connect()
         await _client.send_message(chat_id, text)
         return True
     except Exception:
@@ -171,7 +173,12 @@ async def start_telethon(session_file: str, api_id: int, api_hash: str) -> None:
         return
 
     _loop = asyncio.get_running_loop()
-    _client = TelegramClient(session_file, api_id, api_hash)
+    _client = TelegramClient(
+        session_file, api_id, api_hash,
+        auto_reconnect=True,
+        retry_delay=5,
+        connection_retries=10,
+    )
     _client.add_event_handler(_on_new_message, events.NewMessage(incoming=True))
 
     await _client.start()
