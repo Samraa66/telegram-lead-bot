@@ -37,6 +37,43 @@ _running: bool = False
 # Inbound handler
 # ---------------------------------------------------------------------------
 
+async def _on_outgoing_message(event) -> None:
+    """Capture messages sent directly from the operator's Telegram app."""
+    if not event.is_private:
+        return
+
+    peer = await event.get_chat()
+    if not isinstance(peer, User):
+        return
+
+    contact_id: int = peer.id
+    text: str = event.message.text or ""
+    now = datetime.utcnow()
+
+    db = SessionLocal()
+    try:
+        # Only save if the contact exists — don't create contacts from outgoing msgs
+        contact = db.query(Contact).filter(Contact.id == contact_id).first()
+        if not contact:
+            return
+
+        db.add(Message(
+            user_id=contact_id,
+            message_text=text,
+            content=text,
+            direction="outbound",
+            sender="operator",
+            timestamp=now,
+        ))
+        db.commit()
+        logger.info("Outgoing Telegram message captured for contact_id=%s", contact_id)
+    except Exception:
+        logger.exception("Error capturing outgoing message for contact_id=%s", contact_id)
+        db.rollback()
+    finally:
+        db.close()
+
+
 async def _on_new_message(event) -> None:
     """Capture every inbound private DM to the operator account."""
     if not event.is_private:
@@ -180,6 +217,7 @@ async def start_telethon(session_file: str, api_id: int, api_hash: str) -> None:
         connection_retries=10,
     )
     _client.add_event_handler(_on_new_message, events.NewMessage(incoming=True))
+    _client.add_event_handler(_on_outgoing_message, events.NewMessage(outgoing=True))
 
     await _client.start()
     _running = True
