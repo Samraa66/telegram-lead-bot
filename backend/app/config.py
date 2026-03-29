@@ -58,3 +58,15 @@ SESSION_FILE: str = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
     "operator.session",
 )
+
+# Auth — JWT + user credentials
+SECRET_KEY: str = os.getenv("SECRET_KEY", "change-me-in-production").strip()
+
+DEVELOPER_USERNAME: str = os.getenv("DEVELOPER_USERNAME", "").strip()
+DEVELOPER_PASSWORD: str = os.getenv("DEVELOPER_PASSWORD", "").strip()
+
+ADMIN_USERNAME: str = os.getenv("ADMIN_USERNAME", "").strip()
+ADMIN_PASSWORD: str = os.getenv("ADMIN_PASSWORD", "").strip()
+
+OPERATOR_USERNAME: str = os.getenv("OPERATOR_USERNAME", "").strip()
+OPERATOR_PASSWORD: str = os.getenv("OPERATOR_PASSWORD", "").strip()

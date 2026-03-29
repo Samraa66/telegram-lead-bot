@@ -19,6 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, conint
 from sqlalchemy.orm import Session
 
+from app.auth import authenticate_user, create_access_token, get_current_user, require_roles
 from app.config import WEBHOOK_SECRET
 from app.database import get_db, init_db
 from app.database.models import User
@@ -135,20 +136,41 @@ async def webhook(request: Request, db: Session = Depends(get_db)):
         return {"ok": True}
 
 
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+@app.post("/auth/login")
+def login(req: LoginRequest):
+    """Authenticate and return a JWT token."""
+    user = authenticate_user(req.username, req.password)
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+    token = create_access_token(user["username"], user["role"])
+    return {"access_token": token, "role": user["role"], "username": user["username"]}
+
+
+@app.get("/auth/me")
+def me(current_user: dict = Depends(get_current_user)):
+    """Return the current user's info."""
+    return current_user
+
+
 @app.get("/stats/today")
-def stats_today(db: Session = Depends(get_db)):
+def stats_today(db: Session = Depends(get_db), _=Depends(get_current_user)):
     """Number of users (first seen) today and number of messages today."""
     return get_today_stats(db)
 
 
 @app.get("/stats/by-source")
-def stats_by_source(db: Session = Depends(get_db)):
+def stats_by_source(db: Session = Depends(get_db), _=Depends(get_current_user)):
     """Lead count grouped by campaign source (start parameter)."""
     return get_stats_by_source(db)
 
 
 @app.get("/stats/messages-per-day")
-def stats_messages_per_day(db: Session = Depends(get_db), days: int = 30):
+def stats_messages_per_day(db: Session = Depends(get_db), days: int = 30, _=Depends(get_current_user)):
     """Count of messages grouped by day (default last 30 days)."""
     return get_messages_per_day(db, days=min(days, 365))
 
@@ -178,19 +200,19 @@ class NotesRequest(BaseModel):
 
 
 @app.get("/contacts")
-def contacts_list(include_noise: bool = False, db: Session = Depends(get_db)):
+def contacts_list(include_noise: bool = False, db: Session = Depends(get_db), _=Depends(get_current_user)):
     """List contacts. Noise contacts are excluded by default; pass ?include_noise=true to include them."""
     return get_contacts(db, include_noise=include_noise)
 
 
 @app.get("/contacts/{contact_id}/messages")
-def contacts_messages(contact_id: int, db: Session = Depends(get_db)):
+def contacts_messages(contact_id: int, db: Session = Depends(get_db), _=Depends(get_current_user)):
     """Return full chat history (inbound + outbound) for a contact."""
     return get_contact_messages(db, contact_id)
 
 
 @app.post("/send-message")
-def send_message_to_contact(req: SendMessageRequest, db: Session = Depends(get_db)):
+def send_message_to_contact(req: SendMessageRequest, db: Session = Depends(get_db), _=Depends(get_current_user)):
     """
     Operator sends an outbound message to a contact.
     - Sends via Telegram API
@@ -215,7 +237,7 @@ def send_message_to_contact(req: SendMessageRequest, db: Session = Depends(get_d
 
 
 @app.post("/contacts/{contact_id}/stage")
-def set_contact_stage(contact_id: int, req: ManualStageRequest, db: Session = Depends(get_db)):
+def set_contact_stage(contact_id: int, req: ManualStageRequest, db: Session = Depends(get_db), _=Depends(get_current_user)):
     """Manually override a contact stage."""
     contact = db.query(User).filter(User.id == contact_id).first()
     if not contact:
@@ -242,7 +264,7 @@ def set_contact_stage(contact_id: int, req: ManualStageRequest, db: Session = De
 
 
 @app.post("/contacts/{contact_id}/notes")
-def update_contact_notes(contact_id: int, req: NotesRequest, db: Session = Depends(get_db)):
+def update_contact_notes(contact_id: int, req: NotesRequest, db: Session = Depends(get_db), _=Depends(get_current_user)):
     """Save free-text notes for a contact."""
     contact = db.query(User).filter(User.id == contact_id).first()
     if not contact:
@@ -253,8 +275,8 @@ def update_contact_notes(contact_id: int, req: NotesRequest, db: Session = Depen
 
 
 @app.post("/contacts/{contact_id}/escalate")
-def escalate_contact(contact_id: int, db: Session = Depends(get_db)):
-    """Flag a contact as escalated to Walid."""
+def escalate_contact(contact_id: int, db: Session = Depends(get_db), _=Depends(get_current_user)):
+    """Flag a contact as escalated."""
     from datetime import datetime
     contact = db.query(User).filter(User.id == contact_id).first()
     if not contact:
@@ -263,6 +285,23 @@ def escalate_contact(contact_id: int, db: Session = Depends(get_db)):
     contact.escalated_at = datetime.utcnow()
     db.commit()
     return {"ok": True}
+
+
+@app.post("/contacts/{contact_id}/affiliate")
+def toggle_affiliate(
+    contact_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_roles("developer", "admin")),
+):
+    """Toggle affiliate status — developer and admin only."""
+    from app.services.classifier import classify_contact
+    contact = db.query(User).filter(User.id == contact_id).first()
+    if not contact:
+        raise HTTPException(status_code=404, detail="contact not found")
+    contact.is_affiliate = not contact.is_affiliate
+    contact.classification = classify_contact(db, contact_id, contact.source, existing=contact)
+    db.commit()
+    return {"ok": True, "is_affiliate": contact.is_affiliate}
 
 
 # ---------------------------------------------------------------------------

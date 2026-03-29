@@ -1,21 +1,25 @@
-import { ChevronRight, AlertTriangle, StickyNote } from "lucide-react";
+import { ChevronRight, AlertTriangle, StickyNote, Star } from "lucide-react";
 import { useState, useEffect } from "react";
 import { Lead, Stage, STAGES, STAGE_COLORS, STAGE_TEXT_COLORS, BUSINESS_OWNER_NAME, formatTimeInStage, classificationLabel, classificationColor } from "../../data/crmData";
 import { Button } from "../ui/button";
 import { Textarea } from "../ui/textarea";
 import { cn } from "../../lib/utils";
+import { getStoredUser, canManageAffiliates } from "../../api/auth";
 
 interface LeadDetailsProps {
   lead: Lead;
   onUpdateLead: (updated: Lead) => void;
   onSaveNotes: (notes: string) => Promise<void>;
   onEscalate: () => Promise<void>;
+  onToggleAffiliate: () => Promise<void>;
 }
 
-export function LeadDetails({ lead, onUpdateLead, onSaveNotes, onEscalate }: LeadDetailsProps) {
+export function LeadDetails({ lead, onUpdateLead, onSaveNotes, onEscalate, onToggleAffiliate }: LeadDetailsProps) {
   const [notes, setNotes] = useState(lead.notes);
   const [escalated, setEscalated] = useState(false);
   const currentIdx = STAGES.indexOf(lead.stage);
+  const storedUser = getStoredUser();
+  const showAffiliateToggle = storedUser && canManageAffiliates(storedUser.role);
 
   useEffect(() => {
     setNotes(lead.notes);
@@ -112,6 +116,22 @@ export function LeadDetails({ lead, onUpdateLead, onSaveNotes, onEscalate }: Lea
             <AlertTriangle className="h-3 w-3 mr-1" />
             {escalated ? `Escalated to ${BUSINESS_OWNER_NAME} ✓` : `Escalate to ${BUSINESS_OWNER_NAME}`}
           </Button>
+          {showAffiliateToggle && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={onToggleAffiliate}
+              className={cn(
+                "w-full text-xs rounded-xl",
+                lead.classification === "affiliate"
+                  ? "text-purple-600 border-purple-300 hover:text-purple-700"
+                  : "text-muted-foreground"
+              )}
+            >
+              <Star className="h-3 w-3 mr-1" />
+              {lead.classification === "affiliate" ? "Remove Affiliate Tag" : "Mark as Affiliate"}
+            </Button>
+          )}
         </div>
 
         {/* Manual stage override */}

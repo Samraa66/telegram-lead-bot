@@ -1,4 +1,5 @@
 import { Lead, Message, backendStageToUi } from "../data/crmData";
+import { getToken, clearAuth } from "./auth";
 
 type ContactDto = {
   id: number;
@@ -25,13 +26,23 @@ const API_BASE = import.meta.env.DEV
   : "";
 
 async function apiFetch(path: string, init?: RequestInit) {
+  const token = getToken();
   const res = await fetch(`${API_BASE}${path}`, {
-    headers: { "Content-Type": "application/json", ...(init?.headers || {}) },
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(init?.headers || {}),
+    },
     ...init,
   });
+  if (res.status === 401) {
+    clearAuth();
+    window.location.href = "/login";
+    throw new Error("Session expired");
+  }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    throw new Error(data?.error || `Request failed (${res.status})`);
+    throw new Error(data?.detail || data?.error || `Request failed (${res.status})`);
   }
   return data;
 }
@@ -104,4 +115,8 @@ export async function escalateContact(contactId: string): Promise<void> {
   await apiFetch(`/contacts/${contactId}/escalate`, {
     method: "POST",
   });
+}
+
+export async function toggleAffiliate(contactId: string): Promise<{ is_affiliate: boolean }> {
+  return apiFetch(`/contacts/${contactId}/affiliate`, { method: "POST" });
 }
