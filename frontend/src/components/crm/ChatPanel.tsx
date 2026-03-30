@@ -1,3 +1,7 @@
+// DEPRECATED: ChatPanel is no longer used. Messaging happens natively in Telegram;
+// the Telethon listener detects outgoing messages and advances stages automatically.
+// Quick reply templates are handled by LeadDrawer. This file is kept for reference only.
+
 import { Send, SkipForward, ChevronDown, AlertTriangle } from "lucide-react";
 import { useState, useRef, useEffect } from "react";
 import { Lead, Message, STAGE_ACTION_REPLIES, FOLLOWUP_REPLIES, STAGES, Stage, STAGE_COLORS, STAGE_TEXT_COLORS, BUSINESS_OWNER_NAME, formatMessageTime, formatTimeInStage } from "../../data/crmData";

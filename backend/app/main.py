@@ -214,25 +214,33 @@ def contacts_messages(contact_id: int, db: Session = Depends(get_db), _=Depends(
 @app.post("/send-message")
 def send_message_to_contact(req: SendMessageRequest, db: Session = Depends(get_db), _=Depends(get_current_user)):
     """
-    Operator sends an outbound message to a contact.
-    - Sends via Telegram API
-    - Saves outbound message (direction=outbound) inside stage pipeline
-    - Performs stage transitions based on outgoing message keywords
+    Used exclusively for quick-reply template sends from the dashboard.
+    Talal's day-to-day conversations happen natively in Telegram; the Telethon
+    outgoing listener detects those messages and advances stages automatically.
+
+    - Telethon path: listener fires after send and calls handle_outbound there.
+    - Bot API fallback: listener won't fire, so handle_outbound is called here.
     """
     contact = db.query(User).filter(User.id == req.contact_id).first()
     if not contact:
         raise HTTPException(status_code=404, detail="contact not found")
 
     from app.services.telethon_client import send_as_operator_sync, get_client
+    used_telethon = False
     if get_client():
         ok = send_as_operator_sync(contact.id, req.message)
+        used_telethon = ok
     else:
         ok = send_message(contact.id, req.message)
     if not ok:
         raise HTTPException(status_code=502, detail="telegram send failed")
 
-    # Outbound handler logs message, advances stage, and schedules follow-ups.
-    handle_outbound(db, req.contact_id, req.message)
+    # Only call handle_outbound directly when using the bot API fallback.
+    # When Telethon sent the message, the outgoing listener handles it instead
+    # (avoids double stage detection).
+    if not used_telethon:
+        handle_outbound(db, req.contact_id, req.message)
+
     return {"ok": True}
 
 

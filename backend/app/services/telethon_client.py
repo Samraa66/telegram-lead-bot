@@ -38,7 +38,14 @@ _running: bool = False
 # ---------------------------------------------------------------------------
 
 async def _on_outgoing_message(event) -> None:
-    """Capture messages sent directly from the operator's Telegram app."""
+    """
+    Capture messages sent directly from the operator's Telegram app and run
+    stage detection via handle_outbound.
+
+    Dedup: if the same message to the same contact was already saved within
+    30 seconds (i.e. sent via the /send-message endpoint), skip processing to
+    avoid double stage transitions.
+    """
     if not event.is_private:
         return
 
@@ -52,23 +59,33 @@ async def _on_outgoing_message(event) -> None:
 
     db = SessionLocal()
     try:
-        # Only save if the contact exists — don't create contacts from outgoing msgs
         contact = db.query(Contact).filter(Contact.id == contact_id).first()
         if not contact:
             return
 
-        db.add(Message(
-            user_id=contact_id,
-            message_text=text,
-            content=text,
-            direction="outbound",
-            sender="operator",
-            timestamp=now,
-        ))
-        db.commit()
-        logger.info("Outgoing Telegram message captured for contact_id=%s", contact_id)
+        # Dedup: skip if this exact message was already saved via /send-message
+        from datetime import timedelta
+        recent_cutoff = now - timedelta(seconds=30)
+        already_saved = (
+            db.query(Message)
+            .filter(
+                Message.user_id == contact_id,
+                Message.direction == "outbound",
+                Message.content == text,
+                Message.timestamp >= recent_cutoff,
+            )
+            .first()
+        )
+        if already_saved:
+            logger.debug("Outgoing message dedup skip for contact_id=%s", contact_id)
+            return
+
+        # Run stage detection — saves message + advances stage + schedules follow-ups
+        from app.handlers.outbound import handle_outbound
+        handle_outbound(db, contact_id, text)
+        logger.info("Outgoing Telegram message processed for contact_id=%s", contact_id)
     except Exception:
-        logger.exception("Error capturing outgoing message for contact_id=%s", contact_id)
+        logger.exception("Error processing outgoing message for contact_id=%s", contact_id)
         db.rollback()
     finally:
         db.close()
