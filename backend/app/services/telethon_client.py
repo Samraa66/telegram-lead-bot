@@ -232,7 +232,15 @@ async def start_telethon(session_file: str, api_id: int, api_hash: str) -> None:
     _client.add_event_handler(_on_new_message, events.NewMessage(incoming=True))
     _client.add_event_handler(_on_outgoing_message, events.NewMessage(outgoing=True))
 
-    await _client.start()
+    await _client.connect()
+    if not await _client.is_user_authorized():
+        logger.warning(
+            "Telethon session exists but is not authorized. "
+            "Re-run scripts/setup_telethon.py on the server to authenticate."
+        )
+        await _client.disconnect()
+        return
+
     _running = True
 
     me = await _client.get_me()

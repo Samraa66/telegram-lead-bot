@@ -48,7 +48,13 @@ async def lifespan(app: FastAPI):
     from app.config import TELEGRAM_API_ID, TELEGRAM_API_HASH, SESSION_FILE
     from app.services.telethon_client import start_telethon
     if TELEGRAM_API_ID and TELEGRAM_API_HASH:
-        await start_telethon(SESSION_FILE, TELEGRAM_API_ID, TELEGRAM_API_HASH)
+        try:
+            await start_telethon(SESSION_FILE, TELEGRAM_API_ID, TELEGRAM_API_HASH)
+        except Exception:
+            logger.exception(
+                "Telethon failed to start — server will run without it. "
+                "Re-run scripts/setup_telethon.py to fix the session."
+            )
     logger.info("Server starting; database initialized")
     yield
     from app.services.telethon_client import stop_telethon
