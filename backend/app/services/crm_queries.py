@@ -34,6 +34,8 @@ def get_contacts(db: Session, include_noise: bool = False) -> List[Dict[str, Any
         db.query(
             User.id,
             User.username,
+            User.first_name,
+            User.last_name,
             User.current_stage,
             User.classification,
             User.notes,
@@ -48,11 +50,13 @@ def get_contacts(db: Session, include_noise: bool = False) -> List[Dict[str, Any
     rows = q.all()
 
     result: List[Dict[str, Any]] = []
-    for user_id, username, current_stage, classification, notes, stage_entered_at, last_ts in rows:
+    for user_id, username, first_name, last_name, current_stage, classification, notes, stage_entered_at, last_ts in rows:
         result.append(
             {
                 "id": user_id,
                 "username": username,
+                "first_name": first_name,
+                "last_name": last_name,
                 "current_stage": current_stage or 1,
                 "classification": classification or "new_lead",
                 "notes": notes or "",

@@ -111,6 +111,11 @@ def advance_stage(
     target_stage, keyword = result
     from_stage = contact.current_stage or 1
 
+    # Never allow backwards stage transitions
+    if target_stage <= from_stage:
+        session.commit()
+        return None
+
     if contact.current_stage != target_stage:
         contact.current_stage = target_stage
         contact.stage_entered_at = now

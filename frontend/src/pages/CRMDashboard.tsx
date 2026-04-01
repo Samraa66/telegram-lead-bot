@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect } from "react";
 import { LogOut } from "lucide-react";
 import { LeadList } from "../components/crm/LeadList";
 import { LeadDrawer } from "../components/crm/LeadDrawer";
+import AnalyticsDashboard from "./AnalyticsDashboard";
 import { Lead, uiStageToBackend } from "../data/crmData";
 import {
   fetchContacts,
@@ -14,7 +15,10 @@ import {
 } from "../api/crm";
 import { clearAuth } from "../api/auth";
 
+type Tab = "leads" | "analytics";
+
 export default function CRMDashboard() {
+  const [tab, setTab] = useState<Tab>("leads");
   const [leads, setLeads] = useState<Lead[]>([]);
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -143,8 +147,30 @@ export default function CRMDashboard() {
         </div>
       )}
 
-      {/* Logout button — top right */}
-      <div className="safe-top absolute top-2 right-3 z-20">
+      {/* Top bar: tab toggle + logout */}
+      <div className="safe-top bg-card/80 backdrop-blur-xl border-b border-[hsl(var(--ios-separator))] flex items-center justify-between px-4 pt-3 pb-2 z-20">
+        <div className="flex gap-1 bg-secondary rounded-lg p-0.5">
+          <button
+            onClick={() => setTab("leads")}
+            className={`px-4 py-1.5 rounded-md text-[13px] font-semibold transition-all ${
+              tab === "leads"
+                ? "bg-card text-foreground shadow-sm"
+                : "text-muted-foreground"
+            }`}
+          >
+            Leads
+          </button>
+          <button
+            onClick={() => setTab("analytics")}
+            className={`px-4 py-1.5 rounded-md text-[13px] font-semibold transition-all ${
+              tab === "analytics"
+                ? "bg-card text-foreground shadow-sm"
+                : "text-muted-foreground"
+            }`}
+          >
+            Analytics
+          </button>
+        </div>
         <button
           onClick={handleLogout}
           className="p-2 text-muted-foreground active:text-foreground transition-colors"
@@ -154,16 +180,20 @@ export default function CRMDashboard() {
         </button>
       </div>
 
-      {/* Full-width lead list */}
-      <div className="flex-1 min-h-0">
-        <LeadList
-          leads={leads}
-          selectedLeadId={selectedLeadId}
-          onSelectLead={handleSelectLead}
-        />
+      {/* Content */}
+      <div className="flex-1 min-h-0 flex flex-col">
+        {tab === "leads" ? (
+          <LeadList
+            leads={leads}
+            selectedLeadId={selectedLeadId}
+            onSelectLead={handleSelectLead}
+          />
+        ) : (
+          <AnalyticsDashboard />
+        )}
       </div>
 
-      {/* Lead drawer — slides up on mobile, slides in from right on desktop */}
+      {/* Lead drawer */}
       <LeadDrawer
         lead={selectedLead}
         isOpen={drawerOpen}

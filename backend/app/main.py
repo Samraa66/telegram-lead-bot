@@ -12,6 +12,7 @@ import logging
 import os
 from contextlib import asynccontextmanager
 
+from typing import Optional
 from fastapi import FastAPI, Depends, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -27,7 +28,11 @@ from app.handlers.outbound import handle_outbound
 from app.handlers.leads import process_lead_update
 from app.handlers.signals import process_signal_update
 from app.bot import send_message
-from app.services.analytics import get_today_stats, get_stats_by_source, get_messages_per_day
+from app.services.analytics import (
+    get_today_stats, get_stats_by_source, get_messages_per_day,
+    get_overview, get_conversion_metrics, get_stage_distribution,
+    get_hourly_heatmap, get_day_of_week, get_leads_over_time,
+)
 from app.services.crm_queries import get_contacts, get_contact_messages
 from app.services.scheduler import start_scheduler, stop_scheduler
 from app.services.pipeline import set_stage_manual
@@ -181,6 +186,65 @@ def stats_messages_per_day(db: Session = Depends(get_db), days: int = 30, _=Depe
     return get_messages_per_day(db, days=min(days, 365))
 
 
+def _parse_date_range(from_date: Optional[str], to_date: Optional[str]):
+    """Parse ISO date strings (YYYY-MM-DD) into UTC datetimes. Returns (from_dt, to_dt)."""
+    from datetime import datetime as dt
+    from_dt = dt.strptime(from_date, "%Y-%m-%d") if from_date else None
+    to_dt = dt.strptime(to_date, "%Y-%m-%d").replace(hour=23, minute=59, second=59) if to_date else None
+    return from_dt, to_dt
+
+
+@app.get("/analytics/overview")
+def analytics_overview(
+    from_date: Optional[str] = None, to_date: Optional[str] = None,
+    db: Session = Depends(get_db), _=Depends(get_current_user),
+):
+    from_dt, to_dt = _parse_date_range(from_date, to_date)
+    return get_overview(db, from_dt, to_dt)
+
+
+@app.get("/analytics/conversions")
+def analytics_conversions(
+    from_date: Optional[str] = None, to_date: Optional[str] = None,
+    db: Session = Depends(get_db), _=Depends(get_current_user),
+):
+    from_dt, to_dt = _parse_date_range(from_date, to_date)
+    return get_conversion_metrics(db, from_dt, to_dt)
+
+
+@app.get("/analytics/stage-distribution")
+def analytics_stage_distribution(db: Session = Depends(get_db), _=Depends(get_current_user)):
+    """Current stage distribution — always reflects live state, no date filter."""
+    return get_stage_distribution(db)
+
+
+@app.get("/analytics/hourly-heatmap")
+def analytics_hourly_heatmap(
+    from_date: Optional[str] = None, to_date: Optional[str] = None,
+    db: Session = Depends(get_db), _=Depends(get_current_user),
+):
+    from_dt, to_dt = _parse_date_range(from_date, to_date)
+    return get_hourly_heatmap(db, from_dt, to_dt)
+
+
+@app.get("/analytics/day-of-week")
+def analytics_day_of_week(
+    from_date: Optional[str] = None, to_date: Optional[str] = None,
+    db: Session = Depends(get_db), _=Depends(get_current_user),
+):
+    from_dt, to_dt = _parse_date_range(from_date, to_date)
+    return get_day_of_week(db, from_dt, to_dt)
+
+
+@app.get("/analytics/leads-over-time")
+def analytics_leads_over_time(
+    from_date: Optional[str] = None, to_date: Optional[str] = None,
+    days: int = 30, db: Session = Depends(get_db), _=Depends(get_current_user),
+):
+    from_dt, to_dt = _parse_date_range(from_date, to_date)
+    return get_leads_over_time(db, from_dt, to_dt, days=min(days, 365))
+
+
 @app.get("/health")
 def health():
     """Health check for deployment."""
@@ -311,6 +375,8 @@ def mark_as_noise(contact_id: int, db: Session = Depends(get_db), _=Depends(get_
     contact.current_stage = None
     contact.stage_entered_at = None
     db.commit()
+    from app.services.scheduler import cancel_follow_ups
+    cancel_follow_ups(contact_id)
     return {"ok": True}
 
 

@@ -102,6 +102,8 @@ async def _on_new_message(event) -> None:
 
     user_id: int = sender.id
     username: Optional[str] = sender.username
+    first_name: Optional[str] = sender.first_name
+    last_name: Optional[str] = sender.last_name
     text: str = event.message.text or ""
     now = datetime.utcnow()
 
@@ -124,6 +126,8 @@ async def _on_new_message(event) -> None:
             contact = Contact(
                 id=user_id,
                 username=username,
+                first_name=first_name,
+                last_name=last_name,
                 source=source,
                 classification="new_lead",
                 current_stage=1,
@@ -134,8 +138,17 @@ async def _on_new_message(event) -> None:
             db.add(contact)
             db.flush()
             logger.info("New lead created: user_id=%s username=%s source=%s", user_id, username, source)
+            try:
+                from app.services.scheduler import schedule_follow_ups
+                schedule_follow_ups(user_id, 1, now)
+            except Exception:
+                pass
         else:
             contact.username = username
+            if first_name is not None:
+                contact.first_name = first_name
+            if last_name is not None:
+                contact.last_name = last_name
             contact.last_seen = now
             # Update source if we now have one (e.g. they sent /start with a param later)
             if source and not contact.source:

@@ -134,6 +134,8 @@ def _ensure_columns() -> None:
             ("is_affiliate", "INTEGER DEFAULT 0"),
             ("escalated", "INTEGER DEFAULT 0"),
             ("escalated_at", "TIMESTAMP"),
+            ("first_name", "TEXT"),
+            ("last_name", "TEXT"),
         ]
     else:
         contacts_needed = [
@@ -146,6 +148,8 @@ def _ensure_columns() -> None:
             ("is_affiliate", "BOOLEAN DEFAULT FALSE"),
             ("escalated", "BOOLEAN DEFAULT FALSE"),
             ("escalated_at", "TIMESTAMP"),
+            ("first_name", "VARCHAR(255)"),
+            ("last_name", "VARCHAR(255)"),
         ]
 
     messages_needed = [

@@ -44,12 +44,14 @@ def ensure_contact(
     user_id: int,
     username: Optional[str],
     source: Optional[str],
+    first_name: Optional[str] = None,
+    last_name: Optional[str] = None,
 ) -> Contact:
     """
     Get or create a Contact by Telegram user_id.
 
     On create: sets classification via classifier, initialises stage to 1.
-    On update: refreshes last_seen, updates username/source, re-classifies.
+    On update: refreshes last_seen, updates username/source/name, re-classifies.
     """
     contact = db.query(Contact).filter(Contact.id == user_id).first()
     now = datetime.utcnow()
@@ -58,6 +60,10 @@ def ensure_contact(
         contact.last_seen = now
         if username is not None:
             contact.username = username
+        if first_name is not None:
+            contact.first_name = first_name
+        if last_name is not None:
+            contact.last_name = last_name
         if source is not None:
             contact.source = source
 
@@ -80,6 +86,8 @@ def ensure_contact(
     contact = Contact(
         id=user_id,
         username=username,
+        first_name=first_name,
+        last_name=last_name,
         source=source,
         first_seen=now,
         last_seen=now,
@@ -90,6 +98,11 @@ def ensure_contact(
     db.add(contact)
     db.commit()
     db.refresh(contact)
+    try:
+        from app.services.scheduler import schedule_follow_ups
+        schedule_follow_ups(user_id, 1, now)
+    except Exception:
+        pass
     return contact
 
 
@@ -138,6 +151,8 @@ def process_lead_update(update: dict, db: Session) -> Tuple[Optional[str], Optio
     from_user = message.get("from") or {}
     user_id = from_user.get("id")
     username = from_user.get("username")
+    first_name = from_user.get("first_name")
+    last_name = from_user.get("last_name")
     text = message.get("text")
 
     if user_id is None:
@@ -147,11 +162,11 @@ def process_lead_update(update: dict, db: Session) -> Tuple[Optional[str], Optio
 
     if is_start_command(text):
         source = extract_start_source(text)
-        ensure_contact(db, user_id, username, source)
+        ensure_contact(db, user_id, username, source, first_name, last_name)
         return WELCOME_MESSAGE, chat_id
 
     # Normal inbound message: ensure contact, record it, cancel follow-ups
-    ensure_contact(db, user_id, username, None)
+    ensure_contact(db, user_id, username, None, first_name, last_name)
     record_message(db, user_id, text, direction="inbound", sender="system")
 
     # Cancel pending follow-ups — the lead replied, so the sequence resets

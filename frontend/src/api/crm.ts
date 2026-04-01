@@ -4,6 +4,8 @@ import { getToken, clearAuth } from "./auth";
 type ContactDto = {
   id: number;
   username: string | null;
+  first_name: string | null;
+  last_name: string | null;
   current_stage: number;
   classification: string;
   notes: string;
@@ -47,32 +49,43 @@ async function apiFetch(path: string, init?: RequestInit) {
   return data;
 }
 
-function avatarFor(username: string, id: string): string {
-  const raw = (username || `u${id}`).replace(/^@/, "").trim();
-  if (!raw) return "NA";
-  return raw.slice(0, 2).toUpperCase();
+function buildDisplayName(
+  firstName: string | null,
+  lastName: string | null,
+  username: string | null,
+  id: number,
+): string {
+  const full = [firstName, lastName].filter(Boolean).join(" ").trim();
+  if (full) return full;
+  const handle = (username || "").replace(/^@/, "").trim();
+  if (handle) return handle;
+  return `User ${id}`;
 }
 
-function leadNameFromUsername(username: string | null, id: number): string {
-  const base = (username || `user_${id}`).replace(/^@/, "").trim();
-  return base || `User ${id}`;
+function avatarFor(displayName: string): string {
+  const words = displayName.trim().split(/\s+/);
+  if (words.length >= 2) {
+    return (words[0][0] + words[1][0]).toUpperCase();
+  }
+  return displayName.slice(0, 2).toUpperCase() || "NA";
 }
 
 export async function fetchContacts(includeNoise = false): Promise<Lead[]> {
   const path = includeNoise ? "/contacts?include_noise=true" : "/contacts";
   const contacts = (await apiFetch(path)) as ContactDto[];
   return contacts.map((c) => {
-    const username = c.username ? `@${String(c.username).replace(/^@/, "")}` : `@user_${c.id}`;
+    const username = c.username ? `@${String(c.username).replace(/^@/, "")}` : null;
     const lastTs = c.last_message_at || new Date().toISOString();
+    const displayName = buildDisplayName(c.first_name, c.last_name, c.username, c.id);
     return {
       id: String(c.id),
-      name: leadNameFromUsername(c.username, c.id),
-      username,
+      name: displayName,
+      username: username ?? `@user_${c.id}`,
       stage: backendStageToUi(c.current_stage || 1),
       stageEnteredAt: c.stage_entered_at || lastTs,
       classification: c.classification || "new_lead",
       notes: c.notes || "",
-      avatar: avatarFor(username, String(c.id)),
+      avatar: avatarFor(displayName),
       lastMessageAt: lastTs,
       unread: 0,
     };

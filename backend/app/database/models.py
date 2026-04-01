@@ -30,6 +30,8 @@ class Contact(Base):
 
     id = Column(BigInteger, primary_key=True)  # Telegram user id (64-bit)
     username = Column(String(255), nullable=True)
+    first_name = Column(String(255), nullable=True)
+    last_name = Column(String(255), nullable=True)
     source = Column(String(255), nullable=True)  # campaign tag from /start param
 
     first_seen = Column(DateTime, default=datetime.utcnow)

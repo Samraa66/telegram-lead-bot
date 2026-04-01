@@ -1,7 +1,7 @@
-import { Search, Users, Clock, TrendingUp, MessageCircle } from "lucide-react";
+import { Search, Users, Clock, TrendingUp, MessageCircle, ArrowUpDown } from "lucide-react";
 import { Input } from "../ui/input";
 import { useState } from "react";
-import { Lead, STAGE_COLORS, STAGE_TEXT_COLORS, formatTimeInStage, classificationLabel, classificationColor } from "../../data/crmData";
+import { Lead, Stage, STAGES, STAGE_COLORS, STAGE_TEXT_COLORS, formatTimeInStage, classificationLabel, classificationColor } from "../../data/crmData";
 import { cn } from "../../lib/utils";
 
 interface LeadListProps {
@@ -19,6 +19,8 @@ function getUrgencyLevel(stageEnteredAt: string): "critical" | "high" | "normal"
 }
 
 type ClassificationFilter = "all" | "new_lead" | "warm_lead" | "vip" | "affiliate" | "noise";
+type StageFilter = "all" | Stage;
+type SortMode = "waiting" | "active" | "newest";
 
 const CLASSIFICATION_FILTERS: { key: ClassificationFilter; label: string }[] = [
   { key: "all",       label: "All" },
@@ -29,19 +31,43 @@ const CLASSIFICATION_FILTERS: { key: ClassificationFilter; label: string }[] = [
   { key: "noise",     label: "Noise" },
 ];
 
+const SORT_MODES: { key: SortMode; label: string }[] = [
+  { key: "waiting", label: "Waiting longest" },
+  { key: "active",  label: "Recently active" },
+  { key: "newest",  label: "Newest first" },
+];
+
 export function LeadList({ leads, selectedLeadId, onSelectLead }: LeadListProps) {
   const [search, setSearch] = useState("");
   const [classFilter, setClassFilter] = useState<ClassificationFilter>("all");
+  const [stageFilter, setStageFilter] = useState<StageFilter>("all");
+  const [sortMode, setSortMode] = useState<SortMode>("waiting");
+
+  function cycleSortMode() {
+    setSortMode((prev) => {
+      const idx = SORT_MODES.findIndex((s) => s.key === prev);
+      return SORT_MODES[(idx + 1) % SORT_MODES.length].key;
+    });
+  }
 
   const filtered = leads
     .filter((l) => {
-      // Noise contacts are only shown when the Noise tab is explicitly selected
       if (classFilter === "all" && l.classification === "noise") return false;
       if (classFilter !== "all" && l.classification !== classFilter) return false;
+      if (stageFilter !== "all" && l.stage !== stageFilter) return false;
       if (search && !l.name.toLowerCase().includes(search.toLowerCase()) && !l.username.toLowerCase().includes(search.toLowerCase())) return false;
       return true;
     })
-    .sort((a, b) => new Date(a.stageEnteredAt).getTime() - new Date(b.stageEnteredAt).getTime());
+    .sort((a, b) => {
+      if (sortMode === "waiting") {
+        return new Date(a.stageEnteredAt).getTime() - new Date(b.stageEnteredAt).getTime();
+      }
+      if (sortMode === "active") {
+        return new Date(b.lastMessageAt).getTime() - new Date(a.lastMessageAt).getTime();
+      }
+      // newest: highest id first (Telegram IDs are monotonically increasing)
+      return Number(b.id) - Number(a.id);
+    });
 
   // Stats
   const totalLeads = leads.length;
@@ -51,11 +77,10 @@ export function LeadList({ leads, selectedLeadId, onSelectLead }: LeadListProps)
 
   return (
     <div className="flex flex-col h-full bg-[hsl(var(--ios-grouped-bg))]">
-      {/* iOS-style header */}
-      <div className="safe-top bg-card/80 backdrop-blur-xl sticky top-0 z-10">
-        <div className="px-4 pt-3 pb-1">
-          <h1 className="text-2xl font-bold text-foreground tracking-tight">Leads</h1>
-          <p className="text-xs text-muted-foreground mt-0.5">{totalLeads} total · {unreadCount} unread</p>
+      {/* Sticky search + filter header */}
+      <div className="bg-card/80 backdrop-blur-xl sticky top-0 z-10">
+        <div className="px-4 pt-2 pb-1">
+          <p className="text-xs text-muted-foreground">{totalLeads} total · {unreadCount} unread</p>
         </div>
 
         {/* Search */}
@@ -72,7 +97,7 @@ export function LeadList({ leads, selectedLeadId, onSelectLead }: LeadListProps)
         </div>
 
         {/* Classification filter pills */}
-        <div className="px-4 pb-2 flex gap-1.5 overflow-x-auto scrollbar-hide">
+        <div className="px-4 pb-1 flex gap-1.5 overflow-x-auto scrollbar-hide">
           {CLASSIFICATION_FILTERS.map(({ key, label }) => (
             <button
               key={key}
@@ -87,6 +112,47 @@ export function LeadList({ leads, selectedLeadId, onSelectLead }: LeadListProps)
               {label}
             </button>
           ))}
+        </div>
+
+        {/* Stage filter pills + sort button */}
+        <div className="px-4 pb-2 flex items-center gap-1.5">
+          <div className="flex-1 flex gap-1.5 overflow-x-auto scrollbar-hide">
+            <button
+              onClick={() => setStageFilter("all")}
+              className={cn(
+                "px-3 py-1 rounded-full text-[11px] font-semibold whitespace-nowrap transition-all",
+                stageFilter === "all"
+                  ? "bg-foreground text-background"
+                  : "bg-secondary text-muted-foreground active:bg-accent"
+              )}
+            >
+              All Stages
+            </button>
+            {STAGES.map((stage) => (
+              <button
+                key={stage}
+                onClick={() => setStageFilter(stage)}
+                className={cn(
+                  "px-3 py-1 rounded-full text-[11px] font-semibold whitespace-nowrap transition-all",
+                  stageFilter === stage
+                    ? "bg-foreground text-background"
+                    : "bg-secondary text-muted-foreground active:bg-accent"
+                )}
+              >
+                {stage}
+              </button>
+            ))}
+          </div>
+
+          {/* Sort cycle button */}
+          <button
+            onClick={cycleSortMode}
+            className="shrink-0 flex items-center gap-1 px-2.5 py-1 rounded-full bg-secondary text-muted-foreground text-[11px] font-semibold whitespace-nowrap active:bg-accent transition-all"
+            title={SORT_MODES.find((s) => s.key === sortMode)?.label}
+          >
+            <ArrowUpDown className="h-3 w-3" />
+            {sortMode === "waiting" ? "Longest" : sortMode === "active" ? "Active" : "Newest"}
+          </button>
         </div>
       </div>
 
