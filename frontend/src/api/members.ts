@@ -46,6 +46,11 @@ export interface VipMember {
 export const fetchMembers = (): Promise<VipMember[]> =>
   MOCK ? Promise.resolve(MOCK_MEMBERS) : apiFetch("/members");
 
+export const confirmDeposit = (contactId: string): Promise<void> =>
+  MOCK
+    ? Promise.resolve()
+    : apiFetch(`/contacts/${contactId}/deposit-confirm`, { method: "POST" });
+
 export const reengageMember = (contactId: string, message?: string): Promise<void> =>
   MOCK
     ? Promise.resolve()

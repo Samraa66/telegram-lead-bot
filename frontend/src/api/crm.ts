@@ -149,3 +149,8 @@ export async function markAsNoise(contactId: string): Promise<void> {
   if (import.meta.env.VITE_USE_MOCK === "true") return;
   await apiFetch(`/contacts/${contactId}/noise`, { method: "POST" });
 }
+
+export async function confirmDeposit(contactId: string): Promise<void> {
+  if (import.meta.env.VITE_USE_MOCK === "true") return;
+  await apiFetch(`/contacts/${contactId}/deposit-confirm`, { method: "POST" });
+}

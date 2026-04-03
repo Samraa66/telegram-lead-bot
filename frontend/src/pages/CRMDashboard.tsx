@@ -14,6 +14,7 @@ import {
   escalateContact,
   toggleAffiliate,
   markAsNoise,
+  confirmDeposit,
 } from "../api/crm";
 import { clearAuth, getStoredUser } from "../api/auth";
 
@@ -123,6 +124,17 @@ export default function CRMDashboard() {
       await loadContacts(true);
     } catch (e: any) {
       setError(e?.message || "Failed to update affiliate status");
+    }
+  }, [selectedLeadId, loadContacts]);
+
+  const handleConfirmDeposit = useCallback(async () => {
+    if (!selectedLeadId) return;
+    try {
+      await confirmDeposit(selectedLeadId);
+      setDrawerOpen(false);
+      await loadContacts(true);
+    } catch (e: any) {
+      setError(e?.message || "Failed to confirm deposit");
     }
   }, [selectedLeadId, loadContacts]);
 
@@ -242,6 +254,7 @@ export default function CRMDashboard() {
         onEscalate={handleEscalate}
         onMarkAsNoise={handleMarkAsNoise}
         onToggleAffiliate={handleToggleAffiliate}
+        onConfirmDeposit={handleConfirmDeposit}
       />
     </div>
   );

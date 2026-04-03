@@ -51,6 +51,7 @@ interface LeadDrawerProps {
   onEscalate: () => Promise<void>;
   onMarkAsNoise: () => Promise<void>;
   onToggleAffiliate: () => Promise<void>;
+  onConfirmDeposit: () => Promise<void>;
 }
 
 export function LeadDrawer({
@@ -63,11 +64,13 @@ export function LeadDrawer({
   onEscalate,
   onMarkAsNoise,
   onToggleAffiliate,
+  onConfirmDeposit,
 }: LeadDrawerProps) {
   const [notes, setNotes] = useState(lead?.notes ?? "");
   const [escalated, setEscalated] = useState(false);
   const [sendingTemplate, setSendingTemplate] = useState<string | null>(null);
   const [sentTemplate, setSentTemplate] = useState<string | null>(null);
+  const [depositConfirmed, setDepositConfirmed] = useState(false);
 
   const storedUser = getStoredUser();
   const showAffiliateToggle = storedUser && canManageAffiliates(storedUser.role);
@@ -257,6 +260,20 @@ export function LeadDrawer({
               <AlertTriangle className="h-3 w-3 mr-1" />
               {escalated ? `Escalated to ${ESCALATION_CONTACT_NAME} ✓` : `Escalate to ${ESCALATION_CONTACT_NAME}`}
             </Button>
+            {!depositConfirmed && lead.classification !== "noise" && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={async () => { await onConfirmDeposit(); setDepositConfirmed(true); }}
+                className="w-full text-xs text-stage-qualified border-stage-qualified/30 rounded-xl"
+              >
+                <Star className="h-3 w-3 mr-1" />
+                Confirm Deposit → VIP
+              </Button>
+            )}
+            {depositConfirmed && (
+              <p className="text-center text-[11px] text-stage-qualified font-semibold">Deposit confirmed ✓ — moved to Members</p>
+            )}
             {lead.classification !== "noise" && (
               <Button
                 variant="outline"

@@ -486,6 +486,28 @@ def escalate_contact(contact_id: int, db: Session = Depends(get_db), _=Depends(g
     return {"ok": True}
 
 
+@app.post("/contacts/{contact_id}/deposit-confirm")
+def confirm_deposit(
+    contact_id: int,
+    db: Session = Depends(get_db),
+    _=Depends(require_roles("developer", "admin", "operator", "vip_manager")),
+):
+    """Mark deposit as confirmed and auto-promote contact to stage 8."""
+    from datetime import datetime, date
+    contact = db.query(User).filter(User.id == contact_id).first()
+    if not contact:
+        raise HTTPException(status_code=404, detail="contact not found")
+    contact.deposit_confirmed = True
+    contact.deposit_date = date.today()
+    if (contact.current_stage or 1) < 8:
+        set_stage_manual(contact, 8, moved_by="system", db=db)
+        from app.services.scheduler import schedule_follow_ups
+        schedule_follow_ups(contact_id, 8, datetime.utcnow())
+    else:
+        db.commit()
+    return {"ok": True}
+
+
 @app.post("/contacts/{contact_id}/noise")
 def mark_as_noise(contact_id: int, db: Session = Depends(get_db), _=Depends(get_current_user)):
     """Mark a contact as noise (spam/unrelated). Removes them from the lead pipeline."""

@@ -83,6 +83,7 @@ def ensure_contact(
 
     # New contact
     classification = classify_contact(db, user_id, source)
+    stage, entered_at = _vip_stage_from_name(first_name, last_name, now)
     contact = Contact(
         id=user_id,
         username=username,
@@ -92,18 +93,31 @@ def ensure_contact(
         first_seen=now,
         last_seen=now,
         classification=classification,
-        current_stage=1,
-        stage_entered_at=now,
+        current_stage=stage,
+        stage_entered_at=entered_at,
     )
     db.add(contact)
     db.commit()
     db.refresh(contact)
-    try:
-        from app.services.scheduler import schedule_follow_ups
-        schedule_follow_ups(user_id, 1, now)
-    except Exception:
-        pass
+    if stage == 1:
+        try:
+            from app.services.scheduler import schedule_follow_ups
+            schedule_follow_ups(user_id, 1, now)
+        except Exception:
+            pass
     return contact
+
+
+def _vip_stage_from_name(
+    first_name: Optional[str],
+    last_name: Optional[str],
+    now: datetime,
+) -> tuple[int, datetime]:
+    """Return (stage, stage_entered_at) — stage 7 if name contains 'VIP', else stage 1."""
+    full = f"{first_name or ''} {last_name or ''}".lower()
+    if "vip" in full:
+        return 7, now
+    return 1, now
 
 
 # Keep the old name as an alias so any external callers still work

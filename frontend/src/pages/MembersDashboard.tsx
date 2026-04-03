@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import { Users, Zap, AlertTriangle, TrendingDown, Star, MessageCircle } from "lucide-react";
-import { fetchMembers, reengageMember, VipMember, ActivityStatus } from "../api/members";
+import { fetchMembers, reengageMember, confirmDeposit, VipMember, ActivityStatus } from "../api/members";
 import { cn } from "../lib/utils";
 
 // ---------------------------------------------------------------------------
@@ -70,6 +70,8 @@ export default function MembersDashboard() {
   const [error, setError] = useState<string | null>(null);
   const [sendingId, setSendingId] = useState<string | null>(null);
   const [sentId, setSentId] = useState<string | null>(null);
+  const [confirmingId, setConfirmingId] = useState<string | null>(null);
+  const [confirmedId, setConfirmedId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -85,6 +87,19 @@ export default function MembersDashboard() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  const handleConfirmDeposit = useCallback(async (member: VipMember) => {
+    setConfirmingId(member.id);
+    try {
+      await confirmDeposit(member.id);
+      setConfirmedId(member.id);
+      load();
+    } catch (e: any) {
+      setError(e?.message || "Failed to confirm deposit");
+    } finally {
+      setConfirmingId(null);
+    }
+  }, [load]);
 
   const handleReengage = useCallback(async (member: VipMember) => {
     setSendingId(member.id);
@@ -279,6 +294,22 @@ export default function MembersDashboard() {
                           {isSending ? "…" : member.activity_status === "at_risk" ? "Check In" : "Re-engage"}
                         </>
                       )}
+                    </button>
+                  )}
+
+                  {/* Confirm deposit — stage 7 only */}
+                  {member.stage === 7 && confirmedId !== member.id && (
+                    <button
+                      onClick={() => handleConfirmDeposit(member)}
+                      disabled={confirmingId === member.id}
+                      className={cn(
+                        "shrink-0 flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-[11px] font-semibold transition-all",
+                        "bg-stage-qualified/15 text-stage-qualified active:bg-stage-qualified/25",
+                        confirmingId === member.id && "opacity-50"
+                      )}
+                    >
+                      <Star className="h-3 w-3" />
+                      {confirmingId === member.id ? "…" : "Confirm VIP"}
                     </button>
                   )}
 
