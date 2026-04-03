@@ -144,7 +144,18 @@ def get_overview(
 
     # Range-scoped entries
     stage1_in_range = _entries_at_stage(db, 1, total_non_noise, from_dt, to_dt)
-    stage7_in_range = _entries_at_stage(db, 7, total_non_noise, from_dt, to_dt)
+    # Exclude synthetic vip_name_detected promotions from the deposit count
+    stage7_q = (
+        db.query(func.count(func.distinct(StageHistory.contact_id)))
+        .join(Contact, Contact.id == StageHistory.contact_id)
+        .filter(
+            Contact.classification != "noise",
+            StageHistory.to_stage == 7,
+            StageHistory.trigger_keyword != "vip_name_detected",
+        )
+    )
+    stage7_q = _date_filters(stage7_q, StageHistory.moved_at, from_dt, to_dt)
+    stage7_in_range = stage7_q.scalar() or 0
     overall_conversion = round(stage7_in_range / stage1_in_range * 100, 1) if stage1_in_range > 0 else 0.0
 
     avg_days_to_deposit: Optional[float] = None
@@ -152,7 +163,11 @@ def get_overview(
         q = (
             db.query(StageHistory.moved_at, Contact.first_seen)
             .join(Contact, Contact.id == StageHistory.contact_id)
-            .filter(Contact.classification != "noise", StageHistory.to_stage == 7)
+            .filter(
+                Contact.classification != "noise",
+                StageHistory.to_stage == 7,
+                StageHistory.trigger_keyword != "vip_name_detected",
+            )
         )
         q = _date_filters(q, StageHistory.moved_at, from_dt, to_dt)
         rows = q.all()
@@ -201,12 +216,15 @@ def _cohort_conversion(
     if cohort_size == 0:
         return 0, 0, None
 
-    # Of that cohort, how many have ever reached to_stage?
+    # Of that cohort, how many have ever reached to_stage via real pipeline progression?
+    # Exclude "vip_name_detected" entries — those are synthetic bulk-migration records,
+    # not organic conversions through the sales pipeline.
     converted = (
         db.query(func.count(func.distinct(StageHistory.contact_id)))
         .filter(
             StageHistory.contact_id.in_(db.query(cohort_subq)),
             StageHistory.to_stage == to_stage,
+            StageHistory.trigger_keyword != "vip_name_detected",
         )
         .scalar() or 0
     )
