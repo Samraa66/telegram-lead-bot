@@ -47,6 +47,7 @@ def get_contacts(db: Session, include_noise: bool = False) -> List[Dict[str, Any
     )
     if not include_noise:
         q = q.filter(User.classification != "noise")
+    q = q.filter(User.current_stage < 7)
     rows = q.all()
 
     result: List[Dict[str, Any]] = []
