@@ -178,12 +178,16 @@ def get_conversion_metrics(
     to_dt: Optional[datetime] = None,
 ) -> list:
     """
-    The 5 spec conversion metrics, optionally scoped to a date range.
-    Stage 1 entries = contacts first_seen in range.
-    Stage N entries = stage_history moved_at in range with to_stage = N.
+    The 5 spec conversion metrics.
+    Denominator (from_stage): all-time count up to to_dt — never filtered by from_dt.
+    Numerator (to_stage): filtered by the full date range [from_dt, to_dt].
+    This ensures rates never exceed 100% regardless of date window.
     """
     total_non_noise = db.query(Contact).filter(Contact.classification != "noise").count()
-    e = {s: _entries_at_stage(db, s, total_non_noise, from_dt, to_dt) for s in [1, 2, 4, 5, 7]}
+    # Denominator: cumulative up to end of range (no from_dt cutoff)
+    e_from = {s: _entries_at_stage(db, s, total_non_noise, None, to_dt) for s in [1, 2, 4, 5, 7]}
+    # Numerator: entries within the selected window
+    e_to = {s: _entries_at_stage(db, s, total_non_noise, from_dt, to_dt) for s in [1, 2, 4, 5, 7]}
 
     def rate(num: int, den: int) -> Optional[float]:
         if den == 0:
@@ -191,11 +195,11 @@ def get_conversion_metrics(
         return round(num / den * 100, 1)
 
     return [
-        {"label": "Stage 1 → 2", "from_entries": e[1], "to_entries": e[2], "rate": rate(e[2], e[1]), "target": 40},
-        {"label": "Stage 2 → 4", "from_entries": e[2], "to_entries": e[4], "rate": rate(e[4], e[2]), "target": 50},
-        {"label": "Stage 4 → 5", "from_entries": e[4], "to_entries": e[5], "rate": rate(e[5], e[4]), "target": 60},
-        {"label": "Stage 5 → 7", "from_entries": e[5], "to_entries": e[7], "rate": rate(e[7], e[5]), "target": 60},
-        {"label": "Overall 1 → 7", "from_entries": e[1], "to_entries": e[7], "rate": rate(e[7], e[1]), "target": 10},
+        {"label": "Stage 1 → 2", "from_entries": e_from[1], "to_entries": e_to[2], "rate": rate(e_to[2], e_from[1]), "target": 40},
+        {"label": "Stage 2 → 4", "from_entries": e_from[2], "to_entries": e_to[4], "rate": rate(e_to[4], e_from[2]), "target": 50},
+        {"label": "Stage 4 → 5", "from_entries": e_from[4], "to_entries": e_to[5], "rate": rate(e_to[5], e_from[4]), "target": 60},
+        {"label": "Stage 5 → 7", "from_entries": e_from[5], "to_entries": e_to[7], "rate": rate(e_to[7], e_from[5]), "target": 60},
+        {"label": "Overall 1 → 7", "from_entries": e_from[1], "to_entries": e_to[7], "rate": rate(e_to[7], e_from[1]), "target": 10},
     ]
 
 
