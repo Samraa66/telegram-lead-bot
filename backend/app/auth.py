@@ -23,6 +23,8 @@ from jose import JWTError, jwt
 from app.config import (
     ADMIN_PASSWORD,
     ADMIN_USERNAME,
+    VIP_MANAGER_PASSWORD,
+    VIP_MANAGER_USERNAME,
     DEVELOPER_PASSWORD,
     DEVELOPER_USERNAME,
     OPERATOR_PASSWORD,
@@ -33,7 +35,7 @@ from app.config import (
 ALGORITHM = "HS256"
 TOKEN_EXPIRE_HOURS = 24
 
-Role = Literal["developer", "admin", "operator"]
+Role = Literal["developer", "admin", "operator", "vip_manager"]
 
 _security = HTTPBearer()
 
@@ -46,6 +48,8 @@ def _user_map() -> dict:
         users[ADMIN_USERNAME] = {"password": ADMIN_PASSWORD, "role": "admin"}
     if OPERATOR_USERNAME and OPERATOR_PASSWORD:
         users[OPERATOR_USERNAME] = {"password": OPERATOR_PASSWORD, "role": "operator"}
+    if VIP_MANAGER_USERNAME and VIP_MANAGER_PASSWORD:
+        users[VIP_MANAGER_USERNAME] = {"password": VIP_MANAGER_PASSWORD, "role": "vip_manager"}
     return users
 
 

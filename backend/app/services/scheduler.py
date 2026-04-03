@@ -146,13 +146,13 @@ def cancel_follow_ups(contact_id: int) -> None:
 # Scheduler job
 # ---------------------------------------------------------------------------
 
-def _get_template_text(db, stage: int, seq_num: int) -> str:
+def _get_template_text(db, stage: int, seq_num: int) -> Optional[str]:
     tmpl = (
         db.query(FollowUpTemplate)
         .filter(FollowUpTemplate.stage == stage, FollowUpTemplate.sequence_num == seq_num)
         .first()
     )
-    return tmpl.message_text if tmpl else f"[Follow-up: stage {stage}, attempt {seq_num}]"
+    return tmpl.message_text if tmpl else None
 
 
 def _end_action_for(stage: int, seq_num: int) -> str:
@@ -272,6 +272,12 @@ def _fire_pending_follow_ups() -> None:
                 continue
 
             text = _get_template_text(db, fup.stage, fup.sequence_num)
+            if text is None:
+                logger.warning(
+                    "No template for stage=%s seq=%s — skipping follow-up id=%s",
+                    fup.stage, fup.sequence_num, fup.id,
+                )
+                continue
 
             try:
                 from app.services.telethon_client import send_as_operator_sync, get_client
@@ -315,6 +321,36 @@ def start_scheduler() -> None:
         id="follow_up_tick",
         max_instances=1,
     )
+    # Daily Meta Marketing API pull at 06:00 UTC (10:00 Dubai time)
+    try:
+        from app.services.meta_api import pull_campaign_insights
+        _scheduler.add_job(
+            pull_campaign_insights,
+            "cron",
+            hour=6,
+            minute=0,
+            id="meta_api_pull",
+            max_instances=1,
+        )
+        logger.info("Meta API daily pull scheduled at 06:00 UTC")
+    except Exception:
+        logger.warning("Meta API scheduler not loaded — META_ACCESS_TOKEN may be unset")
+
+    # Daily member activity refresh at 08:00 UTC (12:00 Dubai time)
+    try:
+        from app.services.member_activity import refresh_activity_statuses
+        _scheduler.add_job(
+            refresh_activity_statuses,
+            "cron",
+            hour=8,
+            minute=0,
+            id="member_activity_refresh",
+            max_instances=1,
+        )
+        logger.info("Member activity refresh scheduled at 08:00 UTC")
+    except Exception:
+        logger.warning("Member activity scheduler not loaded")
+
     _scheduler.start()
     logger.info("Follow-up scheduler started (5-minute tick, Dubai window %d–%d)", WINDOW_OPEN, WINDOW_CLOSE)
 

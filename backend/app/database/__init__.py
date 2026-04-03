@@ -174,21 +174,21 @@ def _ensure_columns() -> None:
 # ---------------------------------------------------------------------------
 
 _TEMPLATE_SEEDS = [
-    (1, 1, "[Stage 1 / Follow-up 1] Hey, just checking in — happy to answer any questions!"),
-    (1, 2, "[Stage 1 / Follow-up 2] Still here whenever you're ready. No pressure at all."),
-    (2, 1, "[Stage 2 / Follow-up 1] Did you get a chance to think about your trading experience?"),
-    (3, 1, "[Stage 3 / Follow-up 1] Hey, wanted to follow up — is there anything holding you back?"),
-    (3, 2, "[Stage 3 / Follow-up 2] Still thinking it over? I'm here whenever you're ready."),
-    (4, 1, "[Stage 4 / Follow-up 1] Quick check — did you manage to open your PuPrime account?"),
-    (4, 2, "[Stage 4 / Follow-up 2] The account only takes a few minutes — want me to walk you through it?"),
-    (4, 3, "[Stage 4 / Follow-up 3] Last nudge on the account — let me know if you hit any snags."),
-    (5, 1, "[Stage 5 / Follow-up 1] You're almost there — any issues with the setup?"),
-    (5, 2, "[Stage 5 / Follow-up 2] Let me know if you need help finishing the setup."),
-    (6, 1, "[Stage 6 / Follow-up 1] How's the setup going? Happy to answer any questions."),
-    (6, 2, "[Stage 6 / Follow-up 2] Just making sure everything went smoothly — any questions?"),
-    (7, 1, "[Stage 7 / Follow-up 1] Welcome again! Let me know if you need anything."),
-    (7, 2, "[Stage 7 / Follow-up 2] How are you finding the VIP signals so far?"),
-    (7, 3, "[Stage 7 / Follow-up 3] Checking in — really happy to have you in the room!"),
+    (1, 1, "Hey, just checking in - happy to answer any questions!"),
+    (1, 2, "Still here whenever you're ready. No pressure at all."),
+    (2, 1, "Did you get a chance to think about your trading experience?"),
+    (3, 1, "Hey, wanted to follow up - is there anything holding you back?"),
+    (3, 2, "Still thinking it over? I'm here whenever you're ready."),
+    (4, 1, "Quick check - did you manage to open your PuPrime account?"),
+    (4, 2, "The account only takes a few minutes - want me to walk you through it?"),
+    (4, 3, "Last nudge on the account - let me know if you hit any snags."),
+    (5, 1, "You're almost there - any issues with the setup?"),
+    (5, 2, "Let me know if you need help finishing the setup."),
+    (6, 1, "How's the setup going? Happy to answer any questions."),
+    (6, 2, "Just making sure everything went smoothly - any questions?"),
+    (7, 1, "Welcome again! Let me know if you need anything."),
+    (7, 2, "How are you finding the VIP signals so far?"),
+    (7, 3, "Checking in - really happy to have you in the room!"),
 ]
 
 

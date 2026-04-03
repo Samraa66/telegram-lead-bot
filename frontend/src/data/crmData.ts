@@ -1,6 +1,6 @@
 // Shared CRM frontend types + constants (no mock in-memory leads/messages).
 
-export const BUSINESS_OWNER_NAME = "Walid";
+export const ESCALATION_CONTACT_NAME = "Admin";
 
 export type Stage =
   | "New Lead"
@@ -56,6 +56,7 @@ export interface Lead {
   avatar: string;
   lastMessageAt: string;
   unread: number;
+  escalated: boolean;
 }
 
 export function classificationLabel(c: string): string {

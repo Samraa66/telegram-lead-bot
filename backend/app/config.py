@@ -62,6 +62,19 @@ SESSION_FILE: str = os.path.join(
 # Auth — JWT + user credentials
 SECRET_KEY: str = os.getenv("SECRET_KEY", "change-me-in-production").strip()
 
+# Telegram bot username (without @) — used to construct tracked deep links
+BOT_USERNAME: str = os.getenv("BOT_USERNAME", "").strip()
+
+# Meta Marketing API + Conversions API
+META_ACCESS_TOKEN: str = os.getenv("META_ACCESS_TOKEN", "").strip()
+META_AD_ACCOUNT_ID: str = os.getenv("META_AD_ACCOUNT_ID", "").strip()  # format: act_XXXXXXXXX
+META_PIXEL_ID: str = os.getenv("META_PIXEL_ID", "").strip()
+
+# Ad performance alert thresholds
+ALERT_DAILY_SPEND_THRESHOLD: float = float(os.getenv("ALERT_DAILY_SPEND_THRESHOLD", "100"))
+ALERT_CPL_THRESHOLD: float = float(os.getenv("ALERT_CPL_THRESHOLD", "3"))
+ALERT_CPD_THRESHOLD: float = float(os.getenv("ALERT_CPD_THRESHOLD", "150"))
+
 DEVELOPER_USERNAME: str = os.getenv("DEVELOPER_USERNAME", "").strip()
 DEVELOPER_PASSWORD: str = os.getenv("DEVELOPER_PASSWORD", "").strip()
 
@@ -70,3 +83,6 @@ ADMIN_PASSWORD: str = os.getenv("ADMIN_PASSWORD", "").strip()
 
 OPERATOR_USERNAME: str = os.getenv("OPERATOR_USERNAME", "").strip()
 OPERATOR_PASSWORD: str = os.getenv("OPERATOR_PASSWORD", "").strip()
+
+VIP_MANAGER_USERNAME: str = os.getenv("VIP_MANAGER_USERNAME", "").strip()
+VIP_MANAGER_PASSWORD: str = os.getenv("VIP_MANAGER_PASSWORD", "").strip()

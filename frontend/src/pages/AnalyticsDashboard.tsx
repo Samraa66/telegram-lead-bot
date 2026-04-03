@@ -1,9 +1,12 @@
 import { useEffect, useState, useCallback } from "react";
-import { Users, TrendingUp, Star, Clock, Calendar } from "lucide-react";
+import { Users, TrendingUp, Star, Clock, Calendar, AlertTriangle, BarChart2, Link, Trophy, Copy, Check } from "lucide-react";
 import {
   fetchOverview, fetchConversions, fetchStageDistribution,
   fetchHourlyHeatmap, fetchDayOfWeek, fetchLeadsOverTime,
+  fetchCampaigns, fetchCampaignFlags, fetchCreatives, fetchAdAlerts, fetchTrackedCampaigns,
+  createTrackedCampaign,
   Overview, ConversionMetric, StageCount, HourCount, DayCount, DayOfWeek, DateRange,
+  CampaignMetric, CampaignFlag, CreativeMetric, AdAlert, TrackedCampaign,
 } from "../api/analytics";
 import { cn } from "../lib/utils";
 
@@ -113,14 +116,22 @@ function DayOfWeekChart({ data }: { data: DayOfWeek[] }) {
         <div key={d.day} className="flex-1 flex flex-col items-center gap-0.5">
           <div className="w-full flex flex-col justify-end gap-0.5" style={{ height: 60 }}>
             <div
-              className="w-full rounded-t-sm bg-primary"
-              style={{ height: `${(d.leads / maxLeads) * 56}px`, minHeight: d.leads > 0 ? 3 : 0, opacity: 0.7 }}
+              className="w-full rounded-t-sm"
+              style={{
+                height: `${(d.leads / maxLeads) * 56}px`,
+                minHeight: d.leads > 0 ? 3 : 0,
+                background: "hsl(152, 55%, 62%)",
+              }}
               title={`${d.leads} leads`}
             />
             {d.deposits > 0 && (
               <div
-                className="w-full rounded-t-sm bg-stage-deposited"
-                style={{ height: `${(d.deposits / maxLeads) * 56}px`, minHeight: 3 }}
+                className="w-full rounded-t-sm"
+                style={{
+                  height: `${(d.deposits / maxLeads) * 56}px`,
+                  minHeight: 3,
+                  background: "hsl(158, 65%, 28%)",
+                }}
                 title={`${d.deposits} deposits`}
               />
             )}
@@ -206,8 +217,17 @@ export default function AnalyticsDashboard() {
   const [hourly, setHourly] = useState<HourCount[]>([]);
   const [dow, setDow] = useState<DayOfWeek[]>([]);
   const [leadsOverTime, setLeadsOverTime] = useState<DayCount[]>([]);
+  const [campaigns, setCampaigns] = useState<CampaignMetric[]>([]);
+  const [campaignFlags, setCampaignFlags] = useState<CampaignFlag[]>([]);
+  const [creatives, setCreatives] = useState<CreativeMetric[]>([]);
+  const [adAlerts, setAdAlerts] = useState<AdAlert[]>([]);
+  const [trackedCampaigns, setTrackedCampaigns] = useState<TrackedCampaign[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [newCampaignName, setNewCampaignName] = useState("");
+  const [newCampaignMetaId, setNewCampaignMetaId] = useState("");
+  const [creatingCampaign, setCreatingCampaign] = useState(false);
+  const [copiedTag, setCopiedTag] = useState<string | null>(null);
 
   const load = useCallback((r: DateRange) => {
     setLoading(true);
@@ -219,17 +239,49 @@ export default function AnalyticsDashboard() {
       fetchHourlyHeatmap(r),
       fetchDayOfWeek(r),
       fetchLeadsOverTime(r),
+      fetchCampaigns(r),
+      fetchCampaignFlags(),
+      fetchCreatives(r),
+      fetchAdAlerts(),
+      fetchTrackedCampaigns(),
     ])
-      .then(([ov, cv, sg, hr, dw, lt]) => {
+      .then(([ov, cv, sg, hr, dw, lt, camp, flags, creat, alerts, tracked]) => {
         setOverview(ov);
         setConversions(cv);
         setStages(sg);
         setHourly(hr);
         setDow(dw);
         setLeadsOverTime(lt);
+        setCampaigns(camp);
+        setCampaignFlags(flags);
+        setCreatives(creat);
+        setAdAlerts(alerts);
+        setTrackedCampaigns(tracked);
       })
       .catch((e) => setError(e?.message || "Failed to load analytics"))
       .finally(() => setLoading(false));
+  }, []);
+
+  const handleCreateCampaign = useCallback(async () => {
+    if (!newCampaignName.trim()) return;
+    setCreatingCampaign(true);
+    try {
+      const created = await createTrackedCampaign(newCampaignName.trim(), newCampaignMetaId.trim() || undefined);
+      setTrackedCampaigns((prev) => [created, ...prev]);
+      setNewCampaignName("");
+      setNewCampaignMetaId("");
+    } catch (e: any) {
+      setError(e?.message || "Failed to create campaign");
+    } finally {
+      setCreatingCampaign(false);
+    }
+  }, [newCampaignName, newCampaignMetaId]);
+
+  const handleCopyLink = useCallback((link: string, tag: string) => {
+    navigator.clipboard.writeText(link).then(() => {
+      setCopiedTag(tag);
+      setTimeout(() => setCopiedTag(null), 2000);
+    });
   }, []);
 
   useEffect(() => { load(range); }, []);
@@ -384,10 +436,200 @@ export default function AnalyticsDashboard() {
           <h2 className="text-[13px] font-semibold text-foreground">Day of Week</h2>
         </div>
         <div className="flex items-center gap-3 mb-3">
-          <div className="flex items-center gap-1"><div className="h-2 w-3 rounded-sm bg-primary opacity-70" /><span className="text-[10px] text-muted-foreground">Leads</span></div>
-          <div className="flex items-center gap-1"><div className="h-2 w-3 rounded-sm bg-stage-deposited" /><span className="text-[10px] text-muted-foreground">Deposits</span></div>
+          <div className="flex items-center gap-1"><div className="h-2 w-3 rounded-sm" style={{ background: "hsl(152, 55%, 62%)" }} /><span className="text-[10px] text-muted-foreground">Leads</span></div>
+          <div className="flex items-center gap-1"><div className="h-2 w-3 rounded-sm" style={{ background: "hsl(158, 65%, 28%)" }} /><span className="text-[10px] text-muted-foreground">Deposits</span></div>
         </div>
         <DayOfWeekChart data={dow} />
+      </div>
+
+      {/* ── Phase 4: Ad Intelligence ───────────────────────────────────── */}
+
+      {/* Alert banners — spend / CPL / CPD threshold breaches */}
+      {adAlerts.length > 0 && (
+        <div className="space-y-2">
+          {adAlerts.map((a, i) => (
+            <div
+              key={i}
+              className={cn(
+                "flex items-start gap-2.5 rounded-xl px-3 py-2.5 border",
+                a.severity === "critical"
+                  ? "bg-destructive/8 border-destructive/30"
+                  : "bg-[hsl(38,92%,52%)/8] border-[hsl(38,92%,52%)/30]"
+              )}
+            >
+              <AlertTriangle className={cn("h-3.5 w-3.5 mt-0.5 shrink-0", a.severity === "critical" ? "text-destructive" : "text-[hsl(38,92%,52%)]")} />
+              <div className="min-w-0">
+                <p className={cn("text-[12px] font-semibold", a.severity === "critical" ? "text-destructive" : "text-[hsl(38,92%,58%)]")}>
+                  {a.type === "cpd" ? "CPD Alert" : a.type === "cpl" ? "CPL Alert" : "Spend Alert"}
+                </p>
+                <p className="text-[11px] text-muted-foreground truncate">{a.campaign_name} · {a.message}</p>
+              </div>
+              <span className={cn("text-[13px] font-bold shrink-0 ml-auto", a.severity === "critical" ? "text-destructive" : "text-[hsl(38,92%,58%)]")}>
+                €{a.value}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Underperforming campaign flags — CPD > €200 for 3+ days */}
+      {campaignFlags.length > 0 && (
+        <div className="ios-card p-3 border border-destructive/30 bg-destructive/5">
+          <div className="flex items-center gap-1.5 mb-2">
+            <AlertTriangle className="h-3.5 w-3.5 text-destructive" />
+            <h2 className="text-[13px] font-semibold text-destructive">Underperforming Campaigns</h2>
+          </div>
+          <p className="text-[10px] text-muted-foreground mb-2">CPD &gt; €200 for 3+ consecutive days</p>
+          <div className="space-y-2">
+            {campaignFlags.map((f) => (
+              <div key={f.campaign_id} className="flex items-center justify-between gap-2 bg-destructive/10 rounded-xl px-3 py-2">
+                <div className="min-w-0">
+                  <p className="text-[12px] font-semibold text-foreground truncate">{f.campaign_name}</p>
+                  <p className="text-[10px] text-muted-foreground">{f.consecutive_days} consecutive days over limit</p>
+                </div>
+                <span className="text-[13px] font-bold text-destructive shrink-0">€{f.latest_cpd}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Campaign performance table */}
+      <div className="ios-card p-3">
+        <div className="flex items-center gap-1.5 mb-1">
+          <BarChart2 className="h-3.5 w-3.5 text-primary" />
+          <h2 className="text-[13px] font-semibold text-foreground">Ad Campaign Performance</h2>
+        </div>
+        <p className="text-[10px] text-muted-foreground mb-3">Spend attributed via Telegram /start tag · CPD target &lt;€150</p>
+        {campaigns.length === 0 ? (
+          <p className="text-[12px] text-muted-foreground text-center py-4">No campaign data yet — connect Meta API to populate</p>
+        ) : (
+          <div className="divide-y divide-[hsl(var(--ios-separator))]">
+            <div className="flex items-center gap-2 pb-1.5">
+              <span className="flex-1 text-[10px] text-muted-foreground font-semibold uppercase tracking-wider">Campaign</span>
+              <span className="w-14 text-right text-[10px] text-muted-foreground font-semibold uppercase tracking-wider">Spend</span>
+              <span className="w-10 text-right text-[10px] text-muted-foreground font-semibold uppercase tracking-wider">CPL</span>
+              <span className="w-10 text-right text-[10px] text-muted-foreground font-semibold uppercase tracking-wider">CPD</span>
+            </div>
+            {campaigns.map((c) => (
+              <div key={c.campaign_id} className="flex items-center gap-2 py-2.5">
+                <div className="flex-1 min-w-0">
+                  <p className="text-[12px] font-semibold text-foreground truncate">{c.campaign_name}</p>
+                  <p className="text-[10px] text-muted-foreground">
+                    {c.leads} leads · {c.deposits} deposits · {c.impressions.toLocaleString()} impr
+                  </p>
+                </div>
+                <span className="w-14 text-right text-[12px] font-bold text-foreground">€{c.spend.toFixed(0)}</span>
+                <span className="w-10 text-right text-[12px] font-bold text-muted-foreground">
+                  {c.cpl !== null ? `€${c.cpl}` : "—"}
+                </span>
+                <span className={cn("w-10 text-right text-[12px] font-bold",
+                  c.cpd !== null && c.cpd > 150 ? "text-destructive" :
+                  c.cpd !== null ? "text-stage-deposited" : "text-muted-foreground"
+                )}>
+                  {c.cpd !== null ? `€${c.cpd}` : "—"}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Best performing creative leaderboard */}
+      <div className="ios-card p-3">
+        <div className="flex items-center gap-1.5 mb-1">
+          <Trophy className="h-3.5 w-3.5 text-[hsl(43,92%,52%)]" />
+          <h2 className="text-[13px] font-semibold text-foreground">Best Performing Creatives</h2>
+        </div>
+        <p className="text-[10px] text-muted-foreground mb-3">Sorted by cost per deposit · lowest = best</p>
+        {creatives.length === 0 ? (
+          <p className="text-[12px] text-muted-foreground text-center py-4">No creative data yet — connect Meta API to populate</p>
+        ) : (
+          <div className="divide-y divide-[hsl(var(--ios-separator))]">
+            {creatives.map((c, i) => (
+              <div key={c.ad_id} className="flex items-center gap-2 py-2.5">
+                <span className={cn("text-[11px] font-bold w-5 shrink-0",
+                  i === 0 ? "text-[hsl(43,92%,52%)]" : "text-muted-foreground"
+                )}>#{i + 1}</span>
+                <div className="flex-1 min-w-0">
+                  <p className="text-[12px] font-semibold text-foreground truncate">{c.ad_name}</p>
+                  <p className="text-[10px] text-muted-foreground truncate">{c.campaign_name}</p>
+                </div>
+                <div className="text-right shrink-0">
+                  <p className={cn("text-[13px] font-bold",
+                    c.cpd !== null && c.cpd <= 150 ? "text-stage-deposited" :
+                    c.cpd !== null ? "text-destructive" : "text-muted-foreground"
+                  )}>
+                    {c.cpd !== null ? `€${c.cpd}` : "—"}
+                  </p>
+                  <p className="text-[10px] text-muted-foreground">{c.deposits}dep · €{c.spend.toFixed(0)}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Tracked URL generator */}
+      <div className="ios-card p-3">
+        <div className="flex items-center gap-1.5 mb-1">
+          <Link className="h-3.5 w-3.5 text-primary" />
+          <h2 className="text-[13px] font-semibold text-foreground">Tracked Campaign Links</h2>
+        </div>
+        <p className="text-[10px] text-muted-foreground mb-3">Generate a unique Telegram link per Meta ad campaign for full attribution</p>
+
+        {/* Generator form */}
+        <div className="space-y-2 mb-4">
+          <input
+            type="text"
+            value={newCampaignName}
+            onChange={(e) => setNewCampaignName(e.target.value)}
+            placeholder="Campaign name (e.g. UAE Lookalike Oct)"
+            className="w-full bg-secondary rounded-xl px-3 py-2 text-[12px] text-foreground placeholder-muted-foreground outline-none focus:ring-1 focus:ring-primary border-none"
+          />
+          <input
+            type="text"
+            value={newCampaignMetaId}
+            onChange={(e) => setNewCampaignMetaId(e.target.value)}
+            placeholder="Meta campaign ID (optional)"
+            className="w-full bg-secondary rounded-xl px-3 py-2 text-[12px] text-foreground placeholder-muted-foreground outline-none focus:ring-1 focus:ring-primary border-none"
+          />
+          <button
+            onClick={handleCreateCampaign}
+            disabled={!newCampaignName.trim() || creatingCampaign}
+            className="w-full bg-primary text-primary-foreground font-semibold text-[12px] py-2 rounded-xl disabled:opacity-40 transition-opacity"
+          >
+            {creatingCampaign ? "Generating…" : "Generate Tracked Link"}
+          </button>
+        </div>
+
+        {/* Existing tracked campaigns */}
+        {trackedCampaigns.length > 0 && (
+          <div className="divide-y divide-[hsl(var(--ios-separator))]">
+            {trackedCampaigns.map((c) => (
+              <div key={c.source_tag} className="py-2.5">
+                <div className="flex items-center justify-between gap-2 mb-1">
+                  <p className="text-[12px] font-semibold text-foreground truncate">{c.name}</p>
+                  <span className="text-[10px] text-muted-foreground shrink-0">{c.leads}L · {c.deposits}D</span>
+                </div>
+                {c.link && (
+                  <div className="flex items-center gap-2 bg-secondary rounded-lg px-2.5 py-1.5">
+                    <p className="flex-1 text-[10px] text-muted-foreground truncate font-mono">{c.link}</p>
+                    <button
+                      onClick={() => handleCopyLink(c.link!, c.source_tag)}
+                      className="shrink-0 text-primary"
+                    >
+                      {copiedTag === c.source_tag
+                        ? <Check className="h-3.5 w-3.5" />
+                        : <Copy className="h-3.5 w-3.5" />
+                      }
+                    </button>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
     </div>

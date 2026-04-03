@@ -79,7 +79,7 @@ def advance_stage(
     Args:
         contact:      Contact bound to a live SQLAlchemy session
         message_text: the outgoing message text to scan
-        moved_by:     'system' (keyword-triggered) or 'talal' / 'manual'
+        moved_by:     'system' (keyword-triggered) or 'operator' / 'manual'
         db:           override session; falls back to object_session(contact)
     """
     session = db or object_session(contact)
@@ -135,6 +135,14 @@ def advance_stage(
             contact.id, from_stage, target_stage, keyword, moved_by, contact.classification,
         )
         session.commit()
+
+        if target_stage == 7:
+            try:
+                from app.services.meta_api import send_capi_conversion
+                send_capi_conversion(contact.id, now)
+            except Exception:
+                logger.exception("CAPI fire failed for contact %s", contact.id)
+
         return target_stage
 
     session.commit()
@@ -145,7 +153,7 @@ def set_stage_manual(
     contact: Contact,
     new_stage: int,
     *,
-    moved_by: str = "talal",
+    moved_by: str = "operator",
     db: Optional[Session] = None,
 ) -> None:
     """
@@ -179,5 +187,14 @@ def set_stage_manual(
             "Manual stage override: contact_id=%s %s→%s (by=%s, classification=%s)",
             contact.id, from_stage, new_stage, moved_by, contact.classification,
         )
+        session.commit()
+
+        if new_stage == 7:
+            try:
+                from app.services.meta_api import send_capi_conversion
+                send_capi_conversion(contact.id, now)
+            except Exception:
+                logger.exception("CAPI fire failed for contact %s", contact.id)
+        return
 
     session.commit()

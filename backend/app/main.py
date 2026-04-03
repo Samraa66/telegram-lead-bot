@@ -32,6 +32,9 @@ from app.services.analytics import (
     get_today_stats, get_stats_by_source, get_messages_per_day,
     get_overview, get_conversion_metrics, get_stage_distribution,
     get_hourly_heatmap, get_day_of_week, get_leads_over_time,
+    get_campaign_performance, get_underperforming_campaigns,
+    get_campaign_alerts, get_best_performing_creatives,
+    get_affiliate_performance,
 )
 from app.services.crm_queries import get_contacts, get_contact_messages
 from app.services.scheduler import start_scheduler, stop_scheduler
@@ -245,6 +248,124 @@ def analytics_leads_over_time(
     return get_leads_over_time(db, from_dt, to_dt, days=min(days, 365))
 
 
+@app.get("/analytics/campaigns")
+def analytics_campaigns(
+    from_date: Optional[str] = None, to_date: Optional[str] = None,
+    db: Session = Depends(get_db), _=Depends(get_current_user),
+):
+    """Campaign performance: spend, CPL, CPD per Meta campaign, optionally date-filtered."""
+    from_dt, to_dt = _parse_date_range(from_date, to_date)
+    return get_campaign_performance(db, from_dt, to_dt)
+
+
+@app.get("/analytics/campaigns/flags")
+def analytics_campaign_flags(db: Session = Depends(get_db), _=Depends(get_current_user)):
+    """Campaigns flagged as underperforming (CPD > 200 EUR for 3+ consecutive days)."""
+    return get_underperforming_campaigns(db)
+
+
+@app.get("/analytics/campaigns/creatives")
+def analytics_creatives(
+    from_date: Optional[str] = None, to_date: Optional[str] = None,
+    db: Session = Depends(get_db), _=Depends(get_current_user),
+):
+    """Ad creative leaderboard — aggregated by ad, sorted by CPD ascending (best first)."""
+    from_dt, to_dt = _parse_date_range(from_date, to_date)
+    return get_best_performing_creatives(db, from_dt, to_dt)
+
+
+@app.get("/analytics/alerts")
+def analytics_alerts(db: Session = Depends(get_db), _=Depends(get_current_user)):
+    """Active ad performance alerts: spend threshold, CPL > €3, CPD > €150."""
+    return get_campaign_alerts(db)
+
+
+@app.post("/analytics/campaigns/pull")
+def trigger_meta_pull(_=Depends(require_roles("developer", "admin"))):
+    """Manually trigger a Meta Marketing API pull (developer/admin only)."""
+    try:
+        from app.services.meta_api import pull_campaign_insights
+        pull_campaign_insights()
+        return {"ok": True, "message": "Meta campaign pull triggered"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
+# Campaign registry — tracked URL generator
+# ---------------------------------------------------------------------------
+
+class CreateCampaignRequest(BaseModel):
+    name: str
+    meta_campaign_id: Optional[str] = None
+
+
+@app.post("/campaigns")
+def create_campaign(
+    req: CreateCampaignRequest,
+    db: Session = Depends(get_db),
+    _=Depends(require_roles("developer", "admin")),
+):
+    """Create a tracked campaign and return the Telegram deep link."""
+    import uuid
+    from app.database.models import Campaign
+    from app.config import BOT_USERNAME
+
+    source_tag = "cmp_" + uuid.uuid4().hex[:8]
+    campaign = Campaign(
+        source_tag=source_tag,
+        name=req.name.strip(),
+        meta_campaign_id=req.meta_campaign_id,
+    )
+    db.add(campaign)
+    db.commit()
+    db.refresh(campaign)
+
+    link = f"https://t.me/{BOT_USERNAME}?start={source_tag}" if BOT_USERNAME else None
+    return {
+        "id": campaign.id,
+        "source_tag": source_tag,
+        "name": campaign.name,
+        "meta_campaign_id": campaign.meta_campaign_id,
+        "link": link,
+        "created_at": campaign.created_at.isoformat(),
+    }
+
+
+@app.get("/campaigns")
+def list_campaigns(
+    db: Session = Depends(get_db),
+    _=Depends(require_roles("developer", "admin")),
+):
+    """List all tracked campaigns with their attribution stats."""
+    from app.database.models import Campaign, Contact, StageHistory
+    from app.config import BOT_USERNAME
+
+    campaigns = db.query(Campaign).order_by(Campaign.created_at.desc()).all()
+    result = []
+    for c in campaigns:
+        leads = db.query(Contact).filter(Contact.source == c.source_tag).count()
+        deposits = (
+            db.query(StageHistory)
+            .join(Contact, Contact.id == StageHistory.contact_id)
+            .filter(Contact.source == c.source_tag, StageHistory.to_stage == 7)
+            .count()
+        )
+        link = f"https://t.me/{BOT_USERNAME}?start={c.source_tag}" if BOT_USERNAME else None
+        result.append({
+            "id": c.id,
+            "source_tag": c.source_tag,
+            "name": c.name,
+            "meta_campaign_id": c.meta_campaign_id,
+            "link": link,
+            "leads": leads,
+            "deposits": deposits,
+            "is_active": c.is_active,
+            "created_at": c.created_at.isoformat(),
+        })
+    return result
+
+
 @app.get("/health")
 def health():
     """Health check for deployment."""
@@ -378,6 +499,156 @@ def mark_as_noise(contact_id: int, db: Session = Depends(get_db), _=Depends(get_
     from app.services.scheduler import cancel_follow_ups
     cancel_follow_ups(contact_id)
     return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Phase 5: Member Activity Monitor
+# ---------------------------------------------------------------------------
+
+class ReengageRequest(BaseModel):
+    message: Optional[str] = None
+
+
+@app.get("/members")
+def list_members(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_roles("developer", "admin", "vip_manager")),
+):
+    """VIP member list (Stage 7/8) with activity status. Accessible to vip_manager, admin, developer."""
+    from app.services.member_activity import get_vip_members
+    return get_vip_members(db)
+
+
+@app.post("/members/{contact_id}/reengage")
+def reengage_member(
+    contact_id: int,
+    req: ReengageRequest,
+    db: Session = Depends(get_db),
+    _=Depends(require_roles("developer", "admin", "vip_manager")),
+):
+    """Send a one-tap re-engagement message to a VIP member."""
+    contact = db.query(User).filter(User.id == contact_id).first()
+    if not contact:
+        raise HTTPException(status_code=404, detail="contact not found")
+    if contact.current_stage not in (7, 8):
+        raise HTTPException(status_code=400, detail="contact is not a VIP member")
+
+    from app.services.member_activity import send_reengage_message
+    ok = send_reengage_message(contact_id, req.message)
+    if not ok:
+        raise HTTPException(status_code=502, detail="telegram send failed")
+    return {"ok": True}
+
+
+@app.post("/members/refresh-activity")
+def trigger_activity_refresh(
+    _=Depends(require_roles("developer", "admin")),
+):
+    """Manually trigger member activity status refresh (developer/admin only)."""
+    from app.services.member_activity import refresh_activity_statuses
+    refresh_activity_statuses()
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Phase 6: Affiliate Dashboard
+# ---------------------------------------------------------------------------
+
+class CreateAffiliateRequest(BaseModel):
+    name: str
+    username: Optional[str] = None
+    commission_rate: float = 15.0
+
+
+class UpdateLotsRequest(BaseModel):
+    lots_traded: float
+
+
+@app.get("/affiliates/performance")
+def affiliate_performance(
+    db: Session = Depends(get_db),
+    _=Depends(require_roles("developer", "admin")),
+):
+    """Affiliate leaderboard with attributed leads, deposits, and commission earned."""
+    return get_affiliate_performance(db)
+
+
+@app.get("/affiliates")
+def list_affiliates(
+    db: Session = Depends(get_db),
+    _=Depends(require_roles("developer", "admin")),
+):
+    """List all affiliates (active and inactive)."""
+    from app.database.models import Affiliate
+    from app.config import BOT_USERNAME
+    affiliates = db.query(Affiliate).order_by(Affiliate.created_at.desc()).all()
+    return [
+        {
+            "id": a.id,
+            "name": a.name,
+            "username": a.username,
+            "referral_tag": a.referral_tag,
+            "referral_link": f"https://t.me/{BOT_USERNAME}?start={a.referral_tag}" if BOT_USERNAME else None,
+            "commission_rate": a.commission_rate,
+            "lots_traded": a.lots_traded,
+            "is_active": a.is_active,
+            "created_at": a.created_at.isoformat() if a.created_at else None,
+        }
+        for a in affiliates
+    ]
+
+
+@app.post("/affiliates")
+def create_affiliate(
+    req: CreateAffiliateRequest,
+    db: Session = Depends(get_db),
+    _=Depends(require_roles("developer", "admin")),
+):
+    """Register a new affiliate and generate a unique referral tag."""
+    import uuid
+    from app.database.models import Affiliate
+    from app.config import BOT_USERNAME
+
+    referral_tag = "ref_" + uuid.uuid4().hex[:8]
+    affiliate = Affiliate(
+        name=req.name.strip(),
+        username=req.username.strip() if req.username else None,
+        referral_tag=referral_tag,
+        commission_rate=req.commission_rate,
+    )
+    db.add(affiliate)
+    db.commit()
+    db.refresh(affiliate)
+
+    link = f"https://t.me/{BOT_USERNAME}?start={referral_tag}" if BOT_USERNAME else None
+    return {
+        "id": affiliate.id,
+        "name": affiliate.name,
+        "username": affiliate.username,
+        "referral_tag": referral_tag,
+        "referral_link": link,
+        "commission_rate": affiliate.commission_rate,
+        "lots_traded": affiliate.lots_traded,
+        "is_active": affiliate.is_active,
+        "created_at": affiliate.created_at.isoformat(),
+    }
+
+
+@app.patch("/affiliates/{affiliate_id}/lots")
+def update_affiliate_lots(
+    affiliate_id: int,
+    req: UpdateLotsRequest,
+    db: Session = Depends(get_db),
+    _=Depends(require_roles("developer", "admin")),
+):
+    """Update the manually-tracked lots traded for an affiliate (triggers commission recalc)."""
+    from app.database.models import Affiliate
+    affiliate = db.query(Affiliate).filter(Affiliate.id == affiliate_id).first()
+    if not affiliate:
+        raise HTTPException(status_code=404, detail="affiliate not found")
+    affiliate.lots_traded = req.lots_traded
+    db.commit()
+    return {"ok": True, "lots_traded": affiliate.lots_traded, "commission_earned": round(affiliate.lots_traded * affiliate.commission_rate, 2)}
 
 
 @app.post("/contacts/{contact_id}/affiliate")

@@ -5,12 +5,12 @@ Provides data for the /stats/* API endpoints: today counts, by-source breakdown,
 and messages per day. Uses the Contact model (table: contacts).
 """
 
-from datetime import datetime, timedelta
+from datetime import date as date_type, datetime, timedelta
 from typing import Optional
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.database.models import Contact, Message, StageHistory
+from app.database.models import AdCampaign, AdCreative, Affiliate, Contact, Message, StageHistory
 
 
 def get_today_stats(db: Session) -> dict:
@@ -279,3 +279,245 @@ def get_leads_over_time(
         q = q.filter(Contact.first_seen <= to_dt)
     q = q.group_by(func.date(Contact.first_seen)).order_by(func.date(Contact.first_seen))
     return [{"date": str(day), "count": count} for day, count in q.all()]
+
+
+# ---------------------------------------------------------------------------
+# Phase 4: Ad Intelligence
+# ---------------------------------------------------------------------------
+
+def get_campaign_performance(
+    db: Session,
+    from_dt: Optional[datetime] = None,
+    to_dt: Optional[datetime] = None,
+) -> list:
+    """
+    Aggregate ad_campaigns rows by campaign, optionally scoped to a date range.
+    Returns spend, impressions, clicks, leads, deposits, CPL, CPD per campaign.
+    """
+    q = db.query(AdCampaign)
+    if from_dt:
+        q = q.filter(AdCampaign.date >= from_dt.date())
+    if to_dt:
+        q = q.filter(AdCampaign.date <= to_dt.date())
+
+    rows = q.all()
+    campaigns: dict[str, dict] = {}
+    for row in rows:
+        if row.campaign_id not in campaigns:
+            campaigns[row.campaign_id] = {
+                "campaign_id": row.campaign_id,
+                "campaign_name": row.campaign_name or row.campaign_id,
+                "spend": 0.0,
+                "impressions": 0,
+                "clicks": 0,
+                "leads": 0,
+                "deposits": 0,
+            }
+        c = campaigns[row.campaign_id]
+        c["spend"] += row.spend
+        c["impressions"] += row.impressions
+        c["clicks"] += row.clicks
+        c["leads"] += row.leads
+        c["deposits"] += row.deposits
+
+    result = []
+    for c in campaigns.values():
+        cpl = round(c["spend"] / c["leads"], 2) if c["leads"] > 0 else None
+        cpd = round(c["spend"] / c["deposits"], 2) if c["deposits"] > 0 else None
+        result.append({
+            **c,
+            "spend": round(c["spend"], 2),
+            "cpl": cpl,
+            "cpd": cpd,
+        })
+
+    return sorted(result, key=lambda x: x["spend"], reverse=True)
+
+
+def get_underperforming_campaigns(db: Session) -> list:
+    """
+    Flag campaigns where cost-per-deposit (CPD) exceeds 200 EUR
+    for 3 or more consecutive days in the last 30 days.
+    """
+    cutoff = date_type.today() - timedelta(days=30)
+    rows = (
+        db.query(AdCampaign)
+        .filter(AdCampaign.date >= cutoff)
+        .order_by(AdCampaign.campaign_id, AdCampaign.date)
+        .all()
+    )
+
+    # Group daily rows by campaign
+    by_campaign: dict[str, list] = {}
+    for row in rows:
+        by_campaign.setdefault(row.campaign_id, []).append(row)
+
+    flagged = []
+    for campaign_id, daily_rows in by_campaign.items():
+        consecutive = 0
+        worst_cpd = 0.0
+        for row in daily_rows:
+            cpd = (row.spend / row.deposits) if row.deposits > 0 else 0.0
+            if cpd > 200:
+                consecutive += 1
+                worst_cpd = max(worst_cpd, cpd)
+            else:
+                consecutive = 0
+                worst_cpd = 0.0
+
+            if consecutive >= 3:
+                flagged.append({
+                    "campaign_id": campaign_id,
+                    "campaign_name": row.campaign_name or campaign_id,
+                    "consecutive_days": consecutive,
+                    "latest_cpd": round(worst_cpd, 2),
+                })
+                break
+
+    return flagged
+
+
+def get_campaign_alerts(db: Session) -> list:
+    """
+    Returns active alerts based on yesterday's campaign data:
+    - Daily spend exceeds ALERT_DAILY_SPEND_THRESHOLD
+    - CPL exceeds ALERT_CPL_THRESHOLD (€3)
+    - CPD exceeds ALERT_CPD_THRESHOLD (€150)
+    """
+    from app.config import ALERT_DAILY_SPEND_THRESHOLD, ALERT_CPL_THRESHOLD, ALERT_CPD_THRESHOLD
+
+    yesterday = date_type.today() - timedelta(days=1)
+    rows = db.query(AdCampaign).filter(AdCampaign.date == yesterday).all()
+
+    alerts = []
+    for row in rows:
+        name = row.campaign_name or row.campaign_id
+        cpl = (row.spend / row.leads) if row.leads > 0 else None
+        cpd = (row.spend / row.deposits) if row.deposits > 0 else None
+
+        if row.spend > ALERT_DAILY_SPEND_THRESHOLD:
+            alerts.append({
+                "type": "spend",
+                "severity": "warning",
+                "campaign_name": name,
+                "message": f"Daily spend €{row.spend:.2f} exceeds threshold €{ALERT_DAILY_SPEND_THRESHOLD:.0f}",
+                "value": round(row.spend, 2),
+                "threshold": ALERT_DAILY_SPEND_THRESHOLD,
+            })
+        if cpl is not None and cpl > ALERT_CPL_THRESHOLD:
+            alerts.append({
+                "type": "cpl",
+                "severity": "warning",
+                "campaign_name": name,
+                "message": f"CPL €{cpl:.2f} exceeds threshold €{ALERT_CPL_THRESHOLD:.0f}",
+                "value": round(cpl, 2),
+                "threshold": ALERT_CPL_THRESHOLD,
+            })
+        if cpd is not None and cpd > ALERT_CPD_THRESHOLD:
+            alerts.append({
+                "type": "cpd",
+                "severity": "critical",
+                "campaign_name": name,
+                "message": f"CPD €{cpd:.2f} exceeds threshold €{ALERT_CPD_THRESHOLD:.0f}",
+                "value": round(cpd, 2),
+                "threshold": ALERT_CPD_THRESHOLD,
+            })
+
+    return alerts
+
+
+def get_best_performing_creatives(
+    db: Session,
+    from_dt: Optional[datetime] = None,
+    to_dt: Optional[datetime] = None,
+) -> list:
+    """
+    Aggregate AdCreative rows by ad_id and return sorted by CPD ascending (best first).
+    Creatives with no deposits are listed last.
+    """
+    q = db.query(AdCreative)
+    if from_dt:
+        q = q.filter(AdCreative.date >= from_dt.date())
+    if to_dt:
+        q = q.filter(AdCreative.date <= to_dt.date())
+
+    rows = q.all()
+    creatives: dict[str, dict] = {}
+    for row in rows:
+        if row.ad_id not in creatives:
+            creatives[row.ad_id] = {
+                "ad_id": row.ad_id,
+                "ad_name": row.ad_name or row.ad_id,
+                "campaign_id": row.campaign_id,
+                "campaign_name": row.campaign_name or row.campaign_id,
+                "spend": 0.0,
+                "impressions": 0,
+                "clicks": 0,
+                "leads": 0,
+                "deposits": 0,
+            }
+        c = creatives[row.ad_id]
+        c["spend"] += row.spend
+        c["impressions"] += row.impressions
+        c["clicks"] += row.clicks
+        c["leads"] += row.leads
+        c["deposits"] += row.deposits
+
+    result = []
+    for c in creatives.values():
+        cpl = round(c["spend"] / c["leads"], 2) if c["leads"] > 0 else None
+        cpd = round(c["spend"] / c["deposits"], 2) if c["deposits"] > 0 else None
+        result.append({**c, "spend": round(c["spend"], 2), "cpl": cpl, "cpd": cpd})
+
+    # Sort: creatives with deposits first (by CPD asc), then no-deposit creatives by spend desc
+    return sorted(result, key=lambda x: (x["cpd"] is None, x["cpd"] or 0, -x["spend"]))
+
+
+# ---------------------------------------------------------------------------
+# Phase 6: Affiliate Dashboard
+# ---------------------------------------------------------------------------
+
+def get_affiliate_performance(db: Session) -> list:
+    """
+    For each active affiliate: count attributed leads and deposits via contact.source,
+    compute conversion rate and commission earned (lots_traded × commission_rate).
+    Sorted by deposits descending (leaderboard order).
+    """
+    from app.config import BOT_USERNAME
+
+    affiliates = db.query(Affiliate).filter(Affiliate.is_active.is_(True)).order_by(Affiliate.created_at).all()
+    result = []
+    for aff in affiliates:
+        leads = (
+            db.query(func.count(Contact.id))
+            .filter(Contact.source == aff.referral_tag, Contact.classification != "noise")
+            .scalar() or 0
+        )
+        deposits = (
+            db.query(func.count(func.distinct(StageHistory.contact_id)))
+            .join(Contact, Contact.id == StageHistory.contact_id)
+            .filter(Contact.source == aff.referral_tag, StageHistory.to_stage == 7)
+            .scalar() or 0
+        )
+        conversion_rate = round(deposits / leads * 100, 1) if leads > 0 else 0.0
+        commission_earned = round(aff.lots_traded * aff.commission_rate, 2)
+        referral_link = (
+            f"https://t.me/{BOT_USERNAME}?start={aff.referral_tag}" if BOT_USERNAME else None
+        )
+        result.append({
+            "id": aff.id,
+            "name": aff.name,
+            "username": aff.username,
+            "referral_tag": aff.referral_tag,
+            "referral_link": referral_link,
+            "leads": leads,
+            "deposits": deposits,
+            "conversion_rate": conversion_rate,
+            "lots_traded": aff.lots_traded,
+            "commission_rate": aff.commission_rate,
+            "commission_earned": commission_earned,
+            "is_active": aff.is_active,
+            "created_at": aff.created_at.isoformat() if aff.created_at else None,
+        })
+
+    return sorted(result, key=lambda x: (x["deposits"], x["leads"]), reverse=True)

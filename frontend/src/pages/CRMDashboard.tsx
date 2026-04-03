@@ -3,6 +3,8 @@ import { LogOut } from "lucide-react";
 import { LeadList } from "../components/crm/LeadList";
 import { LeadDrawer } from "../components/crm/LeadDrawer";
 import AnalyticsDashboard from "./AnalyticsDashboard";
+import MembersDashboard from "./MembersDashboard";
+import AffiliatesDashboard from "./AffiliatesDashboard";
 import { Lead, uiStageToBackend } from "../data/crmData";
 import {
   fetchContacts,
@@ -13,12 +15,16 @@ import {
   toggleAffiliate,
   markAsNoise,
 } from "../api/crm";
-import { clearAuth } from "../api/auth";
+import { clearAuth, getStoredUser } from "../api/auth";
 
-type Tab = "leads" | "analytics";
+type Tab = "leads" | "analytics" | "members" | "affiliates";
 
 export default function CRMDashboard() {
-  const [tab, setTab] = useState<Tab>("leads");
+  const storedUser = getStoredUser();
+  const isVipManager = storedUser?.role === "vip_manager";
+  const canSeeMembers = ["developer", "admin", "vip_manager"].includes(storedUser?.role || "");
+  const canSeeAffiliates = ["developer", "admin"].includes(storedUser?.role || "");
+  const [tab, setTab] = useState<Tab>(isVipManager ? "members" : "leads");
   const [leads, setLeads] = useState<Lead[]>([]);
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -91,6 +97,9 @@ export default function CRMDashboard() {
     if (!selectedLeadId) return;
     try {
       await escalateContact(selectedLeadId);
+      setLeads((prev) =>
+        prev.map((l) => (l.id === selectedLeadId ? { ...l, escalated: true } : l))
+      );
     } catch (e: any) {
       setError(e?.message || "Failed to escalate");
     }
@@ -150,26 +159,54 @@ export default function CRMDashboard() {
       {/* Top bar: tab toggle + logout */}
       <div className="safe-top bg-card/80 backdrop-blur-xl border-b border-[hsl(var(--ios-separator))] flex items-center justify-between px-4 pt-3 pb-2 z-20">
         <div className="flex gap-1 bg-secondary rounded-lg p-0.5">
-          <button
-            onClick={() => setTab("leads")}
-            className={`px-4 py-1.5 rounded-md text-[13px] font-semibold transition-all ${
-              tab === "leads"
-                ? "bg-card text-foreground shadow-sm"
-                : "text-muted-foreground"
-            }`}
-          >
-            Leads
-          </button>
-          <button
-            onClick={() => setTab("analytics")}
-            className={`px-4 py-1.5 rounded-md text-[13px] font-semibold transition-all ${
-              tab === "analytics"
-                ? "bg-card text-foreground shadow-sm"
-                : "text-muted-foreground"
-            }`}
-          >
-            Analytics
-          </button>
+          {!isVipManager && (
+            <button
+              onClick={() => setTab("leads")}
+              className={`px-4 py-1.5 rounded-md text-[13px] font-semibold transition-all ${
+                tab === "leads"
+                  ? "bg-card text-foreground shadow-sm"
+                  : "text-muted-foreground"
+              }`}
+            >
+              Leads
+            </button>
+          )}
+          {!isVipManager && (
+            <button
+              onClick={() => setTab("analytics")}
+              className={`px-4 py-1.5 rounded-md text-[13px] font-semibold transition-all ${
+                tab === "analytics"
+                  ? "bg-card text-foreground shadow-sm"
+                  : "text-muted-foreground"
+              }`}
+            >
+              Analytics
+            </button>
+          )}
+          {canSeeMembers && (
+            <button
+              onClick={() => setTab("members")}
+              className={`px-4 py-1.5 rounded-md text-[13px] font-semibold transition-all ${
+                tab === "members"
+                  ? "bg-card text-foreground shadow-sm"
+                  : "text-muted-foreground"
+              }`}
+            >
+              Members
+            </button>
+          )}
+          {canSeeAffiliates && (
+            <button
+              onClick={() => setTab("affiliates")}
+              className={`px-4 py-1.5 rounded-md text-[13px] font-semibold transition-all ${
+                tab === "affiliates"
+                  ? "bg-card text-foreground shadow-sm"
+                  : "text-muted-foreground"
+              }`}
+            >
+              Affiliates
+            </button>
+          )}
         </div>
         <button
           onClick={handleLogout}
@@ -182,15 +219,16 @@ export default function CRMDashboard() {
 
       {/* Content */}
       <div className="flex-1 min-h-0 flex flex-col">
-        {tab === "leads" ? (
+        {tab === "leads" && (
           <LeadList
             leads={leads}
             selectedLeadId={selectedLeadId}
             onSelectLead={handleSelectLead}
           />
-        ) : (
-          <AnalyticsDashboard />
         )}
+        {tab === "analytics" && <AnalyticsDashboard />}
+        {tab === "members" && <MembersDashboard />}
+        {tab === "affiliates" && <AffiliatesDashboard />}
       </div>
 
       {/* Lead drawer */}

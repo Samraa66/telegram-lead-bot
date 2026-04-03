@@ -1,4 +1,4 @@
-import { Search, Users, Clock, TrendingUp, MessageCircle, ArrowUpDown } from "lucide-react";
+import { Search, Users, Clock, TrendingUp, MessageCircle, ArrowUpDown, AlertTriangle } from "lucide-react";
 import { Input } from "../ui/input";
 import { useState } from "react";
 import { Lead, Stage, STAGES, STAGE_COLORS, STAGE_TEXT_COLORS, formatTimeInStage, classificationLabel, classificationColor } from "../../data/crmData";
@@ -18,17 +18,18 @@ function getUrgencyLevel(stageEnteredAt: string): "critical" | "high" | "normal"
   return "normal";
 }
 
-type ClassificationFilter = "all" | "new_lead" | "warm_lead" | "vip" | "affiliate" | "noise";
+type ClassificationFilter = "all" | "new_lead" | "warm_lead" | "vip" | "affiliate" | "noise" | "escalated";
 type StageFilter = "all" | Stage;
 type SortMode = "waiting" | "active" | "newest";
 
 const CLASSIFICATION_FILTERS: { key: ClassificationFilter; label: string }[] = [
-  { key: "all",       label: "All" },
-  { key: "new_lead",  label: "New" },
-  { key: "warm_lead", label: "Warm" },
-  { key: "vip",       label: "VIP" },
-  { key: "affiliate", label: "Affiliate" },
-  { key: "noise",     label: "Noise" },
+  { key: "all",        label: "All" },
+  { key: "escalated",  label: "Escalated" },
+  { key: "new_lead",   label: "New" },
+  { key: "warm_lead",  label: "Warm" },
+  { key: "vip",        label: "VIP" },
+  { key: "affiliate",  label: "Affiliate" },
+  { key: "noise",      label: "Noise" },
 ];
 
 const SORT_MODES: { key: SortMode; label: string }[] = [
@@ -52,8 +53,12 @@ export function LeadList({ leads, selectedLeadId, onSelectLead }: LeadListProps)
 
   const filtered = leads
     .filter((l) => {
-      if (classFilter === "all" && l.classification === "noise") return false;
-      if (classFilter !== "all" && l.classification !== classFilter) return false;
+      if (classFilter === "escalated") {
+        if (!l.escalated) return false;
+      } else {
+        if (classFilter === "all" && l.classification === "noise") return false;
+        if (classFilter !== "all" && l.classification !== classFilter) return false;
+      }
       if (stageFilter !== "all" && l.stage !== stageFilter) return false;
       if (search && !l.name.toLowerCase().includes(search.toLowerCase()) && !l.username.toLowerCase().includes(search.toLowerCase())) return false;
       return true;
@@ -215,7 +220,15 @@ export function LeadList({ leads, selectedLeadId, onSelectLead }: LeadListProps)
                 {/* Content */}
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between">
-                    <span className="text-[14px] font-semibold text-foreground truncate">{lead.name}</span>
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <span className="text-[14px] font-semibold text-foreground truncate">{lead.name}</span>
+                      {lead.escalated && (
+                        <span className="shrink-0 flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-destructive/15 text-destructive text-[10px] font-bold">
+                          <AlertTriangle className="h-2.5 w-2.5" />
+                          Escalated
+                        </span>
+                      )}
+                    </div>
                     <span className={cn(
                       "text-[12px] font-bold shrink-0 ml-2 tabular-nums",
                       urgency === "critical" ? "text-destructive" :

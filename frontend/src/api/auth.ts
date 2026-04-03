@@ -2,7 +2,7 @@ const API_BASE = import.meta.env.DEV
   ? (import.meta.env.VITE_API_BASE_URL || "http://localhost:8000")
   : "";
 
-export type Role = "developer" | "admin" | "operator";
+export type Role = "developer" | "admin" | "operator" | "vip_manager";
 
 export interface AuthUser {
   username: string;
@@ -38,6 +38,11 @@ export function canManageAffiliates(role: Role): boolean {
 }
 
 export async function login(username: string, password: string): Promise<AuthUser> {
+  if (import.meta.env.VITE_USE_MOCK === "true") {
+    const user: AuthUser = { username, role: "admin", token: "mock-token" };
+    saveAuth(user);
+    return user;
+  }
   const res = await fetch(`${API_BASE}/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

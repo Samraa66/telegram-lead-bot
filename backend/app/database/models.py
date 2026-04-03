@@ -13,7 +13,7 @@ User = Contact alias kept so existing code that imports User continues to work.
 
 from datetime import date, datetime
 
-from sqlalchemy import BigInteger, Boolean, Column, Date, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import BigInteger, Boolean, Column, Date, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import relationship
 from sqlalchemy.ext.declarative import declarative_base
 
@@ -51,6 +51,9 @@ class Contact(Base):
     is_affiliate = Column(Boolean, nullable=False, default=False)
     escalated = Column(Boolean, nullable=False, default=False)
     escalated_at = Column(DateTime, nullable=True)
+
+    # Phase 5: computed daily by scheduler — active | at_risk | churned | high_value
+    activity_status = Column(String(20), nullable=True)
 
     messages = relationship("Message", back_populates="contact")
     stage_history = relationship("StageHistory", back_populates="contact")
@@ -137,3 +140,86 @@ class FollowUpTemplate(Base):
     sequence_num = Column(Integer, nullable=False)
     message_text = Column(Text, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class Campaign(Base):
+    """
+    Campaign registry: one row per tracked Meta ad campaign.
+    source_tag is used as the Telegram /start parameter so leads are attributed.
+    meta_campaign_id is the Meta campaign ID — optional, used to link to AdCampaign rows.
+    """
+
+    __tablename__ = "campaigns"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    source_tag = Column(String(100), unique=True, nullable=False)   # e.g. "cmp_a3f8b2c1"
+    name = Column(String(500), nullable=False)
+    meta_campaign_id = Column(String(255), nullable=True)           # optional link to Meta data
+    created_at = Column(DateTime, default=datetime.utcnow)
+    is_active = Column(Boolean, default=True, nullable=False)
+
+
+class AdCampaign(Base):
+    """
+    Daily Meta ad campaign performance snapshot.
+    One row per (campaign_id, date). Populated by the daily Meta Marketing API pull.
+    `leads` and `deposits` are contacts attributed via contact.source == campaign_id.
+    """
+
+    __tablename__ = "ad_campaigns"
+    __table_args__ = (UniqueConstraint("campaign_id", "date", name="uq_campaign_date"),)
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    campaign_id = Column(String(255), nullable=False)
+    campaign_name = Column(String(500), nullable=True)
+    date = Column(Date, nullable=False)
+    spend = Column(Float, nullable=False, default=0.0)        # EUR spend reported by Meta
+    impressions = Column(Integer, nullable=False, default=0)
+    clicks = Column(Integer, nullable=False, default=0)
+    leads = Column(Integer, nullable=False, default=0)        # contacts.source == campaign_id on this date
+    deposits = Column(Integer, nullable=False, default=0)     # stage_7 reached with source == campaign_id
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class Affiliate(Base):
+    """
+    Registered affiliate partners. Each has a unique referral_tag used as the
+    Telegram /start parameter so their referred leads are attributed automatically.
+    Commission is tracked manually via lots_traded (PuPrime data not yet integrated).
+    """
+
+    __tablename__ = "affiliates"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(255), nullable=False)
+    username = Column(String(255), nullable=True)        # Telegram handle (optional)
+    referral_tag = Column(String(100), unique=True, nullable=False)  # /start param value
+    commission_rate = Column(Float, nullable=False, default=15.0)    # USD per lot traded
+    lots_traded = Column(Float, nullable=False, default=0.0)         # manually updated by admin
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class AdCreative(Base):
+    """
+    Daily Meta ad-level performance snapshot.
+    One row per (ad_id, date). Enables best-performing creative analysis.
+    """
+
+    __tablename__ = "ad_creatives"
+    __table_args__ = (UniqueConstraint("ad_id", "date", name="uq_ad_date"),)
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    ad_id = Column(String(255), nullable=False)
+    ad_name = Column(String(500), nullable=True)
+    campaign_id = Column(String(255), nullable=False)
+    campaign_name = Column(String(500), nullable=True)
+    date = Column(Date, nullable=False)
+    spend = Column(Float, nullable=False, default=0.0)
+    impressions = Column(Integer, nullable=False, default=0)
+    clicks = Column(Integer, nullable=False, default=0)
+    leads = Column(Integer, nullable=False, default=0)
+    deposits = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
