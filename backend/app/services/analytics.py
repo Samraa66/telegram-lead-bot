@@ -172,34 +172,72 @@ def get_overview(
     }
 
 
+def _cohort_conversion(
+    db: Session,
+    from_stage: int,
+    to_stage: int,
+    from_dt: Optional[datetime],
+    to_dt: Optional[datetime],
+) -> tuple[int, int, Optional[float]]:
+    """
+    Cohort conversion: find contacts who entered from_stage within the date window,
+    then count how many of that same cohort have ever reached to_stage (at any time).
+    Rate = converted / cohort_size * 100. Can never exceed 100%.
+    """
+    # Build cohort: contacts who entered from_stage in the date window
+    if from_stage == 1:
+        q = db.query(Contact.id).filter(Contact.classification != "noise")
+        q = _date_filters(q, Contact.first_seen, from_dt, to_dt)
+    else:
+        q = (
+            db.query(func.distinct(StageHistory.contact_id).label("contact_id"))
+            .join(Contact, Contact.id == StageHistory.contact_id)
+            .filter(Contact.classification != "noise", StageHistory.to_stage == from_stage)
+        )
+        q = _date_filters(q, StageHistory.moved_at, from_dt, to_dt)
+
+    cohort_subq = q.subquery()
+    cohort_size = db.query(func.count()).select_from(cohort_subq).scalar() or 0
+    if cohort_size == 0:
+        return 0, 0, None
+
+    # Of that cohort, how many have ever reached to_stage?
+    converted = (
+        db.query(func.count(func.distinct(StageHistory.contact_id)))
+        .filter(
+            StageHistory.contact_id.in_(db.query(cohort_subq)),
+            StageHistory.to_stage == to_stage,
+        )
+        .scalar() or 0
+    )
+
+    rate = round(converted / cohort_size * 100, 1)
+    return cohort_size, converted, rate
+
+
 def get_conversion_metrics(
     db: Session,
     from_dt: Optional[datetime] = None,
     to_dt: Optional[datetime] = None,
 ) -> list:
     """
-    The 5 spec conversion metrics.
-    Denominator (from_stage): all-time count up to to_dt — never filtered by from_dt.
-    Numerator (to_stage): filtered by the full date range [from_dt, to_dt].
-    This ensures rates never exceed 100% regardless of date window.
+    True cohort conversion metrics.
+    from_entries = contacts who entered from_stage in the selected window.
+    to_entries   = of that cohort, how many ever reached to_stage.
+    Rate can never exceed 100%.
     """
-    total_non_noise = db.query(Contact).filter(Contact.classification != "noise").count()
-    # Denominator: cumulative up to end of range (no from_dt cutoff)
-    e_from = {s: _entries_at_stage(db, s, total_non_noise, None, to_dt) for s in [1, 2, 4, 5, 7]}
-    # Numerator: entries within the selected window
-    e_to = {s: _entries_at_stage(db, s, total_non_noise, from_dt, to_dt) for s in [1, 2, 4, 5, 7]}
-
-    def rate(num: int, den: int) -> Optional[float]:
-        if den == 0:
-            return None
-        return round(num / den * 100, 1)
+    f1, t2, r12 = _cohort_conversion(db, 1, 2, from_dt, to_dt)
+    f2, t4, r24 = _cohort_conversion(db, 2, 4, from_dt, to_dt)
+    f4, t5, r45 = _cohort_conversion(db, 4, 5, from_dt, to_dt)
+    f5, t7, r57 = _cohort_conversion(db, 5, 7, from_dt, to_dt)
+    f1b, t7b, r17 = _cohort_conversion(db, 1, 7, from_dt, to_dt)
 
     return [
-        {"label": "Stage 1 → 2", "from_entries": e_from[1], "to_entries": e_to[2], "rate": rate(e_to[2], e_from[1]), "target": 40},
-        {"label": "Stage 2 → 4", "from_entries": e_from[2], "to_entries": e_to[4], "rate": rate(e_to[4], e_from[2]), "target": 50},
-        {"label": "Stage 4 → 5", "from_entries": e_from[4], "to_entries": e_to[5], "rate": rate(e_to[5], e_from[4]), "target": 60},
-        {"label": "Stage 5 → 7", "from_entries": e_from[5], "to_entries": e_to[7], "rate": rate(e_to[7], e_from[5]), "target": 60},
-        {"label": "Overall 1 → 7", "from_entries": e_from[1], "to_entries": e_to[7], "rate": rate(e_to[7], e_from[1]), "target": 10},
+        {"label": "Stage 1 → 2", "from_entries": f1,  "to_entries": t2,  "rate": r12, "target": 40},
+        {"label": "Stage 2 → 4", "from_entries": f2,  "to_entries": t4,  "rate": r24, "target": 50},
+        {"label": "Stage 4 → 5", "from_entries": f4,  "to_entries": t5,  "rate": r45, "target": 60},
+        {"label": "Stage 5 → 7", "from_entries": f5,  "to_entries": t7,  "rate": r57, "target": 60},
+        {"label": "Overall 1 → 7", "from_entries": f1b, "to_entries": t7b, "rate": r17, "target": 10},
     ]
 
 
