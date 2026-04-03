@@ -24,7 +24,9 @@ async function apiFetch(path: string, init?: RequestInit) {
     window.location.href = "/login";
     throw new Error("Session expired");
   }
-  return res.json();
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data?.detail || `Request failed (${res.status})`);
+  return data;
 }
 
 export type Overview = {

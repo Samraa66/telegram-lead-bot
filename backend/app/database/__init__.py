@@ -136,6 +136,7 @@ def _ensure_columns() -> None:
             ("escalated_at", "TIMESTAMP"),
             ("first_name", "TEXT"),
             ("last_name", "TEXT"),
+            ("activity_status", "TEXT"),
         ]
     else:
         contacts_needed = [
@@ -150,6 +151,7 @@ def _ensure_columns() -> None:
             ("escalated_at", "TIMESTAMP"),
             ("first_name", "VARCHAR(255)"),
             ("last_name", "VARCHAR(255)"),
+            ("activity_status", "VARCHAR(20)"),
         ]
 
     messages_needed = [
