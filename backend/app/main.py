@@ -20,10 +20,10 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, conint
 from sqlalchemy.orm import Session
 
-from app.auth import authenticate_user, create_access_token, get_current_user, require_roles
+from app.auth import authenticate_user, create_access_token, get_current_user, require_roles, require_affiliate
 from app.config import WEBHOOK_SECRET
-from app.database import get_db, init_db
-from app.database.models import User
+from app.database import get_db, init_db, SessionLocal
+from app.database.models import User, PendingChannel
 from app.handlers.outbound import handle_outbound
 from app.handlers.leads import process_lead_update
 from app.handlers.signals import process_signal_update
@@ -141,6 +141,34 @@ async def webhook(request: Request, db: Session = Depends(get_db)):
             await loop.run_in_executor(None, process_signal_update, body)
             return {"ok": True}
 
+        # Bot added to / removed from a channel — store as pending channel for affiliate linking
+        if body.get("my_chat_member") is not None:
+            mcm = body["my_chat_member"]
+            new_status = mcm.get("new_chat_member", {}).get("status", "")
+            chat = mcm.get("chat", {})
+            chat_id = str(chat.get("id", ""))
+            chat_title = chat.get("title") or chat.get("username") or chat_id
+            chat_type = chat.get("type", "")
+
+            if new_status in ("administrator", "member") and chat_type in ("channel", "supergroup", "group") and chat_id:
+                existing = db.query(PendingChannel).filter(PendingChannel.chat_id == chat_id).first()
+                if not existing:
+                    # Also check if already linked to an affiliate
+                    from app.database.models import Affiliate
+                    already_linked = db.query(Affiliate).filter(
+                        (Affiliate.free_channel_id == chat_id) |
+                        (Affiliate.vip_channel_id == chat_id) |
+                        (Affiliate.tutorial_channel_id == chat_id)
+                    ).first()
+                    if not already_linked:
+                        db.add(PendingChannel(chat_id=chat_id, title=chat_title))
+                        db.commit()
+                        logger.info("Bot added to channel %s (%s) — stored as pending", chat_title, chat_id)
+            elif new_status in ("left", "kicked") and chat_id:
+                db.query(PendingChannel).filter(PendingChannel.chat_id == chat_id).delete()
+                db.commit()
+            return {"ok": True}
+
         # Other update types (e.g. callback_query) — acknowledge and ignore
         logger.debug("Webhook update type not handled (update_id=%s); ignoring", update_id)
         return {"ok": True}
@@ -156,12 +184,15 @@ class LoginRequest(BaseModel):
 
 
 @app.post("/auth/login")
-def login(req: LoginRequest):
-    """Authenticate and return a JWT token."""
-    user = authenticate_user(req.username, req.password)
+def login(req: LoginRequest, db: Session = Depends(get_db)):
+    """Authenticate and return a JWT token. Checks env-based roles and DB affiliates."""
+    user = authenticate_user(req.username, req.password, db=db)
     if not user:
         raise HTTPException(status_code=401, detail="Invalid credentials")
-    token = create_access_token(user["username"], user["role"])
+    token = create_access_token(
+        user["username"], user["role"],
+        affiliate_id=user.get("affiliate_id"),
+    )
     return {"access_token": token, "role": user["role"], "username": user["username"]}
 
 
@@ -586,6 +617,21 @@ class UpdateLotsRequest(BaseModel):
     lots_traded: float
 
 
+class UpdateChecklistRequest(BaseModel):
+    esim_done: Optional[bool] = None
+    free_channel_id: Optional[str] = None
+    free_channel_members: Optional[int] = None
+    bot_setup_done: Optional[bool] = None
+    vip_channel_id: Optional[str] = None
+    vip_channel_members: Optional[int] = None
+    tutorial_channel_id: Optional[str] = None
+    tutorial_channel_members: Optional[int] = None
+    sales_scripts_done: Optional[bool] = None
+    ib_profile_id: Optional[str] = None
+    ads_live: Optional[bool] = None
+    pixel_setup_done: Optional[bool] = None
+
+
 @app.get("/affiliates/performance")
 def affiliate_performance(
     db: Session = Depends(get_db),
@@ -631,16 +677,29 @@ def create_affiliate(
     from app.database.models import Affiliate
     from app.config import BOT_USERNAME
 
+    from app.auth import generate_password, hash_password
     referral_tag = "ref_" + uuid.uuid4().hex[:8]
+    login_username = "aff_" + uuid.uuid4().hex[:8]
+    plain_password = generate_password()
+
     affiliate = Affiliate(
         name=req.name.strip(),
         username=req.username.strip() if req.username else None,
         referral_tag=referral_tag,
         commission_rate=req.commission_rate,
+        login_username=login_username,
+        login_password_hash=hash_password(plain_password),
     )
     db.add(affiliate)
     db.commit()
     db.refresh(affiliate)
+
+    # Fire welcome DM in background — non-blocking
+    affiliate_id = affiliate.id
+    loop = asyncio.get_running_loop()
+    loop.run_in_executor(None, lambda: __import__(
+        "app.services.affiliate_automation", fromlist=["send_affiliate_welcome"]
+    ).send_affiliate_welcome(affiliate_id))
 
     link = f"https://t.me/{BOT_USERNAME}?start={referral_tag}" if BOT_USERNAME else None
     return {
@@ -653,6 +712,15 @@ def create_affiliate(
         "lots_traded": affiliate.lots_traded,
         "is_active": affiliate.is_active,
         "created_at": affiliate.created_at.isoformat(),
+        # Credentials — shown once at creation
+        "login_username": login_username,
+        "login_password": plain_password,
+        # Checklist defaults
+        "esim_done": False, "free_channel_id": None, "free_channel_members": 0,
+        "bot_setup_done": False, "vip_channel_id": None, "vip_channel_members": 0,
+        "tutorial_channel_id": None, "tutorial_channel_members": 0,
+        "sales_scripts_done": False, "ib_profile_id": None,
+        "ads_live": False, "pixel_setup_done": False,
     }
 
 
@@ -671,6 +739,213 @@ def update_affiliate_lots(
     affiliate.lots_traded = req.lots_traded
     db.commit()
     return {"ok": True, "lots_traded": affiliate.lots_traded, "commission_earned": round(affiliate.lots_traded * affiliate.commission_rate, 2)}
+
+
+@app.patch("/affiliates/{affiliate_id}/checklist")
+def update_affiliate_checklist(
+    affiliate_id: int,
+    req: UpdateChecklistRequest,
+    db: Session = Depends(get_db),
+    _=Depends(require_roles("developer", "admin")),
+):
+    """Update onboarding checklist fields for an affiliate."""
+    from app.database.models import Affiliate
+    affiliate = db.query(Affiliate).filter(Affiliate.id == affiliate_id).first()
+    if not affiliate:
+        raise HTTPException(status_code=404, detail="affiliate not found")
+    for field, value in req.dict(exclude_none=True).items():
+        setattr(affiliate, field, value)
+    db.commit()
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Affiliate self-service endpoints (role: affiliate)
+# ---------------------------------------------------------------------------
+
+@app.get("/affiliate/me")
+def affiliate_me(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_affiliate),
+):
+    """Return the authenticated affiliate's full profile, stats, and checklist."""
+    from app.database.models import Affiliate, Contact, StageHistory
+    from app.config import BOT_USERNAME
+    from sqlalchemy import func
+
+    affiliate_id = current_user["affiliate_id"]
+    aff = db.query(Affiliate).filter(Affiliate.id == affiliate_id).first()
+    if not aff:
+        raise HTTPException(status_code=404, detail="affiliate not found")
+
+    leads = (
+        db.query(func.count(Contact.id))
+        .filter(Contact.source == aff.referral_tag, Contact.classification != "noise")
+        .scalar() or 0
+    )
+    deposits = (
+        db.query(func.count(func.distinct(StageHistory.contact_id)))
+        .join(Contact, Contact.id == StageHistory.contact_id)
+        .filter(Contact.source == aff.referral_tag, StageHistory.to_stage == 7)
+        .scalar() or 0
+    )
+    conversion_rate = round(deposits / leads * 100, 1) if leads > 0 else 0.0
+    commission_earned = round(aff.lots_traded * aff.commission_rate, 2)
+    referral_link = (
+        f"https://t.me/{BOT_USERNAME}?start={aff.referral_tag}" if BOT_USERNAME else None
+    )
+
+    return {
+        "id": aff.id,
+        "name": aff.name,
+        "username": aff.username,
+        "referral_tag": aff.referral_tag,
+        "referral_link": referral_link,
+        "leads": leads,
+        "deposits": deposits,
+        "conversion_rate": conversion_rate,
+        "lots_traded": aff.lots_traded,
+        "commission_rate": aff.commission_rate,
+        "commission_earned": commission_earned,
+        # Checklist
+        "esim_done": bool(aff.esim_done),
+        "free_channel_id": aff.free_channel_id,
+        "free_channel_members": aff.free_channel_members or 0,
+        "bot_setup_done": bool(aff.bot_setup_done),
+        "vip_channel_id": aff.vip_channel_id,
+        "vip_channel_members": aff.vip_channel_members or 0,
+        "tutorial_channel_id": aff.tutorial_channel_id,
+        "tutorial_channel_members": aff.tutorial_channel_members or 0,
+        "sales_scripts_done": bool(aff.sales_scripts_done),
+        "ib_profile_id": aff.ib_profile_id,
+        "ads_live": bool(aff.ads_live),
+        "pixel_setup_done": bool(aff.pixel_setup_done),
+    }
+
+
+@app.patch("/affiliate/me/checklist")
+def affiliate_update_checklist(
+    req: UpdateChecklistRequest,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_affiliate),
+):
+    """Affiliate updates their own onboarding checklist."""
+    from app.database.models import Affiliate
+    aff = db.query(Affiliate).filter(Affiliate.id == current_user["affiliate_id"]).first()
+    if not aff:
+        raise HTTPException(status_code=404, detail="affiliate not found")
+    for field, value in req.dict(exclude_none=True).items():
+        setattr(aff, field, value)
+    db.commit()
+    return {"ok": True}
+
+
+@app.get("/affiliates/pending-channels")
+def list_pending_channels(
+    db: Session = Depends(get_db),
+    _=Depends(require_roles("developer", "admin")),
+):
+    """List Telegram channels the bot was added to but not yet linked to any affiliate."""
+    rows = db.query(PendingChannel).order_by(PendingChannel.detected_at.desc()).all()
+    return [
+        {
+            "id": r.id,
+            "chat_id": r.chat_id,
+            "title": r.title,
+            "detected_at": r.detected_at.isoformat() if r.detected_at else None,
+        }
+        for r in rows
+    ]
+
+
+class LinkChannelRequest(BaseModel):
+    chat_id: str
+    channel_type: str   # "free" | "vip" | "tutorial"
+
+
+@app.post("/affiliates/{affiliate_id}/link-channel")
+def link_channel_to_affiliate(
+    affiliate_id: int,
+    req: LinkChannelRequest,
+    db: Session = Depends(get_db),
+    _=Depends(require_roles("developer", "admin")),
+):
+    """
+    Link a pending channel to an affiliate as free/vip/tutorial.
+    Removes it from the pending list and sets the channel ID + marks bot_setup_done.
+    """
+    from app.database.models import Affiliate
+    if req.channel_type not in ("free", "vip", "tutorial"):
+        raise HTTPException(status_code=400, detail="channel_type must be free, vip, or tutorial")
+
+    affiliate = db.query(Affiliate).filter(Affiliate.id == affiliate_id).first()
+    if not affiliate:
+        raise HTTPException(status_code=404, detail="affiliate not found")
+
+    field_map = {
+        "free": "free_channel_id",
+        "vip": "vip_channel_id",
+        "tutorial": "tutorial_channel_id",
+    }
+    setattr(affiliate, field_map[req.channel_type], req.chat_id)
+
+    # Remove from pending list
+    db.query(PendingChannel).filter(PendingChannel.chat_id == req.chat_id).delete()
+
+    # Kick off a member count fetch for the newly linked channel
+    db.commit()
+
+    loop = asyncio.get_running_loop()
+    chat_id_str = req.chat_id
+    channel_type = req.channel_type
+    aff_id = affiliate_id
+    loop.run_in_executor(None, lambda: _sync_single_channel(aff_id, channel_type, chat_id_str))
+
+    return {"ok": True, "channel_type": req.channel_type, "chat_id": req.chat_id}
+
+
+def _sync_single_channel(affiliate_id: int, channel_type: str, chat_id: str) -> None:
+    """Fetch member count for a single just-linked channel and persist it."""
+    from app.services.affiliate_automation import get_chat_member_count
+    from app.database.models import Affiliate
+    count = get_chat_member_count(chat_id)
+    if count is None:
+        return
+    db = SessionLocal()
+    try:
+        aff = db.query(Affiliate).filter(Affiliate.id == affiliate_id).first()
+        if aff:
+            field = f"{channel_type}_channel_members"
+            setattr(aff, field, count)
+            db.commit()
+    finally:
+        db.close()
+
+
+@app.delete("/affiliates/pending-channels/{pending_id}")
+def dismiss_pending_channel(
+    pending_id: int,
+    db: Session = Depends(get_db),
+    _=Depends(require_roles("developer", "admin")),
+):
+    """Dismiss a pending channel without linking it to any affiliate."""
+    row = db.query(PendingChannel).filter(PendingChannel.id == pending_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="pending channel not found")
+    db.delete(row)
+    db.commit()
+    return {"ok": True}
+
+
+@app.post("/affiliates/sync-channels")
+def trigger_channel_sync(
+    _=Depends(require_roles("developer", "admin")),
+):
+    """Manually trigger a channel member count sync (runs in background)."""
+    import threading
+    from app.services.affiliate_automation import sync_channel_member_counts
+    threading.Thread(target=sync_channel_member_counts, daemon=True).start()
+    return {"ok": True, "message": "channel sync started"}
 
 
 @app.post("/contacts/{contact_id}/affiliate")

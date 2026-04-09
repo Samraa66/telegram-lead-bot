@@ -3,6 +3,11 @@ Signal mirroring: copy messages from the Signal Feed channel to VIP destination 
 
 Uses Telegram copy_message API so VIP channels do not display the original source.
 Handles errors per channel so one failure does not stop the rest.
+
+Destinations are the union of:
+  - DESTINATION_CHANNEL_IDS from env (static, always included)
+  - All active affiliate VIP channel IDs from the DB (dynamic — added when affiliates
+    link their VIP channel from the dashboard)
 """
 
 import logging
@@ -13,6 +18,36 @@ import requests
 from app.config import BOT_TOKEN, DESTINATION_CHANNEL_IDS
 
 logger = logging.getLogger(__name__)
+
+
+def get_all_destination_channels() -> List[str]:
+    """
+    Return the combined list of all VIP signal destinations:
+    static DESTINATION_CHANNEL_IDS (from env) + every active affiliate's vip_channel_id.
+    Deduplicates so a channel that appears in both is only forwarded to once.
+    """
+    destinations = list(DESTINATION_CHANNEL_IDS)
+    try:
+        from app.database import SessionLocal
+        from app.database.models import Affiliate
+        db = SessionLocal()
+        try:
+            affiliate_channels = (
+                db.query(Affiliate.vip_channel_id)
+                .filter(
+                    Affiliate.is_active.is_(True),
+                    Affiliate.vip_channel_id.isnot(None),
+                )
+                .all()
+            )
+            for (ch_id,) in affiliate_channels:
+                if ch_id and ch_id not in destinations:
+                    destinations.append(ch_id)
+        finally:
+            db.close()
+    except Exception as e:
+        logger.warning("Could not load affiliate VIP channels for forwarding: %s", e)
+    return destinations
 
 TELEGRAM_API_BASE = "https://api.telegram.org/bot"
 
@@ -62,7 +97,7 @@ def copy_signal_to_all_destinations(
     Copy the given message to each destination channel. Logs and continues
     if one channel fails so the rest are still processed.
     """
-    destinations = destination_channel_ids or DESTINATION_CHANNEL_IDS
+    destinations = destination_channel_ids if destination_channel_ids is not None else get_all_destination_channels()
     if not destinations:
         logger.warning("No destination channels configured; signal not copied")
         return

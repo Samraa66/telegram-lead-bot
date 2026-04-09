@@ -170,6 +170,47 @@ def _ensure_columns() -> None:
         if col not in existing_messages:
             _add_column("messages", col, ddl)
 
+    if _table_exists("affiliates"):
+        if dialect == "sqlite":
+            affiliates_needed = [
+                ("esim_done", "INTEGER DEFAULT 0"),
+                ("free_channel_id", "TEXT"),
+                ("free_channel_members", "INTEGER DEFAULT 0"),
+                ("bot_setup_done", "INTEGER DEFAULT 0"),
+                ("vip_channel_id", "TEXT"),
+                ("vip_channel_members", "INTEGER DEFAULT 0"),
+                ("tutorial_channel_id", "TEXT"),
+                ("tutorial_channel_members", "INTEGER DEFAULT 0"),
+                ("sales_scripts_done", "INTEGER DEFAULT 0"),
+                ("ib_profile_id", "TEXT"),
+                ("ads_live", "INTEGER DEFAULT 0"),
+                ("pixel_setup_done", "INTEGER DEFAULT 0"),
+            ]
+        else:
+            affiliates_needed = [
+                ("esim_done", "BOOLEAN DEFAULT FALSE"),
+                ("free_channel_id", "VARCHAR(100)"),
+                ("free_channel_members", "INTEGER DEFAULT 0"),
+                ("bot_setup_done", "BOOLEAN DEFAULT FALSE"),
+                ("vip_channel_id", "VARCHAR(100)"),
+                ("vip_channel_members", "INTEGER DEFAULT 0"),
+                ("tutorial_channel_id", "VARCHAR(100)"),
+                ("tutorial_channel_members", "INTEGER DEFAULT 0"),
+                ("sales_scripts_done", "BOOLEAN DEFAULT FALSE"),
+                ("ib_profile_id", "VARCHAR(255)"),
+                ("ads_live", "BOOLEAN DEFAULT FALSE"),
+                ("pixel_setup_done", "BOOLEAN DEFAULT FALSE"),
+            ]
+        # Credential columns (same DDL for both dialects)
+        affiliates_needed += [
+            ("login_username", "TEXT"),
+            ("login_password_hash", "TEXT"),
+        ]
+        existing_affiliates = _existing_columns("affiliates")
+        for col, ddl in affiliates_needed:
+            if col not in existing_affiliates:
+                _add_column("affiliates", col, ddl)
+
 
 # ---------------------------------------------------------------------------
 # Template seeding

@@ -27,7 +27,22 @@ async function apiFetch(path: string, init?: RequestInit) {
   return data;
 }
 
-export interface AffiliatePerformance {
+export interface AffiliateChecklist {
+  esim_done: boolean;
+  free_channel_id: string | null;
+  free_channel_members: number;
+  bot_setup_done: boolean;
+  vip_channel_id: string | null;
+  vip_channel_members: number;
+  tutorial_channel_id: string | null;
+  tutorial_channel_members: number;
+  sales_scripts_done: boolean;
+  ib_profile_id: string | null;
+  ads_live: boolean;
+  pixel_setup_done: boolean;
+}
+
+export interface AffiliatePerformance extends AffiliateChecklist {
   id: number;
   name: string;
   username: string | null;
@@ -41,6 +56,9 @@ export interface AffiliatePerformance {
   commission_earned: number;
   is_active: boolean;
   created_at: string;
+  // Returned once at creation only
+  login_username?: string;
+  login_password?: string;
 }
 
 export interface CreateAffiliatePayload {
@@ -60,14 +78,14 @@ export const createAffiliate = (payload: CreateAffiliatePayload): Promise<Affili
         username: payload.username || null,
         referral_tag: "ref_mock1234",
         referral_link: null,
-        leads: 0,
-        deposits: 0,
-        conversion_rate: 0,
-        lots_traded: 0,
-        commission_rate: payload.commission_rate ?? 15,
-        commission_earned: 0,
-        is_active: true,
-        created_at: new Date().toISOString(),
+        leads: 0, deposits: 0, conversion_rate: 0, lots_traded: 0,
+        commission_rate: payload.commission_rate ?? 15, commission_earned: 0,
+        is_active: true, created_at: new Date().toISOString(),
+        esim_done: false, free_channel_id: null, free_channel_members: 0,
+        bot_setup_done: false, vip_channel_id: null, vip_channel_members: 0,
+        tutorial_channel_id: null, tutorial_channel_members: 0,
+        sales_scripts_done: false, ib_profile_id: null, ads_live: false, pixel_setup_done: false,
+        login_username: "aff_mock1234", login_password: "MockPass99",
       })
     : apiFetch("/affiliates", {
         method: "POST",
@@ -81,3 +99,40 @@ export const updateAffiliateLots = (affiliateId: number, lots_traded: number): P
         method: "PATCH",
         body: JSON.stringify({ lots_traded }),
       });
+
+export const updateAffiliateChecklist = (
+  affiliateId: number,
+  patch: Partial<AffiliateChecklist>,
+): Promise<void> =>
+  MOCK
+    ? Promise.resolve()
+    : apiFetch(`/affiliates/${affiliateId}/checklist`, {
+        method: "PATCH",
+        body: JSON.stringify(patch),
+      });
+
+export interface PendingChannel {
+  id: number;
+  chat_id: string;
+  title: string | null;
+  detected_at: string;
+}
+
+export const fetchPendingChannels = (): Promise<PendingChannel[]> =>
+  MOCK ? Promise.resolve([]) : apiFetch("/affiliates/pending-channels");
+
+export const linkChannel = (
+  affiliateId: number,
+  chat_id: string,
+  channel_type: "free" | "vip" | "tutorial",
+): Promise<void> =>
+  apiFetch(`/affiliates/${affiliateId}/link-channel`, {
+    method: "POST",
+    body: JSON.stringify({ chat_id, channel_type }),
+  });
+
+export const dismissPendingChannel = (pendingId: number): Promise<void> =>
+  apiFetch(`/affiliates/pending-channels/${pendingId}`, { method: "DELETE" });
+
+export const triggerChannelSync = (): Promise<void> =>
+  apiFetch("/affiliates/sync-channels", { method: "POST" });

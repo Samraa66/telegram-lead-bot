@@ -351,6 +351,20 @@ def start_scheduler() -> None:
     except Exception:
         logger.warning("Member activity scheduler not loaded")
 
+    # Hourly affiliate channel member count sync
+    try:
+        from app.services.affiliate_automation import sync_channel_member_counts
+        _scheduler.add_job(
+            sync_channel_member_counts,
+            "interval",
+            hours=1,
+            id="affiliate_channel_sync",
+            max_instances=1,
+        )
+        logger.info("Affiliate channel member sync scheduled (hourly)")
+    except Exception:
+        logger.warning("Affiliate channel sync scheduler not loaded")
+
     _scheduler.start()
     logger.info("Follow-up scheduler started (5-minute tick, Dubai window %d–%d)", WINDOW_OPEN, WINDOW_CLOSE)
 

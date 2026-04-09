@@ -1,44 +1,77 @@
 """
 JWT authentication for the CRM dashboard.
 
-Three roles (highest → lowest privilege):
-  developer  — full access, can tag affiliates
-  admin      — full CRM access, can tag affiliates (business owner)
-  operator   — lead management only, no affiliate tagging
+Roles (highest → lowest privilege):
+  developer    — full access
+  admin        — full CRM access
+  operator     — lead management only
+  vip_manager  — members dashboard only
+  affiliate    — self-service portal only (scoped to their own data)
 
-Credentials are stored in .env and never committed.
+Static credentials (developer/admin/operator/vip_manager) are stored in .env.
+Affiliate credentials are generated on create and stored (hashed) in the DB.
+
 Token expiry: 24 hours.
 """
 
 from __future__ import annotations
 
+import hashlib
+import os
 import secrets
 from datetime import datetime, timedelta
-from typing import Literal
+from typing import Literal, Optional
 
 from fastapi import Depends, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
 
 from app.config import (
-    ADMIN_PASSWORD,
-    ADMIN_USERNAME,
-    VIP_MANAGER_PASSWORD,
-    VIP_MANAGER_USERNAME,
-    DEVELOPER_PASSWORD,
-    DEVELOPER_USERNAME,
-    OPERATOR_PASSWORD,
-    OPERATOR_USERNAME,
+    ADMIN_PASSWORD, ADMIN_USERNAME,
+    VIP_MANAGER_PASSWORD, VIP_MANAGER_USERNAME,
+    DEVELOPER_PASSWORD, DEVELOPER_USERNAME,
+    OPERATOR_PASSWORD, OPERATOR_USERNAME,
     SECRET_KEY,
 )
 
 ALGORITHM = "HS256"
 TOKEN_EXPIRE_HOURS = 24
 
-Role = Literal["developer", "admin", "operator", "vip_manager"]
+Role = Literal["developer", "admin", "operator", "vip_manager", "affiliate"]
 
 _security = HTTPBearer()
 
+
+# ---------------------------------------------------------------------------
+# Password hashing (pbkdf2 — stdlib only)
+# ---------------------------------------------------------------------------
+
+def hash_password(password: str) -> str:
+    """Return a storable 'salt$hash' string."""
+    salt = secrets.token_hex(16)
+    h = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), 260_000).hex()
+    return f"{salt}${h}"
+
+
+def verify_password(password: str, stored: str) -> bool:
+    """Verify a password against a stored 'salt$hash' string."""
+    try:
+        salt, h = stored.split("$", 1)
+        expected = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), 260_000).hex()
+        return secrets.compare_digest(expected, h)
+    except Exception:
+        return False
+
+
+def generate_password(length: int = 10) -> str:
+    """Generate a readable random password (letters + digits, no ambiguous chars)."""
+    alphabet = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789"
+    return "".join(secrets.choice(alphabet) for _ in range(length))
+
+
+# ---------------------------------------------------------------------------
+# Static user map (env-based roles)
+# ---------------------------------------------------------------------------
 
 def _user_map() -> dict:
     users = {}
@@ -53,22 +86,45 @@ def _user_map() -> dict:
     return users
 
 
-def authenticate_user(username: str, password: str) -> dict | None:
+# ---------------------------------------------------------------------------
+# Authentication
+# ---------------------------------------------------------------------------
+
+def authenticate_user(username: str, password: str, db=None) -> Optional[dict]:
+    """
+    Check credentials against env-based users first, then DB affiliates.
+    Returns dict with username, role, and optionally affiliate_id.
+    """
+    # Static roles
     user = _user_map().get(username)
-    if not user:
-        return None
-    if not secrets.compare_digest(password, user["password"]):
-        return None
-    return {"username": username, "role": user["role"]}
+    if user:
+        if not secrets.compare_digest(password, user["password"]):
+            return None
+        return {"username": username, "role": user["role"]}
+
+    # Affiliate (DB-backed)
+    if db is not None:
+        from app.database.models import Affiliate
+        aff = db.query(Affiliate).filter(
+            Affiliate.login_username == username,
+            Affiliate.is_active.is_(True),
+        ).first()
+        if aff and aff.login_password_hash and verify_password(password, aff.login_password_hash):
+            return {"username": username, "role": "affiliate", "affiliate_id": aff.id}
+
+    return None
 
 
-def create_access_token(username: str, role: str) -> str:
+# ---------------------------------------------------------------------------
+# Token
+# ---------------------------------------------------------------------------
+
+def create_access_token(username: str, role: str, affiliate_id: Optional[int] = None) -> str:
     expire = datetime.utcnow() + timedelta(hours=TOKEN_EXPIRE_HOURS)
-    return jwt.encode(
-        {"sub": username, "role": role, "exp": expire},
-        SECRET_KEY,
-        algorithm=ALGORITHM,
-    )
+    payload = {"sub": username, "role": role, "exp": expire}
+    if affiliate_id is not None:
+        payload["affiliate_id"] = affiliate_id
+    return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 
 
 def get_current_user(
@@ -80,7 +136,10 @@ def get_current_user(
         role: str = payload.get("role", "")
         if not username or not role:
             raise HTTPException(status_code=401, detail="Invalid token")
-        return {"username": username, "role": role}
+        result = {"username": username, "role": role}
+        if "affiliate_id" in payload:
+            result["affiliate_id"] = payload["affiliate_id"]
+        return result
     except JWTError:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
 
@@ -92,3 +151,10 @@ def require_roles(*roles: str):
             raise HTTPException(status_code=403, detail="Insufficient permissions")
         return current_user
     return _check
+
+
+def require_affiliate(current_user: dict = Depends(get_current_user)) -> dict:
+    """Dependency that ensures the caller is an authenticated affiliate."""
+    if current_user["role"] != "affiliate" or "affiliate_id" not in current_user:
+        raise HTTPException(status_code=403, detail="Affiliate access only")
+    return current_user

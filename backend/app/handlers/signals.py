@@ -8,8 +8,8 @@ from SOURCE_CHANNEL_ID and copies them to all VIP destination channels.
 import logging
 from typing import Optional, Tuple
 
-from app.config import SOURCE_CHANNEL_ID, DESTINATION_CHANNEL_IDS
-from app.services.forwarding import copy_signal_to_all_destinations
+from app.config import SOURCE_CHANNEL_ID
+from app.services.forwarding import copy_signal_to_all_destinations, get_all_destination_channels
 
 logger = logging.getLogger(__name__)
 
@@ -58,15 +58,19 @@ def process_signal_update(update: dict) -> bool:
         logger.debug("Ignoring channel post from %s (not Signal Feed %s)", chat_id, SOURCE_CHANNEL_ID)
         return False
 
-    logger.info("Received signal from Signal Feed (channel_id=%s, message_id=%s)", chat_id, message_id)
+    all_destinations = get_all_destination_channels()
+    logger.info(
+        "Received signal from Signal Feed (channel_id=%s, message_id=%s) → forwarding to %d channel(s)",
+        chat_id, message_id, len(all_destinations),
+    )
 
-    if not DESTINATION_CHANNEL_IDS:
+    if not all_destinations:
         logger.warning("No destination channels configured; signal not copied")
         return True
 
     copy_signal_to_all_destinations(
         source_channel_id=chat_id,
         message_id=message_id,
-        destination_channel_ids=DESTINATION_CHANNEL_IDS,
+        destination_channel_ids=all_destinations,
     )
     return True

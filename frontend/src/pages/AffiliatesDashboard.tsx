@@ -1,10 +1,17 @@
-import { useEffect, useState, useCallback } from "react";
-import { Trophy, Users, TrendingUp, DollarSign, Copy, Check, Plus, X, Link } from "lucide-react";
+import { useEffect, useState, useCallback, useRef } from "react";
+import { Trophy, Users, TrendingUp, DollarSign, Check, Plus, X, Link, ChevronDown, ChevronUp, Radio, RefreshCw, Copy } from "lucide-react";
 import {
   fetchAffiliatePerformance,
   createAffiliate,
   updateAffiliateLots,
+  updateAffiliateChecklist,
+  fetchPendingChannels,
+  linkChannel,
+  dismissPendingChannel,
+  triggerChannelSync,
   AffiliatePerformance,
+  AffiliateChecklist,
+  PendingChannel,
 } from "../api/affiliates";
 import { cn } from "../lib/utils";
 
@@ -101,6 +108,221 @@ function AddAffiliateModal({ onClose, onCreated }: AddAffiliateModalProps) {
 }
 
 // ---------------------------------------------------------------------------
+// Setup Checklist (expandable per-affiliate)
+// ---------------------------------------------------------------------------
+
+type ChecklistStep =
+  | { kind: "bool"; key: keyof AffiliateChecklist; label: string }
+  | { kind: "channel"; idKey: keyof AffiliateChecklist; membersKey: keyof AffiliateChecklist; label: string; target: number }
+  | { kind: "text"; key: keyof AffiliateChecklist; label: string; placeholder: string };
+
+const CHECKLIST_STEPS: ChecklistStep[] = [
+  { kind: "bool",    key: "esim_done",          label: "Secondary phone / eSIM" },
+  { kind: "channel", idKey: "free_channel_id",  membersKey: "free_channel_members",    label: "Free channel",    target: 2000 },
+  { kind: "bool",    key: "bot_setup_done",      label: "Bot configured (welcome + auto-approve)" },
+  { kind: "channel", idKey: "vip_channel_id",   membersKey: "vip_channel_members",     label: "VIP channel",     target: 60 },
+  { kind: "channel", idKey: "tutorial_channel_id", membersKey: "tutorial_channel_members", label: "Tutorial channel", target: 50 },
+  { kind: "bool",    key: "sales_scripts_done",  label: "Sales scripts in quick replies" },
+  { kind: "text",    key: "ib_profile_id",       label: "PU Prime IB profile ID", placeholder: "e.g. IB-12345" },
+  { kind: "bool",    key: "pixel_setup_done",    label: "Pixel setup" },
+  { kind: "bool",    key: "ads_live",            label: "Ads running" },
+];
+
+function checklistProgress(aff: AffiliateChecklist): number {
+  let done = 0;
+  if (aff.esim_done) done++;
+  if (aff.free_channel_id) done++;
+  if (aff.bot_setup_done) done++;
+  if (aff.vip_channel_id) done++;
+  if (aff.tutorial_channel_id) done++;
+  if (aff.sales_scripts_done) done++;
+  if (aff.ib_profile_id) done++;
+  if (aff.pixel_setup_done) done++;
+  if (aff.ads_live) done++;
+  return done;
+}
+
+const CHECKLIST_TOTAL = 9;
+
+interface SetupChecklistProps {
+  affiliate: AffiliatePerformance;
+  onUpdated: (patch: Partial<AffiliateChecklist>) => void;
+}
+
+function SetupChecklist({ affiliate, onUpdated }: SetupChecklistProps) {
+  const [open, setOpen] = useState(false);
+  const [saving, setSaving] = useState<string | null>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const done = checklistProgress(affiliate);
+  const pct = Math.round((done / CHECKLIST_TOTAL) * 100);
+
+  const save = async (patch: Partial<AffiliateChecklist>) => {
+    onUpdated(patch);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(async () => {
+      try {
+        await updateAffiliateChecklist(affiliate.id, patch);
+      } catch { /* silently retry on next interaction */ }
+    }, 600);
+  };
+
+  const toggleBool = (key: keyof AffiliateChecklist) => {
+    const patch = { [key]: !affiliate[key] } as Partial<AffiliateChecklist>;
+    setSaving(key);
+    save(patch).finally(() => setSaving(null));
+  };
+
+  const setTextValue = (key: keyof AffiliateChecklist, val: string) => {
+    save({ [key]: val || null } as Partial<AffiliateChecklist>);
+  };
+
+  const setMembersValue = (key: keyof AffiliateChecklist, val: string) => {
+    save({ [key]: parseInt(val) || 0 } as Partial<AffiliateChecklist>);
+  };
+
+  return (
+    <div className="border-t border-[hsl(var(--ios-separator))] pt-2.5 mt-0.5">
+      {/* Header row — always visible */}
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="w-full flex items-center gap-2 group"
+      >
+        <div className="flex-1">
+          <div className="flex items-center justify-between mb-1">
+            <span className="text-[11px] text-muted-foreground font-semibold">Setup</span>
+            <span className={cn(
+              "text-[11px] font-bold tabular-nums",
+              done === CHECKLIST_TOTAL ? "text-stage-deposited" : "text-muted-foreground"
+            )}>
+              {done}/{CHECKLIST_TOTAL}
+            </span>
+          </div>
+          <div className="h-1.5 rounded-full bg-secondary overflow-hidden">
+            <div
+              className={cn(
+                "h-full rounded-full transition-all duration-300",
+                done === CHECKLIST_TOTAL ? "bg-stage-deposited" : "bg-primary"
+              )}
+              style={{ width: `${pct}%` }}
+            />
+          </div>
+        </div>
+        <span className="text-muted-foreground shrink-0 ml-1">
+          {open ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+        </span>
+      </button>
+
+      {/* Expanded steps */}
+      {open && (
+        <div className="mt-3 space-y-2.5">
+          {CHECKLIST_STEPS.map((step) => {
+            if (step.kind === "bool") {
+              const checked = Boolean(affiliate[step.key]);
+              return (
+                <button
+                  key={step.key}
+                  onClick={() => toggleBool(step.key)}
+                  disabled={saving === step.key}
+                  className="w-full flex items-center gap-2.5 text-left"
+                >
+                  <span className={cn(
+                    "h-5 w-5 rounded-full border-2 flex items-center justify-center shrink-0 transition-colors",
+                    checked
+                      ? "bg-stage-deposited border-stage-deposited"
+                      : "border-muted-foreground/30"
+                  )}>
+                    {checked && <Check className="h-2.5 w-2.5 text-white" strokeWidth={3} />}
+                  </span>
+                  <span className={cn(
+                    "text-[12px]",
+                    checked ? "text-muted-foreground line-through" : "text-foreground"
+                  )}>
+                    {step.label}
+                  </span>
+                </button>
+              );
+            }
+
+            if (step.kind === "channel") {
+              const channelId = (affiliate[step.idKey] as string | null) || "";
+              const members = (affiliate[step.membersKey] as number) || 0;
+              const isDone = Boolean(channelId);
+              return (
+                <div key={step.idKey} className="space-y-1.5">
+                  <div className="flex items-center gap-2.5">
+                    <span className={cn(
+                      "h-5 w-5 rounded-full border-2 flex items-center justify-center shrink-0",
+                      isDone ? "bg-stage-deposited border-stage-deposited" : "border-muted-foreground/30"
+                    )}>
+                      {isDone && <Check className="h-2.5 w-2.5 text-white" strokeWidth={3} />}
+                    </span>
+                    <span className={cn(
+                      "text-[12px] font-medium",
+                      isDone ? "text-muted-foreground" : "text-foreground"
+                    )}>
+                      {step.label}
+                    </span>
+                    <span className="ml-auto text-[10px] text-muted-foreground tabular-nums">
+                      {members.toLocaleString()} / {step.target.toLocaleString()} members
+                    </span>
+                  </div>
+                  <div className="pl-7 flex gap-2">
+                    <input
+                      defaultValue={channelId}
+                      onBlur={(e) => setTextValue(step.idKey, e.target.value)}
+                      placeholder="Channel ID (e.g. -1001234567)"
+                      className="flex-1 px-2.5 py-1.5 rounded-lg bg-secondary text-[11px] text-foreground outline-none placeholder:text-muted-foreground/40"
+                    />
+                    <input
+                      type="number"
+                      defaultValue={members || ""}
+                      onBlur={(e) => setMembersValue(step.membersKey, e.target.value)}
+                      placeholder="Members"
+                      className="w-20 px-2.5 py-1.5 rounded-lg bg-secondary text-[11px] text-foreground outline-none placeholder:text-muted-foreground/40"
+                    />
+                  </div>
+                </div>
+              );
+            }
+
+            // text
+            const val = (affiliate[step.key] as string | null) || "";
+            const isDone = Boolean(val);
+            return (
+              <div key={step.key} className="space-y-1.5">
+                <div className="flex items-center gap-2.5">
+                  <span className={cn(
+                    "h-5 w-5 rounded-full border-2 flex items-center justify-center shrink-0",
+                    isDone ? "bg-stage-deposited border-stage-deposited" : "border-muted-foreground/30"
+                  )}>
+                    {isDone && <Check className="h-2.5 w-2.5 text-white" strokeWidth={3} />}
+                  </span>
+                  <span className={cn(
+                    "text-[12px] font-medium",
+                    isDone ? "text-muted-foreground" : "text-foreground"
+                  )}>
+                    {step.label}
+                  </span>
+                </div>
+                <div className="pl-7">
+                  <input
+                    defaultValue={val}
+                    onBlur={(e) => setTextValue(step.key, e.target.value)}
+                    placeholder={step.placeholder}
+                    className="w-full px-2.5 py-1.5 rounded-lg bg-secondary text-[11px] text-foreground outline-none placeholder:text-muted-foreground/40"
+                  />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Lots Editor (inline)
 // ---------------------------------------------------------------------------
 
@@ -160,22 +382,174 @@ function LotsEditor({ affiliate, onSaved }: LotsEditorProps) {
 }
 
 // ---------------------------------------------------------------------------
+// Credentials Modal (shown once after affiliate creation)
+// ---------------------------------------------------------------------------
+
+interface CredentialsModalProps {
+  name: string;
+  username: string;
+  password: string;
+  onClose: () => void;
+}
+
+function CredentialsModal({ name, username, password, onClose }: CredentialsModalProps) {
+  const [copiedAll, setCopiedAll] = useState(false);
+  const dashboardUrl = window.location.origin + "/portal";
+  const fullText = `Dashboard: ${dashboardUrl}\nUsername: ${username}\nPassword: ${password}`;
+
+  const copyAll = () => {
+    navigator.clipboard.writeText(fullText).catch(() => {});
+    setCopiedAll(true);
+    setTimeout(() => setCopiedAll(false), 2000);
+  };
+
+  return (
+    <>
+      <div className="fixed inset-0 bg-black/60 z-40" />
+      <div className="fixed inset-x-4 top-1/2 -translate-y-1/2 z-50 bg-card rounded-2xl shadow-xl p-5 max-w-sm mx-auto space-y-4">
+        <div className="flex items-center justify-between">
+          <p className="text-sm font-bold text-foreground">Login Created — {name}</p>
+          <button onClick={onClose} className="p-1.5 text-muted-foreground"><X className="h-4 w-4" /></button>
+        </div>
+
+        <p className="text-[12px] text-muted-foreground">
+          Share these credentials with the affiliate. The password is only shown once.
+        </p>
+
+        <div className="bg-secondary rounded-xl p-3.5 space-y-2 font-mono text-[12px]">
+          <div className="flex items-center justify-between">
+            <span className="text-muted-foreground">Dashboard</span>
+            <span className="text-foreground truncate max-w-[150px]">{dashboardUrl}</span>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-muted-foreground">Username</span>
+            <span className="text-foreground">{username}</span>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-muted-foreground">Password</span>
+            <span className="text-primary font-bold">{password}</span>
+          </div>
+        </div>
+
+        <button
+          onClick={copyAll}
+          className={cn(
+            "w-full py-2.5 rounded-xl text-sm font-semibold flex items-center justify-center gap-2 transition-colors",
+            copiedAll
+              ? "bg-stage-deposited/15 text-stage-deposited"
+              : "bg-primary text-primary-foreground"
+          )}
+        >
+          {copiedAll ? <><Check className="h-4 w-4" /> Copied!</> : <><Copy className="h-4 w-4" /> Copy All to Share</>}
+        </button>
+
+        <button onClick={onClose} className="w-full text-center text-[12px] text-muted-foreground py-1">
+          I've saved the credentials
+        </button>
+      </div>
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Pending Channel Row
+// ---------------------------------------------------------------------------
+
+interface PendingChannelRowProps {
+  channel: PendingChannel;
+  affiliates: AffiliatePerformance[];
+  onLinked: (chatId: string, affiliateId: number, type: "free" | "vip" | "tutorial") => void;
+  onDismissed: (id: number) => void;
+}
+
+function PendingChannelRow({ channel, affiliates, onLinked, onDismissed }: PendingChannelRowProps) {
+  const [selectedAffiliate, setSelectedAffiliate] = useState("");
+  const [selectedType, setSelectedType] = useState<"free" | "vip" | "tutorial">("free");
+  const [saving, setSaving] = useState(false);
+
+  const handleLink = async () => {
+    if (!selectedAffiliate) return;
+    setSaving(true);
+    try {
+      await linkChannel(parseInt(selectedAffiliate), channel.chat_id, selectedType);
+      onLinked(channel.chat_id, parseInt(selectedAffiliate), selectedType);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDismiss = async () => {
+    await dismissPendingChannel(channel.id);
+    onDismissed(channel.id);
+  };
+
+  return (
+    <div className="px-3.5 py-3 space-y-2">
+      <div className="flex items-center justify-between">
+        <div>
+          <p className="text-[13px] font-semibold text-foreground">{channel.title || "Unnamed channel"}</p>
+          <p className="text-[11px] text-muted-foreground font-mono">{channel.chat_id}</p>
+        </div>
+        <button onClick={handleDismiss} className="p-1 text-muted-foreground/50 hover:text-muted-foreground">
+          <X className="h-3.5 w-3.5" />
+        </button>
+      </div>
+      <div className="flex items-center gap-2">
+        <select
+          value={selectedAffiliate}
+          onChange={(e) => setSelectedAffiliate(e.target.value)}
+          className="flex-1 px-2.5 py-1.5 rounded-lg bg-secondary text-[12px] text-foreground outline-none"
+        >
+          <option value="">Select affiliate…</option>
+          {affiliates.map((a) => (
+            <option key={a.id} value={a.id}>{a.name}</option>
+          ))}
+        </select>
+        <select
+          value={selectedType}
+          onChange={(e) => setSelectedType(e.target.value as "free" | "vip" | "tutorial")}
+          className="w-24 px-2.5 py-1.5 rounded-lg bg-secondary text-[12px] text-foreground outline-none"
+        >
+          <option value="free">Free</option>
+          <option value="vip">VIP</option>
+          <option value="tutorial">Tutorial</option>
+        </select>
+        <button
+          onClick={handleLink}
+          disabled={!selectedAffiliate || saving}
+          className="px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-[12px] font-semibold disabled:opacity-40"
+        >
+          {saving ? "…" : "Link"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Main Dashboard
 // ---------------------------------------------------------------------------
 
 export default function AffiliatesDashboard() {
   const [affiliates, setAffiliates] = useState<AffiliatePerformance[]>([]);
+  const [pending, setPending] = useState<PendingChannel[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showAddModal, setShowAddModal] = useState(false);
   const [copiedTag, setCopiedTag] = useState<string | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [newCredentials, setNewCredentials] = useState<{ username: string; password: string; name: string } | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const data = await fetchAffiliatePerformance();
+      const [data, pendingData] = await Promise.all([
+        fetchAffiliatePerformance(),
+        fetchPendingChannels(),
+      ]);
       setAffiliates(data);
+      setPending(pendingData);
     } catch (e: any) {
       setError(e?.message || "Failed to load affiliates");
     } finally {
@@ -184,6 +558,17 @@ export default function AffiliatesDashboard() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  const handleSyncChannels = async () => {
+    setSyncing(true);
+    try {
+      await triggerChannelSync();
+      // Reload after a short delay to pick up updated counts
+      setTimeout(() => load(), 3000);
+    } finally {
+      setSyncing(false);
+    }
+  };
 
   const handleCopy = (link: string, tag: string) => {
     navigator.clipboard.writeText(link).catch(() => {});
@@ -198,6 +583,12 @@ export default function AffiliatesDashboard() {
           ? { ...a, lots_traded: lots, commission_earned: Math.round(lots * a.commission_rate * 100) / 100 }
           : a
       )
+    );
+  };
+
+  const handleChecklistUpdated = (affiliateId: number, patch: Partial<AffiliateChecklist>) => {
+    setAffiliates((prev) =>
+      prev.map((a) => (a.id === affiliateId ? { ...a, ...patch } : a))
     );
   };
 
@@ -229,13 +620,23 @@ export default function AffiliatesDashboard() {
       {/* Header */}
       <div className="bg-card/80 backdrop-blur-xl sticky top-0 z-10 px-4 pt-2 pb-3 flex items-center justify-between border-b border-[hsl(var(--ios-separator))]">
         <p className="text-xs text-muted-foreground">{affiliates.length} affiliate{affiliates.length !== 1 ? "s" : ""}</p>
-        <button
-          onClick={() => setShowAddModal(true)}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-primary/15 text-primary text-[12px] font-semibold"
-        >
-          <Plus className="h-3.5 w-3.5" />
-          Add Affiliate
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleSyncChannels}
+            disabled={syncing}
+            className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-secondary text-muted-foreground text-[12px] font-semibold disabled:opacity-50"
+            title="Sync channel member counts"
+          >
+            <RefreshCw className={cn("h-3.5 w-3.5", syncing && "animate-spin")} />
+          </button>
+          <button
+            onClick={() => setShowAddModal(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-primary/15 text-primary text-[12px] font-semibold"
+          >
+            <Plus className="h-3.5 w-3.5" />
+            Add Affiliate
+          </button>
+        </div>
       </div>
 
       {/* Summary cards */}
@@ -253,6 +654,34 @@ export default function AffiliatesDashboard() {
           </div>
         ))}
       </div>
+
+      {/* Pending Channels */}
+      {pending.length > 0 && (
+        <div className="px-4 pb-2 space-y-2">
+          <p className="text-[11px] text-muted-foreground font-semibold uppercase tracking-wider px-0.5 flex items-center gap-1.5">
+            <Radio className="h-3 w-3 text-primary" />
+            Unlinked Channels ({pending.length})
+          </p>
+          <div className="ios-card overflow-hidden divide-y divide-[hsl(var(--ios-separator))]">
+            {pending.map((ch) => (
+              <PendingChannelRow
+                key={ch.id}
+                channel={ch}
+                affiliates={affiliates}
+                onLinked={(chatId, affiliateId, type) => {
+                  setPending((prev) => prev.filter((c) => c.chat_id !== chatId));
+                  setAffiliates((prev) => prev.map((a) =>
+                    a.id === affiliateId
+                      ? { ...a, [`${type}_channel_id`]: chatId }
+                      : a
+                  ));
+                }}
+                onDismissed={(id) => setPending((prev) => prev.filter((c) => c.id !== id))}
+              />
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Leaderboard */}
       <div className="px-4 pb-4 space-y-2">
@@ -346,6 +775,12 @@ export default function AffiliatesDashboard() {
                   )}
                 </div>
 
+                {/* Row 4: onboarding checklist */}
+                <SetupChecklist
+                  affiliate={aff}
+                  onUpdated={(patch) => handleChecklistUpdated(aff.id, patch)}
+                />
+
               </div>
             ))}
           </div>
@@ -356,7 +791,22 @@ export default function AffiliatesDashboard() {
       {showAddModal && (
         <AddAffiliateModal
           onClose={() => setShowAddModal(false)}
-          onCreated={(affiliate) => setAffiliates((prev) => [affiliate, ...prev])}
+          onCreated={(affiliate) => {
+            setAffiliates((prev) => [affiliate, ...prev]);
+            if (affiliate.login_username && affiliate.login_password) {
+              setNewCredentials({ username: affiliate.login_username, password: affiliate.login_password, name: affiliate.name });
+            }
+          }}
+        />
+      )}
+
+      {/* Credentials reveal modal */}
+      {newCredentials && (
+        <CredentialsModal
+          name={newCredentials.name}
+          username={newCredentials.username}
+          password={newCredentials.password}
+          onClose={() => setNewCredentials(null)}
         />
       )}
     </div>

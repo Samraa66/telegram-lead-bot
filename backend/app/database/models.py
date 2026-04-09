@@ -200,6 +200,38 @@ class Affiliate(Base):
     is_active = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
 
+    # Login credentials (auto-generated on create)
+    login_username = Column(String(100), unique=True, nullable=True)
+    login_password_hash = Column(String(255), nullable=True)  # pbkdf2 salt$hash
+
+    # Onboarding checklist
+    esim_done = Column(Boolean, default=False, nullable=False)
+    free_channel_id = Column(String(100), nullable=True)
+    free_channel_members = Column(Integer, default=0, nullable=False)
+    bot_setup_done = Column(Boolean, default=False, nullable=False)
+    vip_channel_id = Column(String(100), nullable=True)
+    vip_channel_members = Column(Integer, default=0, nullable=False)
+    tutorial_channel_id = Column(String(100), nullable=True)
+    tutorial_channel_members = Column(Integer, default=0, nullable=False)
+    sales_scripts_done = Column(Boolean, default=False, nullable=False)
+    ib_profile_id = Column(String(255), nullable=True)
+    ads_live = Column(Boolean, default=False, nullable=False)
+    pixel_setup_done = Column(Boolean, default=False, nullable=False)
+
+
+class PendingChannel(Base):
+    """
+    Telegram channels/groups the bot was added to but not yet linked to an affiliate.
+    The operator links them from the dashboard.
+    """
+
+    __tablename__ = "pending_channels"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    chat_id = Column(String(50), unique=True, nullable=False)   # e.g. -1001234567890
+    title = Column(String(500), nullable=True)
+    detected_at = Column(DateTime, default=datetime.utcnow)
+
 
 class AdCreative(Base):
     """

@@ -578,6 +578,19 @@ def get_affiliate_performance(db: Session) -> list:
             "commission_earned": commission_earned,
             "is_active": aff.is_active,
             "created_at": aff.created_at.isoformat() if aff.created_at else None,
+            # Onboarding checklist
+            "esim_done": bool(aff.esim_done),
+            "free_channel_id": aff.free_channel_id,
+            "free_channel_members": aff.free_channel_members or 0,
+            "bot_setup_done": bool(aff.bot_setup_done),
+            "vip_channel_id": aff.vip_channel_id,
+            "vip_channel_members": aff.vip_channel_members or 0,
+            "tutorial_channel_id": aff.tutorial_channel_id,
+            "tutorial_channel_members": aff.tutorial_channel_members or 0,
+            "sales_scripts_done": bool(aff.sales_scripts_done),
+            "ib_profile_id": aff.ib_profile_id,
+            "ads_live": bool(aff.ads_live),
+            "pixel_setup_done": bool(aff.pixel_setup_done),
         })
 
     return sorted(result, key=lambda x: (x["deposits"], x["leads"]), reverse=True)
