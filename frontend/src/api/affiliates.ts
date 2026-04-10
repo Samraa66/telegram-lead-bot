@@ -136,3 +136,6 @@ export const dismissPendingChannel = (pendingId: number): Promise<void> =>
 
 export const triggerChannelSync = (): Promise<void> =>
   apiFetch("/affiliates/sync-channels", { method: "POST" });
+
+export const deleteAffiliate = (affiliateId: number): Promise<void> =>
+  apiFetch(`/affiliates/${affiliateId}`, { method: "DELETE" });

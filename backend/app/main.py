@@ -746,6 +746,22 @@ def update_affiliate_lots(
     return {"ok": True, "lots_traded": affiliate.lots_traded, "commission_earned": round(affiliate.lots_traded * affiliate.commission_rate, 2)}
 
 
+@app.delete("/affiliates/{affiliate_id}")
+def delete_affiliate(
+    affiliate_id: int,
+    db: Session = Depends(get_db),
+    _=Depends(require_roles("developer", "admin")),
+):
+    """Permanently delete an affiliate and their login credentials."""
+    from app.database.models import Affiliate
+    affiliate = db.query(Affiliate).filter(Affiliate.id == affiliate_id).first()
+    if not affiliate:
+        raise HTTPException(status_code=404, detail="affiliate not found")
+    db.delete(affiliate)
+    db.commit()
+    return {"ok": True}
+
+
 @app.patch("/affiliates/{affiliate_id}/checklist")
 def update_affiliate_checklist(
     affiliate_id: int,

@@ -3,6 +3,7 @@ import { Trophy, Users, TrendingUp, DollarSign, Check, Plus, X, Link, ChevronDow
 import {
   fetchAffiliatePerformance,
   createAffiliate,
+  deleteAffiliate,
   updateAffiliateLots,
   updateAffiliateChecklist,
   fetchPendingChannels,
@@ -592,6 +593,16 @@ export default function AffiliatesDashboard() {
     );
   };
 
+  const handleDelete = async (affiliateId: number, name: string) => {
+    if (!window.confirm(`Remove ${name}? This cannot be undone.`)) return;
+    try {
+      await deleteAffiliate(affiliateId);
+      setAffiliates((prev) => prev.filter((a) => a.id !== affiliateId));
+    } catch {
+      alert("Failed to delete affiliate.");
+    }
+  };
+
   // Summary stats
   const totalLeads = affiliates.reduce((s, a) => s + a.leads, 0);
   const totalDeposits = affiliates.reduce((s, a) => s + a.deposits, 0);
@@ -756,23 +767,31 @@ export default function AffiliatesDashboard() {
                     </span>
                   </div>
 
-                  {aff.referral_link && (
+                  <div className="flex items-center gap-2">
+                    {aff.referral_link && (
+                      <button
+                        onClick={() => handleCopy(aff.referral_link!, aff.referral_tag)}
+                        className={cn(
+                          "flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-[11px] font-semibold transition-all",
+                          copiedTag === aff.referral_tag
+                            ? "bg-stage-deposited/15 text-stage-deposited"
+                            : "bg-secondary text-muted-foreground active:bg-accent"
+                        )}
+                      >
+                        {copiedTag === aff.referral_tag ? (
+                          <><Check className="h-3 w-3" /> Copied</>
+                        ) : (
+                          <><Link className="h-3 w-3" /> Copy Link</>
+                        )}
+                      </button>
+                    )}
                     <button
-                      onClick={() => handleCopy(aff.referral_link!, aff.referral_tag)}
-                      className={cn(
-                        "flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-[11px] font-semibold transition-all",
-                        copiedTag === aff.referral_tag
-                          ? "bg-stage-deposited/15 text-stage-deposited"
-                          : "bg-secondary text-muted-foreground active:bg-accent"
-                      )}
+                      onClick={() => handleDelete(aff.id, aff.name)}
+                      className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-[11px] font-semibold text-destructive bg-destructive/10 active:bg-destructive/20 transition-all"
                     >
-                      {copiedTag === aff.referral_tag ? (
-                        <><Check className="h-3 w-3" /> Copied</>
-                      ) : (
-                        <><Link className="h-3 w-3" /> Copy Link</>
-                      )}
+                      <X className="h-3 w-3" /> Remove
                     </button>
-                  )}
+                  </div>
                 </div>
 
                 {/* Row 4: onboarding checklist */}
