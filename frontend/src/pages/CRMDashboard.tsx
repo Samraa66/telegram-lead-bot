@@ -1,5 +1,13 @@
-import { useState, useCallback, useEffect } from "react";
-import { LogOut } from "lucide-react";
+import { useState, useCallback, useEffect, useRef } from "react";
+import {
+  LogOut,
+  Users,
+  BarChart2,
+  Star,
+  Link2,
+  ChevronUp,
+  Menu,
+} from "lucide-react";
 import { LeadList } from "../components/crm/LeadList";
 import { LeadDrawer } from "../components/crm/LeadDrawer";
 import AnalyticsDashboard from "./AnalyticsDashboard";
@@ -20,19 +28,46 @@ import { clearAuth, getStoredUser } from "../api/auth";
 
 type Tab = "leads" | "analytics" | "members" | "affiliates";
 
+const NAV_ITEMS = [
+  { id: "leads" as Tab, label: "Leads", icon: Users, roles: null },
+  { id: "analytics" as Tab, label: "Analytics", icon: BarChart2, roles: null },
+  { id: "members" as Tab, label: "Members", icon: Star, roles: ["developer", "admin", "vip_manager"] },
+  { id: "affiliates" as Tab, label: "Affiliates", icon: Link2, roles: ["developer", "admin"] },
+];
+
 export default function CRMDashboard() {
   const storedUser = getStoredUser();
-  const isVipManager = storedUser?.role === "vip_manager";
-  const canSeeMembers = ["developer", "admin", "vip_manager"].includes(storedUser?.role || "");
-  const canSeeAffiliates = ["developer", "admin"].includes(storedUser?.role || "");
+  const role = storedUser?.role || "";
+  const isVipManager = role === "vip_manager";
+
+  const visibleNav = NAV_ITEMS.filter((item) => {
+    if (isVipManager && (item.id === "leads" || item.id === "analytics")) return false;
+    if (item.roles && !item.roles.includes(role)) return false;
+    return true;
+  });
+
   const [tab, setTab] = useState<Tab>(isVipManager ? "members" : "leads");
   const [leads, setLeads] = useState<Lead[]>([]);
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const userMenuRef = useRef<HTMLDivElement>(null);
 
   const selectedLead = leads.find((l) => l.id === selectedLeadId) ?? null;
+
+  // Close user menu on outside click
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (userMenuRef.current && !userMenuRef.current.contains(e.target as Node)) {
+        setUserMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
 
   const loadContacts = useCallback(async (silent = false) => {
     if (!silent) { setLoading(true); setError(null); }
@@ -48,7 +83,6 @@ export default function CRMDashboard() {
 
   useEffect(() => { loadContacts(); }, [loadContacts]);
 
-  // Poll for new contacts every 15 seconds
   useEffect(() => {
     const interval = setInterval(() => loadContacts(true), 15_000);
     return () => clearInterval(interval);
@@ -59,16 +93,12 @@ export default function CRMDashboard() {
     setDrawerOpen(true);
   }, []);
 
-  const handleCloseDrawer = useCallback(() => {
-    setDrawerOpen(false);
-  }, []);
+  const handleCloseDrawer = useCallback(() => setDrawerOpen(false), []);
 
-  // Send a quick-reply template via Telethon (operator account)
   const handleSendTemplate = useCallback(async (text: string) => {
     if (!selectedLeadId) return;
     try {
       await sendMessageToContact(selectedLeadId, text);
-      // Refresh to pick up any stage transition triggered by the template keyword
       await loadContacts(true);
     } catch (e: any) {
       setError(e?.message || "Failed to send template");
@@ -143,6 +173,11 @@ export default function CRMDashboard() {
     window.location.href = "/login";
   }, []);
 
+  const handleNavClick = (id: Tab) => {
+    setTab(id);
+    setSidebarOpen(false);
+  };
+
   if (loading && leads.length === 0) {
     return (
       <div className="h-screen flex items-center justify-center text-muted-foreground">
@@ -159,91 +194,141 @@ export default function CRMDashboard() {
     );
   }
 
+  const initials = (storedUser?.username || "U").slice(0, 2).toUpperCase();
+
+  const Sidebar = ({ mobile }: { mobile?: boolean }) => (
+    <aside
+      className={
+        mobile
+          ? "flex flex-col h-full"
+          : "hidden md:flex flex-col w-56 flex-shrink-0 border-r border-[hsl(var(--sidebar-border))]"
+      }
+      style={{ background: "hsl(var(--sidebar-background))" }}
+    >
+      {/* Logo */}
+      <div className="px-4 py-5 border-b border-[hsl(var(--sidebar-border))]">
+        <div className="flex items-center gap-2.5">
+          <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center flex-shrink-0">
+            <span className="text-[hsl(var(--primary-foreground))] font-bold text-sm">T</span>
+          </div>
+          <div>
+            <div className="text-sm font-semibold text-foreground leading-none">Telelytics</div>
+            <div className="text-[11px] text-muted-foreground mt-0.5">Affiliate Manager</div>
+          </div>
+        </div>
+      </div>
+
+      {/* Nav */}
+      <nav className="flex-1 p-3 space-y-0.5 overflow-y-auto">
+        {visibleNav.map(({ id, label, icon: Icon }) => (
+          <button
+            key={id}
+            onClick={() => handleNavClick(id)}
+            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all text-left ${
+              tab === id
+                ? "bg-primary/15 text-primary"
+                : "text-[hsl(var(--sidebar-foreground))] hover:bg-[hsl(var(--sidebar-accent))] hover:text-foreground"
+            }`}
+          >
+            <Icon className="h-4 w-4 flex-shrink-0" />
+            {label}
+          </button>
+        ))}
+      </nav>
+
+      {/* User section */}
+      <div className="p-3 border-t border-[hsl(var(--sidebar-border))] relative" ref={mobile ? undefined : userMenuRef}>
+        <button
+          onClick={() => setUserMenuOpen((v) => !v)}
+          className="w-full flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-[hsl(var(--sidebar-accent))] transition-all"
+        >
+          <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0">
+            <span className="text-primary text-xs font-bold">{initials}</span>
+          </div>
+          <div className="flex-1 text-left min-w-0">
+            <div className="text-xs font-medium text-foreground truncate">
+              {storedUser?.username || "User"}
+            </div>
+            <div className="text-[11px] text-muted-foreground capitalize">{role}</div>
+          </div>
+          <ChevronUp
+            className={`h-3 w-3 text-muted-foreground transition-transform ${
+              userMenuOpen ? "" : "rotate-180"
+            }`}
+          />
+        </button>
+
+        {userMenuOpen && (
+          <div className="absolute bottom-full left-3 right-3 mb-1 bg-card border border-border rounded-lg shadow-xl overflow-hidden z-50">
+            <button
+              onClick={handleLogout}
+              className="w-full flex items-center gap-2.5 px-3 py-2.5 text-sm text-destructive hover:bg-destructive/10 transition-colors"
+            >
+              <LogOut className="h-4 w-4" />
+              Sign out
+            </button>
+          </div>
+        )}
+      </div>
+    </aside>
+  );
+
   return (
-    <div className="h-[100dvh] flex flex-col bg-[hsl(var(--ios-grouped-bg))]">
-      {/* Error banner */}
-      {error && (
-        <div className="px-4 py-2 text-xs text-destructive bg-destructive/10 border-b border-destructive/20 text-center">
-          {error}
+    <div className="h-[100dvh] flex bg-[hsl(var(--ios-grouped-bg))]">
+      {/* Desktop sidebar */}
+      <Sidebar />
+
+      {/* Mobile sidebar overlay */}
+      {sidebarOpen && (
+        <div
+          className="md:hidden fixed inset-0 z-40 flex"
+          onClick={() => setSidebarOpen(false)}
+        >
+          <div className="absolute inset-0 bg-black/60" />
+          <div
+            className="relative w-56 h-full z-50"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div ref={userMenuRef} className="h-full">
+              <Sidebar mobile />
+            </div>
+          </div>
         </div>
       )}
 
-      {/* Top bar: tab toggle + logout */}
-      <div className="safe-top bg-card/80 backdrop-blur-xl border-b border-[hsl(var(--ios-separator))] flex items-center justify-between px-4 pt-3 pb-2 z-20">
-        <div className="flex gap-1 bg-secondary rounded-lg p-0.5">
-          {!isVipManager && (
-            <button
-              onClick={() => setTab("leads")}
-              className={`px-4 py-1.5 rounded-md text-[13px] font-semibold transition-all ${
-                tab === "leads"
-                  ? "bg-card text-foreground shadow-sm"
-                  : "text-muted-foreground"
-              }`}
-            >
-              Leads
-            </button>
-          )}
-          {!isVipManager && (
-            <button
-              onClick={() => setTab("analytics")}
-              className={`px-4 py-1.5 rounded-md text-[13px] font-semibold transition-all ${
-                tab === "analytics"
-                  ? "bg-card text-foreground shadow-sm"
-                  : "text-muted-foreground"
-              }`}
-            >
-              Analytics
-            </button>
-          )}
-          {canSeeMembers && (
-            <button
-              onClick={() => setTab("members")}
-              className={`px-4 py-1.5 rounded-md text-[13px] font-semibold transition-all ${
-                tab === "members"
-                  ? "bg-card text-foreground shadow-sm"
-                  : "text-muted-foreground"
-              }`}
-            >
-              Members
-            </button>
-          )}
-          {canSeeAffiliates && (
-            <button
-              onClick={() => setTab("affiliates")}
-              className={`px-4 py-1.5 rounded-md text-[13px] font-semibold transition-all ${
-                tab === "affiliates"
-                  ? "bg-card text-foreground shadow-sm"
-                  : "text-muted-foreground"
-              }`}
-            >
-              Affiliates
-            </button>
-          )}
+      {/* Main content */}
+      <div className="flex-1 min-w-0 flex flex-col">
+        {/* Mobile top bar */}
+        <div className="md:hidden flex items-center px-4 py-3 bg-card/80 backdrop-blur-xl border-b border-[hsl(var(--ios-separator))]">
+          <button
+            onClick={() => setSidebarOpen(true)}
+            className="p-1 text-muted-foreground"
+          >
+            <Menu className="h-5 w-5" />
+          </button>
+          <span className="ml-3 text-sm font-semibold text-foreground capitalize">{tab}</span>
         </div>
-        <button
-          onClick={handleLogout}
-          className="p-2 text-muted-foreground active:text-foreground transition-colors"
-          title="Sign out"
-        >
-          <LogOut className="h-4 w-4" />
-        </button>
-      </div>
 
-      {/* Content */}
-      <div className="flex-1 min-h-0 flex flex-col">
-        {tab === "leads" && (
-          <LeadList
-            leads={leads}
-            selectedLeadId={selectedLeadId}
-            onSelectLead={handleSelectLead}
-          />
+        {error && (
+          <div className="px-4 py-2 text-xs text-destructive bg-destructive/10 border-b border-destructive/20 text-center">
+            {error}
+          </div>
         )}
-        {tab === "analytics" && <AnalyticsDashboard />}
-        {tab === "members" && <MembersDashboard />}
-        {tab === "affiliates" && <AffiliatesDashboard />}
+
+        <div className="flex-1 min-h-0 flex flex-col">
+          {tab === "leads" && (
+            <LeadList
+              leads={leads}
+              selectedLeadId={selectedLeadId}
+              onSelectLead={handleSelectLead}
+            />
+          )}
+          {tab === "analytics" && <AnalyticsDashboard />}
+          {tab === "members" && <MembersDashboard />}
+          {tab === "affiliates" && <AffiliatesDashboard />}
+        </div>
       </div>
 
-      {/* Lead drawer */}
       <LeadDrawer
         lead={selectedLead}
         isOpen={drawerOpen}

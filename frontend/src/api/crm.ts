@@ -1,6 +1,5 @@
 import { Lead, Message, backendStageToUi } from "../data/crmData";
 import { getToken, clearAuth } from "./auth";
-import { MOCK_LEADS } from "./mockData";
 
 type ContactDto = {
   id: number;
@@ -73,9 +72,6 @@ function avatarFor(displayName: string): string {
 }
 
 export async function fetchContacts(includeNoise = false): Promise<Lead[]> {
-  if (import.meta.env.VITE_USE_MOCK === "true") {
-    return includeNoise ? MOCK_LEADS : MOCK_LEADS.filter((l) => l.classification !== "noise");
-  }
   const path = includeNoise ? "/contacts?include_noise=true" : "/contacts";
   const contacts = (await apiFetch(path)) as ContactDto[];
   return contacts.map((c) => {
@@ -110,7 +106,7 @@ export async function fetchContactMessages(contactId: string): Promise<Message[]
 }
 
 export async function sendMessageToContact(contactId: string, message: string): Promise<void> {
-  if (import.meta.env.VITE_USE_MOCK === "true") return;
+
   await apiFetch("/send-message", {
     method: "POST",
     body: JSON.stringify({ contact_id: Number(contactId), message }),
@@ -118,7 +114,7 @@ export async function sendMessageToContact(contactId: string, message: string): 
 }
 
 export async function setContactStage(contactId: string, stage: number): Promise<void> {
-  if (import.meta.env.VITE_USE_MOCK === "true") return;
+
   await apiFetch(`/contacts/${contactId}/stage`, {
     method: "POST",
     body: JSON.stringify({ stage }),
@@ -126,7 +122,7 @@ export async function setContactStage(contactId: string, stage: number): Promise
 }
 
 export async function saveContactNotes(contactId: string, notes: string): Promise<void> {
-  if (import.meta.env.VITE_USE_MOCK === "true") return;
+
   await apiFetch(`/contacts/${contactId}/notes`, {
     method: "POST",
     body: JSON.stringify({ notes }),
@@ -134,23 +130,22 @@ export async function saveContactNotes(contactId: string, notes: string): Promis
 }
 
 export async function escalateContact(contactId: string): Promise<void> {
-  if (import.meta.env.VITE_USE_MOCK === "true") return;
+
   await apiFetch(`/contacts/${contactId}/escalate`, {
     method: "POST",
   });
 }
 
 export async function toggleAffiliate(contactId: string): Promise<{ is_affiliate: boolean }> {
-  if (import.meta.env.VITE_USE_MOCK === "true") return { is_affiliate: false };
   return apiFetch(`/contacts/${contactId}/affiliate`, { method: "POST" });
 }
 
 export async function markAsNoise(contactId: string): Promise<void> {
-  if (import.meta.env.VITE_USE_MOCK === "true") return;
+
   await apiFetch(`/contacts/${contactId}/noise`, { method: "POST" });
 }
 
 export async function confirmDeposit(contactId: string): Promise<void> {
-  if (import.meta.env.VITE_USE_MOCK === "true") return;
+
   await apiFetch(`/contacts/${contactId}/deposit-confirm`, { method: "POST" });
 }

@@ -1,11 +1,8 @@
 import { getToken, clearAuth } from "./auth";
-import { MOCK_MEMBERS } from "./mockData";
 
 const API_BASE = import.meta.env.DEV
   ? (import.meta.env.VITE_API_BASE_URL || "http://localhost:8000")
   : "";
-
-const MOCK = import.meta.env.VITE_USE_MOCK === "true";
 
 async function apiFetch(path: string, init?: RequestInit) {
   const token = getToken();
@@ -44,17 +41,13 @@ export interface VipMember {
 }
 
 export const fetchMembers = (): Promise<VipMember[]> =>
-  MOCK ? Promise.resolve(MOCK_MEMBERS) : apiFetch("/members");
+  apiFetch("/members");
 
 export const confirmDeposit = (contactId: string): Promise<void> =>
-  MOCK
-    ? Promise.resolve()
-    : apiFetch(`/contacts/${contactId}/deposit-confirm`, { method: "POST" });
+  apiFetch(`/contacts/${contactId}/deposit-confirm`, { method: "POST" });
 
 export const reengageMember = (contactId: string, message?: string): Promise<void> =>
-  MOCK
-    ? Promise.resolve()
-    : apiFetch(`/members/${contactId}/reengage`, {
-        method: "POST",
-        body: JSON.stringify({ message: message || null }),
-      });
+  apiFetch(`/members/${contactId}/reengage`, {
+    method: "POST",
+    body: JSON.stringify({ message: message || null }),
+  });

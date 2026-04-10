@@ -1,9 +1,4 @@
 import { getToken, clearAuth } from "./auth";
-import {
-  MOCK_OVERVIEW, MOCK_CONVERSIONS, MOCK_STAGES, MOCK_HOURLY,
-  MOCK_LEADS_OVER_TIME, MOCK_DAY_OF_WEEK, MOCK_CAMPAIGNS, MOCK_CAMPAIGN_FLAGS,
-  MOCK_CREATIVES, MOCK_AD_ALERTS, MOCK_TRACKED_CAMPAIGNS,
-} from "./mockData";
 
 const API_BASE = import.meta.env.DEV
   ? (import.meta.env.VITE_API_BASE_URL || "http://localhost:8000")
@@ -129,38 +124,31 @@ function rangeParams(range: DateRange): string {
   return `?from_date=${range.from}&to_date=${range.to}`;
 }
 
-const MOCK = import.meta.env.VITE_USE_MOCK === "true";
-
 export const fetchOverview = (range: DateRange): Promise<Overview> =>
-  MOCK ? Promise.resolve(MOCK_OVERVIEW) : apiFetch(`/analytics/overview${rangeParams(range)}`);
+  apiFetch(`/analytics/overview${rangeParams(range)}`);
 export const fetchConversions = (range: DateRange): Promise<ConversionMetric[]> =>
-  MOCK ? Promise.resolve(MOCK_CONVERSIONS) : apiFetch(`/analytics/conversions${rangeParams(range)}`);
+  apiFetch(`/analytics/conversions${rangeParams(range)}`);
 export const fetchStageDistribution = (): Promise<StageCount[]> =>
-  MOCK ? Promise.resolve(MOCK_STAGES) : apiFetch("/analytics/stage-distribution");
+  apiFetch("/analytics/stage-distribution");
 export const fetchHourlyHeatmap = (range: DateRange): Promise<HourCount[]> =>
-  MOCK ? Promise.resolve(MOCK_HOURLY) : apiFetch(`/analytics/hourly-heatmap${rangeParams(range)}`);
+  apiFetch(`/analytics/hourly-heatmap${rangeParams(range)}`);
 export const fetchDayOfWeek = (range: DateRange): Promise<DayOfWeek[]> =>
-  MOCK ? Promise.resolve(MOCK_DAY_OF_WEEK) : apiFetch(`/analytics/day-of-week${rangeParams(range)}`);
+  apiFetch(`/analytics/day-of-week${rangeParams(range)}`);
 export const fetchLeadsOverTime = (range: DateRange): Promise<DayCount[]> => {
-  if (MOCK) return Promise.resolve(MOCK_LEADS_OVER_TIME);
   const base = range ? rangeParams(range) : "?days=30";
   return apiFetch(`/analytics/leads-over-time${base}`);
 };
 
 export const fetchCampaigns = (range: DateRange): Promise<CampaignMetric[]> =>
-  MOCK ? Promise.resolve(MOCK_CAMPAIGNS) : apiFetch(`/analytics/campaigns${rangeParams(range)}`);
-
+  apiFetch(`/analytics/campaigns${rangeParams(range)}`);
 export const fetchCampaignFlags = (): Promise<CampaignFlag[]> =>
-  MOCK ? Promise.resolve(MOCK_CAMPAIGN_FLAGS) : apiFetch("/analytics/campaigns/flags");
-
+  apiFetch("/analytics/campaigns/flags");
 export const fetchCreatives = (range: DateRange): Promise<CreativeMetric[]> =>
-  MOCK ? Promise.resolve(MOCK_CREATIVES) : apiFetch(`/analytics/campaigns/creatives${rangeParams(range)}`);
-
+  apiFetch(`/analytics/campaigns/creatives${rangeParams(range)}`);
 export const fetchAdAlerts = (): Promise<AdAlert[]> =>
-  MOCK ? Promise.resolve(MOCK_AD_ALERTS) : apiFetch("/analytics/alerts");
-
+  apiFetch("/analytics/alerts");
 export const fetchTrackedCampaigns = (): Promise<TrackedCampaign[]> =>
-  MOCK ? Promise.resolve(MOCK_TRACKED_CAMPAIGNS) : apiFetch("/campaigns");
+  apiFetch("/campaigns");
 
 export const createTrackedCampaign = (name: string, metaCampaignId?: string): Promise<TrackedCampaign> =>
   apiFetch("/campaigns", {

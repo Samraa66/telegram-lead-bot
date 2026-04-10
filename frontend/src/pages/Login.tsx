@@ -8,32 +8,32 @@ const LogoMark = ({ size = 36 }: { size?: number }) => (
       width="36"
       height="36"
       rx="9"
-      fill="hsl(152,60%,48%)"
+      fill="hsl(199,86%,55%)"
       fillOpacity="0.12"
     />
     <rect
       width="36"
       height="36"
       rx="9"
-      stroke="hsl(152,60%,48%)"
+      stroke="hsl(199,86%,55%)"
       strokeOpacity="0.25"
       strokeWidth="1"
     />
     <polyline
       points="6,27 11,19 16,23 22,12 30,15"
-      stroke="hsl(152,60%,48%)"
+      stroke="hsl(199,86%,55%)"
       strokeWidth="2"
       strokeLinecap="round"
       strokeLinejoin="round"
       fill="none"
     />
-    <circle cx="30" cy="15" r="2.5" fill="hsl(152,60%,48%)" />
+    <circle cx="30" cy="15" r="2.5" fill="hsl(199,86%,55%)" />
     <line
       x1="6"
       y1="29"
       x2="30"
       y2="29"
-      stroke="hsl(152,60%,48%)"
+      stroke="hsl(199,86%,55%)"
       strokeOpacity="0.2"
       strokeWidth="1"
     />
@@ -70,7 +70,7 @@ export default function Login() {
           className="absolute inset-0 opacity-30"
           style={{
             backgroundImage:
-              "radial-gradient(circle, rgba(56,189,120,0.18) 1px, transparent 1px)",
+              "radial-gradient(circle, rgba(14,165,233,0.18) 1px, transparent 1px)",
             backgroundSize: "28px 28px",
           }}
         />
@@ -80,7 +80,7 @@ export default function Login() {
           className="absolute -bottom-32 -left-32 w-[480px] h-[480px] rounded-full pointer-events-none"
           style={{
             background:
-              "radial-gradient(circle, hsl(152,60%,48%) 0%, transparent 65%)",
+              "radial-gradient(circle, hsl(199,86%,55%) 0%, transparent 65%)",
             opacity: 0.08,
           }}
         />
@@ -90,7 +90,7 @@ export default function Login() {
           className="absolute -top-20 right-0 w-64 h-64 rounded-full pointer-events-none"
           style={{
             background:
-              "radial-gradient(circle, hsl(152,60%,48%) 0%, transparent 70%)",
+              "radial-gradient(circle, hsl(199,86%,55%) 0%, transparent 70%)",
             opacity: 0.04,
           }}
         />
@@ -107,7 +107,7 @@ export default function Login() {
         <div className="relative space-y-5">
           <p
             className="text-xs font-mono tracking-[0.2em] uppercase"
-            style={{ color: "hsl(152,60%,48%)" }}
+            style={{ color: "hsl(199,86%,55%)" }}
           >
             Intelligence Platform
           </p>
@@ -116,7 +116,7 @@ export default function Login() {
             <br />
             Every signal.
             <br />
-            <span style={{ color: "hsl(152,60%,48%)" }}>All in one place.</span>
+            <span style={{ color: "hsl(199,86%,55%)" }}>All in one place.</span>
           </h2>
           <p className="text-sm text-white/25 leading-relaxed max-w-[300px]">
             Full-spectrum lead tracking, conversion analytics, and affiliate
@@ -134,7 +134,7 @@ export default function Login() {
             <div key={stat.label}>
               <div
                 className="text-2xl font-bold font-mono"
-                style={{ color: "hsl(152,60%,54%)" }}
+                style={{ color: "hsl(199,86%,62%)" }}
               >
                 {stat.value}
               </div>
@@ -187,7 +187,7 @@ export default function Login() {
                   boxShadow: "inset 0 1px 4px rgba(0,0,0,0.3)",
                 }}
                 onFocus={(e) => {
-                  e.currentTarget.style.border = "1px solid hsl(152,60%,48%)";
+                  e.currentTarget.style.border = "1px solid hsl(199,86%,55%)";
                   e.currentTarget.style.boxShadow =
                     "0 0 0 3px hsl(152,60%,48%,0.1), inset 0 1px 4px rgba(0,0,0,0.3)";
                 }}
@@ -219,7 +219,7 @@ export default function Login() {
                   boxShadow: "inset 0 1px 4px rgba(0,0,0,0.3)",
                 }}
                 onFocus={(e) => {
-                  e.currentTarget.style.border = "1px solid hsl(152,60%,48%)";
+                  e.currentTarget.style.border = "1px solid hsl(199,86%,55%)";
                   e.currentTarget.style.boxShadow =
                     "0 0 0 3px hsl(152,60%,48%,0.1), inset 0 1px 4px rgba(0,0,0,0.3)";
                 }}
@@ -252,19 +252,19 @@ export default function Login() {
               disabled={loading}
               className="w-full font-semibold text-sm py-3 rounded-xl transition-all disabled:opacity-40 disabled:cursor-not-allowed mt-1"
               style={{
-                background: "hsl(152,60%,48%)",
-                color: "#050a07",
+                background: "hsl(199,86%,55%)",
+                color: "#050d14",
                 boxShadow: loading
                   ? "none"
                   : "0 0 24px hsl(152,60%,48%,0.28), 0 1px 0 rgba(255,255,255,0.1) inset",
               }}
               onMouseEnter={(e) => {
                 if (!loading)
-                  e.currentTarget.style.background = "hsl(152,60%,53%)";
+                  e.currentTarget.style.background = "hsl(199,86%,62%)";
               }}
               onMouseLeave={(e) => {
                 if (!loading)
-                  e.currentTarget.style.background = "hsl(152,60%,48%)";
+                  e.currentTarget.style.background = "hsl(199,86%,55%)";
               }}
             >
               {loading ? "Signing in…" : "Sign In"}

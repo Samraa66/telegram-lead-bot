@@ -1,11 +1,8 @@
 import { getToken, clearAuth } from "./auth";
-import { MOCK_AFFILIATES } from "./mockData";
 
 const API_BASE = import.meta.env.DEV
   ? (import.meta.env.VITE_API_BASE_URL || "http://localhost:8000")
   : "";
-
-const MOCK = import.meta.env.VITE_USE_MOCK === "true";
 
 async function apiFetch(path: string, init?: RequestInit) {
   const token = getToken();
@@ -68,48 +65,28 @@ export interface CreateAffiliatePayload {
 }
 
 export const fetchAffiliatePerformance = (): Promise<AffiliatePerformance[]> =>
-  MOCK ? Promise.resolve(MOCK_AFFILIATES) : apiFetch("/affiliates/performance");
+  apiFetch("/affiliates/performance");
 
 export const createAffiliate = (payload: CreateAffiliatePayload): Promise<AffiliatePerformance> =>
-  MOCK
-    ? Promise.resolve({
-        id: Date.now(),
-        name: payload.name,
-        username: payload.username || null,
-        referral_tag: "ref_mock1234",
-        referral_link: null,
-        leads: 0, deposits: 0, conversion_rate: 0, lots_traded: 0,
-        commission_rate: payload.commission_rate ?? 15, commission_earned: 0,
-        is_active: true, created_at: new Date().toISOString(),
-        esim_done: false, free_channel_id: null, free_channel_members: 0,
-        bot_setup_done: false, vip_channel_id: null, vip_channel_members: 0,
-        tutorial_channel_id: null, tutorial_channel_members: 0,
-        sales_scripts_done: false, ib_profile_id: null, ads_live: false, pixel_setup_done: false,
-        login_username: "aff_mock1234", login_password: "MockPass99",
-      })
-    : apiFetch("/affiliates", {
-        method: "POST",
-        body: JSON.stringify(payload),
-      });
+  apiFetch("/affiliates", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
 
 export const updateAffiliateLots = (affiliateId: number, lots_traded: number): Promise<void> =>
-  MOCK
-    ? Promise.resolve()
-    : apiFetch(`/affiliates/${affiliateId}/lots`, {
-        method: "PATCH",
-        body: JSON.stringify({ lots_traded }),
-      });
+  apiFetch(`/affiliates/${affiliateId}/lots`, {
+    method: "PATCH",
+    body: JSON.stringify({ lots_traded }),
+  });
 
 export const updateAffiliateChecklist = (
   affiliateId: number,
   patch: Partial<AffiliateChecklist>,
 ): Promise<void> =>
-  MOCK
-    ? Promise.resolve()
-    : apiFetch(`/affiliates/${affiliateId}/checklist`, {
-        method: "PATCH",
-        body: JSON.stringify(patch),
-      });
+  apiFetch(`/affiliates/${affiliateId}/checklist`, {
+    method: "PATCH",
+    body: JSON.stringify(patch),
+  });
 
 export interface PendingChannel {
   id: number;
@@ -119,7 +96,7 @@ export interface PendingChannel {
 }
 
 export const fetchPendingChannels = (): Promise<PendingChannel[]> =>
-  MOCK ? Promise.resolve([]) : apiFetch("/affiliates/pending-channels");
+  apiFetch("/affiliates/pending-channels");
 
 export const linkChannel = (
   affiliateId: number,

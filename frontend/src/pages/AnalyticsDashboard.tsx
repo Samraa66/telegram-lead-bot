@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import { Users, TrendingUp, Star, Clock, Calendar, AlertTriangle, BarChart2, Link, Trophy, Copy, Check } from "lucide-react";
+import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from "recharts";
 import {
   fetchOverview, fetchConversions, fetchStageDistribution,
   fetchHourlyHeatmap, fetchDayOfWeek, fetchLeadsOverTime,
@@ -120,7 +121,7 @@ function DayOfWeekChart({ data }: { data: DayOfWeek[] }) {
               style={{
                 height: `${(d.leads / maxLeads) * 56}px`,
                 minHeight: d.leads > 0 ? 3 : 0,
-                background: "hsl(152, 55%, 62%)",
+                background: "hsl(var(--primary))",
               }}
               title={`${d.leads} leads`}
             />
@@ -130,7 +131,7 @@ function DayOfWeekChart({ data }: { data: DayOfWeek[] }) {
                 style={{
                   height: `${(d.deposits / maxLeads) * 56}px`,
                   minHeight: 3,
-                  background: "hsl(158, 65%, 28%)",
+                  background: "hsl(199, 86%, 32%)",
                 }}
                 title={`${d.deposits} deposits`}
               />
@@ -144,6 +145,84 @@ function DayOfWeekChart({ data }: { data: DayOfWeek[] }) {
 }
 
 // ---------------------------------------------------------------------------
+// Conversion funnel donut chart
+// ---------------------------------------------------------------------------
+
+const FUNNEL_COLORS = [
+  "hsl(199,86%,55%)",   // New Lead — primary blue
+  "hsl(217,91%,65%)",   // Qualified — lighter blue
+  "hsl(270,60%,60%)",   // Hesitant — purple
+  "hsl(38,92%,55%)",    // Link Sent — amber
+  "hsl(25,95%,53%)",    // Account Created — orange
+  "hsl(38,92%,40%)",    // Deposit Intent — dark amber
+  "hsl(142,60%,45%)",   // Deposited — green
+  "hsl(43,92%,52%)",    // VIP — gold
+];
+
+function ConversionFunnel({ stages }: { stages: StageCount[] }) {
+  if (stages.length === 0) {
+    return <div className="flex items-center justify-center h-40 text-muted-foreground text-xs">No data yet</div>;
+  }
+  const total = stages.reduce((s, st) => s + st.count, 0);
+  const data = stages.filter((s) => s.count > 0).map((s, i) => ({
+    name: s.label,
+    value: s.count,
+    color: FUNNEL_COLORS[i % FUNNEL_COLORS.length],
+  }));
+
+  return (
+    <div className="flex flex-col sm:flex-row items-center gap-4">
+      <div className="w-40 h-40 shrink-0">
+        <ResponsiveContainer width="100%" height="100%">
+          <PieChart>
+            <Pie
+              data={data}
+              cx="50%"
+              cy="50%"
+              innerRadius={42}
+              outerRadius={65}
+              paddingAngle={2}
+              dataKey="value"
+              strokeWidth={0}
+            >
+              {data.map((entry, i) => (
+                <Cell key={i} fill={entry.color} />
+              ))}
+            </Pie>
+            <Tooltip
+              contentStyle={{
+                backgroundColor: "hsl(220,18%,10%)",
+                border: "1px solid hsl(220,14%,16%)",
+                borderRadius: "8px",
+                fontSize: "12px",
+                color: "hsl(210,20%,92%)",
+              }}
+              formatter={(value: number, name: string) => [value, name]}
+            />
+          </PieChart>
+        </ResponsiveContainer>
+      </div>
+      <div className="flex-1 space-y-1.5 w-full">
+        {data.map((entry) => (
+          <div key={entry.name} className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 min-w-0">
+              <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: entry.color }} />
+              <span className="text-[11px] text-muted-foreground truncate">{entry.name}</span>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <span className="text-[11px] font-semibold text-foreground">{entry.value}</span>
+              <span className="text-[10px] text-muted-foreground w-8 text-right">
+                {total > 0 ? `${((entry.value / total) * 100).toFixed(0)}%` : "—"}
+              </span>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Stage distribution bar chart
 // ---------------------------------------------------------------------------
 
@@ -151,13 +230,16 @@ function StageDistribution({ stages }: { stages: StageCount[] }) {
   const max = Math.max(...stages.map((s) => s.count), 1);
   return (
     <div className="space-y-1.5">
-      {stages.map((s) => (
+      {stages.map((s, i) => (
         <div key={s.stage} className="flex items-center gap-2">
           <span className="text-[10px] text-muted-foreground w-28 truncate shrink-0">{s.label}</span>
           <div className="flex-1 h-2 bg-secondary rounded-full overflow-hidden">
             <div
-              className={cn("h-full rounded-full", s.stage >= 7 ? "bg-stage-deposited" : "bg-primary")}
-              style={{ width: `${(s.count / max) * 100}%` }}
+              className="h-full rounded-full"
+              style={{
+                width: `${(s.count / max) * 100}%`,
+                background: FUNNEL_COLORS[i % FUNNEL_COLORS.length],
+              }}
             />
           </div>
           <span className="text-[11px] font-bold text-foreground w-4 text-right shrink-0">{s.count}</span>
@@ -189,7 +271,7 @@ function ConversionTable({ metrics }: { metrics: ConversionMetric[] }) {
               <span className={cn(
                 "text-[15px] font-bold",
                 m.rate === null ? "text-muted-foreground" :
-                hitting ? "text-stage-deposited" : "text-destructive"
+                hitting ? "text-primary" : "text-destructive"
               )}>
                 {m.rate === null ? "—" : `${rate}%`}
               </span>
@@ -382,7 +464,7 @@ export default function AnalyticsDashboard() {
             <TrendingUp className="h-3.5 w-3.5 text-stage-qualified" />
             <span className="text-[11px] text-muted-foreground font-medium">1→7 Conversion</span>
           </div>
-          <p className={cn("text-2xl font-bold", (overview?.overall_conversion ?? 0) >= 10 ? "text-stage-deposited" : "text-destructive")}>
+          <p className={cn("text-2xl font-bold", (overview?.overall_conversion ?? 0) >= 10 ? "text-primary" : "text-destructive")}>
             {overview?.overall_conversion ?? 0}%
           </p>
           <p className="text-[10px] text-muted-foreground mt-0.5">target &gt;10%</p>
@@ -393,7 +475,7 @@ export default function AnalyticsDashboard() {
             <Clock className="h-3.5 w-3.5 text-stage-hesitant" />
             <span className="text-[11px] text-muted-foreground font-medium">Avg Days to Deposit</span>
           </div>
-          <p className={cn("text-2xl font-bold", overview?.avg_days_to_deposit == null ? "text-muted-foreground" : (overview.avg_days_to_deposit <= 5 ? "text-stage-deposited" : "text-destructive"))}>
+          <p className={cn("text-2xl font-bold", overview?.avg_days_to_deposit == null ? "text-muted-foreground" : (overview.avg_days_to_deposit <= 5 ? "text-primary" : "text-destructive"))}>
             {overview?.avg_days_to_deposit != null ? `${overview.avg_days_to_deposit}d` : "—"}
           </p>
           <p className="text-[10px] text-muted-foreground mt-0.5">target &lt;5 days</p>
@@ -407,10 +489,16 @@ export default function AnalyticsDashboard() {
         <ConversionTable metrics={conversions} />
       </div>
 
-      {/* Stage distribution */}
-      <div className="ios-card p-3">
-        <h2 className="text-[13px] font-semibold text-foreground mb-3">Current Leads by Stage</h2>
-        <StageDistribution stages={stages} />
+      {/* Stage distribution + funnel donut */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div className="ios-card p-4">
+          <h2 className="text-[13px] font-semibold text-foreground mb-4">Conversion Funnel</h2>
+          <ConversionFunnel stages={stages} />
+        </div>
+        <div className="ios-card p-4">
+          <h2 className="text-[13px] font-semibold text-foreground mb-3">Leads by Stage</h2>
+          <StageDistribution stages={stages} />
+        </div>
       </div>
 
       {/* Leads over time */}
@@ -436,8 +524,8 @@ export default function AnalyticsDashboard() {
           <h2 className="text-[13px] font-semibold text-foreground">Day of Week</h2>
         </div>
         <div className="flex items-center gap-3 mb-3">
-          <div className="flex items-center gap-1"><div className="h-2 w-3 rounded-sm" style={{ background: "hsl(152, 55%, 62%)" }} /><span className="text-[10px] text-muted-foreground">Leads</span></div>
-          <div className="flex items-center gap-1"><div className="h-2 w-3 rounded-sm" style={{ background: "hsl(158, 65%, 28%)" }} /><span className="text-[10px] text-muted-foreground">Deposits</span></div>
+          <div className="flex items-center gap-1"><div className="h-2 w-3 rounded-sm" style={{ background: "hsl(var(--primary))" }} /><span className="text-[10px] text-muted-foreground">Leads</span></div>
+          <div className="flex items-center gap-1"><div className="h-2 w-3 rounded-sm" style={{ background: "hsl(199, 86%, 32%)" }} /><span className="text-[10px] text-muted-foreground">Deposits</span></div>
         </div>
         <DayOfWeekChart data={dow} />
       </div>
