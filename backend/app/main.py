@@ -19,6 +19,9 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, conint
 from sqlalchemy.orm import Session
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 
 from app.auth import authenticate_user, create_access_token, get_current_user, require_roles, require_affiliate
 from app.config import WEBHOOK_SECRET
@@ -71,22 +74,37 @@ async def lifespan(app: FastAPI):
     logger.info("Server shutting down")
 
 
+limiter = Limiter(key_func=get_remote_address)
+
 app = FastAPI(
     title="Lead Tracking & Signal Mirroring Bot API",
     description="Webhook for leads and signal mirroring; analytics for leads.",
     lifespan=lifespan,
 )
 
-# Allow frontend (Vite/local UI) to call backend APIs from a different origin.
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# Security headers on every response
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+    return response
+
+# CORS: production domain + localhost for local dev
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
+        "https://telelytics.org",
         "http://localhost:5173",
         "http://127.0.0.1:5173",
         "http://localhost:5174",
         "http://127.0.0.1:5174",
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -184,7 +202,8 @@ class LoginRequest(BaseModel):
 
 
 @app.post("/auth/login")
-def login(req: LoginRequest, db: Session = Depends(get_db)):
+@limiter.limit("5/minute")
+def login(request: Request, req: LoginRequest, db: Session = Depends(get_db)):
     """Authenticate and return a JWT token. Checks env-based roles and DB affiliates."""
     user = authenticate_user(req.username, req.password, db=db)
     if not user:

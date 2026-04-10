@@ -604,7 +604,7 @@ export default function AnalyticsDashboard() {
                 <div className="flex-1 min-w-0">
                   <p className="text-[12px] font-semibold text-foreground truncate">{c.campaign_name}</p>
                   <p className="text-[10px] text-muted-foreground">
-                    {c.leads} leads · {c.deposits} deposits · {c.impressions.toLocaleString()} impr
+                    {c.leads} leads · {c.deposits} deposits · {c.impressions.toLocaleString()} impressions
                   </p>
                 </div>
                 <span className="w-14 text-right text-[12px] font-bold text-foreground">€{c.spend.toFixed(0)}</span>
@@ -650,7 +650,7 @@ export default function AnalyticsDashboard() {
                   )}>
                     {c.cpd !== null ? `€${c.cpd}` : "—"}
                   </p>
-                  <p className="text-[10px] text-muted-foreground">{c.deposits}dep · €{c.spend.toFixed(0)}</p>
+                  <p className="text-[10px] text-muted-foreground">{c.deposits} deposits · €{c.spend.toFixed(0)} spend</p>
                 </div>
               </div>
             ))}
