@@ -696,10 +696,13 @@ def create_affiliate(
 
     # Fire welcome DM in background — non-blocking
     affiliate_id = affiliate.id
-    loop = asyncio.get_running_loop()
-    loop.run_in_executor(None, lambda: __import__(
-        "app.services.affiliate_automation", fromlist=["send_affiliate_welcome"]
-    ).send_affiliate_welcome(affiliate_id))
+    import threading
+    threading.Thread(
+        target=lambda: __import__(
+            "app.services.affiliate_automation", fromlist=["send_affiliate_welcome"]
+        ).send_affiliate_welcome(affiliate_id),
+        daemon=True,
+    ).start()
 
     link = f"https://t.me/{BOT_USERNAME}?start={referral_tag}" if BOT_USERNAME else None
     return {
