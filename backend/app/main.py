@@ -718,6 +718,8 @@ def create_affiliate(
         # Credentials — shown once at creation
         "login_username": login_username,
         "login_password": plain_password,
+        # Stats defaults (no activity yet)
+        "leads": 0, "deposits": 0, "conversion_rate": 0, "commission_earned": 0,
         # Checklist defaults
         "esim_done": False, "free_channel_id": None, "free_channel_members": 0,
         "bot_setup_done": False, "vip_channel_id": None, "vip_channel_members": 0,
