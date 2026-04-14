@@ -331,13 +331,47 @@ def analytics_alerts(db: Session = Depends(get_db), _=Depends(get_current_user))
 
 
 @app.post("/analytics/campaigns/pull")
-def trigger_meta_pull(_=Depends(require_roles("developer", "admin"))):
-    """Manually trigger a Meta Marketing API pull (developer/admin only)."""
+def trigger_meta_pull(
+    for_date: Optional[str] = None,
+    days: int = 1,
+    _=Depends(require_roles("developer", "admin")),
+):
+    """
+    Manually trigger a Meta Marketing API pull.
+    - ?for_date=YYYY-MM-DD  pull a specific date
+    - ?days=14              backfill last N days (max 90)
+    """
+    from datetime import date as date_type, timedelta
     from app.services.meta_api import pull_campaign_insights
-    result = pull_campaign_insights()
-    if result and not result.get("ok"):
-        raise HTTPException(status_code=502, detail=result.get("error", "Meta API pull failed"))
-    return result or {"ok": True, "message": "Meta campaign pull triggered"}
+
+    days = min(days, 90)
+
+    if for_date:
+        try:
+            start = date_type.fromisoformat(for_date)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="for_date must be YYYY-MM-DD")
+        dates = [start]
+    else:
+        today = date_type.today()
+        dates = [today - timedelta(days=i) for i in range(1, days + 1)]
+
+    results = []
+    for d in dates:
+        result = pull_campaign_insights(for_date=d)
+        results.append(result)
+        if result and not result.get("ok"):
+            break
+
+    total_upserted = sum(r.get("rows_upserted", 0) for r in results if r)
+    errors = [r for r in results if r and not r.get("ok")]
+    return {
+        "ok": len(errors) == 0,
+        "dates_pulled": len(results),
+        "total_rows_upserted": total_upserted,
+        "errors": errors or None,
+        "detail": results,
+    }
 
 
 # ---------------------------------------------------------------------------
