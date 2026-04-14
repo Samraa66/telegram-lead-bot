@@ -73,20 +73,26 @@ def _graph_post(path: str, payload: dict) -> dict:
 # Marketing API pull
 # ---------------------------------------------------------------------------
 
-def pull_campaign_insights(for_date: Optional[date] = None) -> None:
+def pull_campaign_insights(for_date: Optional[date] = None) -> dict:
     """
     Fetch Meta campaign insights for `for_date` (defaults to yesterday) and
     upsert into the ad_campaigns table. Skips silently when credentials are absent.
+    Returns a result dict with status, rows_upserted, and any error detail.
     """
     if not META_ACCESS_TOKEN or not META_AD_ACCOUNT_ID:
         logger.info("Meta credentials not set — skipping campaign pull")
-        return
+        return {"ok": False, "error": "Meta credentials not configured (META_ACCESS_TOKEN or META_AD_ACCOUNT_ID missing)"}
+
+    # Ensure the account ID has the required act_ prefix
+    account_id = META_AD_ACCOUNT_ID
+    if not account_id.startswith("act_"):
+        account_id = f"act_{account_id}"
 
     target_date = for_date or (date.today() - timedelta(days=1))
     date_str = target_date.isoformat()
 
     data = _graph_get(
-        f"{META_AD_ACCOUNT_ID}/insights",
+        f"{account_id}/insights",
         {
             "fields": "campaign_id,campaign_name,spend,impressions,clicks",
             "time_range": json.dumps({"since": date_str, "until": date_str}),
@@ -95,10 +101,15 @@ def pull_campaign_insights(for_date: Optional[date] = None) -> None:
         },
     )
 
+    if "error" in data:
+        err = data["error"]
+        logger.error("Meta API error: %s", err)
+        return {"ok": False, "error": err.get("message", str(err)), "date": date_str}
+
     rows = data.get("data", [])
     if not rows:
         logger.info("Meta API: no campaign data for %s", date_str)
-        return
+        return {"ok": True, "rows_upserted": 0, "date": date_str, "note": "Meta returned no campaign rows for this date"}
 
     db = SessionLocal()
     try:
@@ -158,13 +169,16 @@ def pull_campaign_insights(for_date: Optional[date] = None) -> None:
 
         db.commit()
         logger.info("Meta API: upserted %d campaign rows for %s", len(rows), date_str)
+        upsert_result = {"ok": True, "rows_upserted": len(rows), "date": date_str}
     except Exception as e:
         logger.exception("Meta API upsert failed: %s", e)
+        upsert_result = {"ok": False, "error": str(e), "date": date_str}
     finally:
         db.close()
 
     # Also pull ad-level creative data
     pull_ad_creative_insights(for_date=target_date)
+    return upsert_result
 
 
 def pull_ad_creative_insights(for_date: Optional[date] = None) -> None:
@@ -175,11 +189,15 @@ def pull_ad_creative_insights(for_date: Optional[date] = None) -> None:
     if not META_ACCESS_TOKEN or not META_AD_ACCOUNT_ID:
         return
 
+    account_id = META_AD_ACCOUNT_ID
+    if not account_id.startswith("act_"):
+        account_id = f"act_{account_id}"
+
     target_date = for_date or (date.today() - timedelta(days=1))
     date_str = target_date.isoformat()
 
     data = _graph_get(
-        f"{META_AD_ACCOUNT_ID}/insights",
+        f"{account_id}/insights",
         {
             "fields": "ad_id,ad_name,campaign_id,campaign_name,spend,impressions,clicks",
             "time_range": json.dumps({"since": date_str, "until": date_str}),

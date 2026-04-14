@@ -333,12 +333,11 @@ def analytics_alerts(db: Session = Depends(get_db), _=Depends(get_current_user))
 @app.post("/analytics/campaigns/pull")
 def trigger_meta_pull(_=Depends(require_roles("developer", "admin"))):
     """Manually trigger a Meta Marketing API pull (developer/admin only)."""
-    try:
-        from app.services.meta_api import pull_campaign_insights
-        pull_campaign_insights()
-        return {"ok": True, "message": "Meta campaign pull triggered"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    from app.services.meta_api import pull_campaign_insights
+    result = pull_campaign_insights()
+    if result and not result.get("ok"):
+        raise HTTPException(status_code=502, detail=result.get("error", "Meta API pull failed"))
+    return result or {"ok": True, "message": "Meta campaign pull triggered"}
 
 
 # ---------------------------------------------------------------------------
