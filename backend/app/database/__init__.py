@@ -25,7 +25,7 @@ load_dotenv(Path(__file__).parent.parent.parent / ".env")
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from .models import Base, FollowUpTemplate
+from .models import Base, FollowUpTemplate, Workspace, StageKeyword, StageLabel, QuickReply
 
 # Use DATABASE_URL if set (PostgreSQL); otherwise SQLite for local dev
 _db_url = os.getenv("DATABASE_URL", "").strip()
@@ -170,6 +170,14 @@ def _ensure_columns() -> None:
         if col not in existing_messages:
             _add_column("messages", col, ddl)
 
+    if _table_exists("follow_up_templates"):
+        existing_fut = _existing_columns("follow_up_templates")
+        if "workspace_id" not in existing_fut:
+            if dialect == "sqlite":
+                _add_column("follow_up_templates", "workspace_id", "INTEGER DEFAULT 1")
+            else:
+                _add_column("follow_up_templates", "workspace_id", "INTEGER DEFAULT 1")
+
     if _table_exists("affiliates"):
         if dialect == "sqlite":
             affiliates_needed = [
@@ -242,8 +250,85 @@ def _seed_templates() -> None:
         if db.query(FollowUpTemplate).count() > 0:
             return
         for stage, seq, text_body in _TEMPLATE_SEEDS:
-            db.add(FollowUpTemplate(stage=stage, sequence_num=seq, message_text=text_body))
+            db.add(FollowUpTemplate(workspace_id=1, stage=stage, sequence_num=seq, message_text=text_body))
         db.commit()
+    finally:
+        db.close()
+
+
+# ---------------------------------------------------------------------------
+# Settings seeding (workspace 1 + hardcoded defaults)
+# ---------------------------------------------------------------------------
+
+_KEYWORD_SEEDS: list[tuple[str, int]] = [
+    ("any experience trading", 2),
+    ("is there something specific holding you back", 3),
+    ("your link to open your free puprime account", 4),
+    ("the hard part done", 5),
+    ("exactly how to get set up", 6),
+    ("welcome to the vip room", 7),
+    ("really happy to have you here", 8),
+]
+
+_STAGE_LABEL_SEEDS: list[tuple[int, str]] = [
+    (1, "New Lead"),
+    (2, "Qualified"),
+    (3, "Hesitant / Ghosting"),
+    (4, "Link Sent"),
+    (5, "Account Created"),
+    (6, "Deposit Intent"),
+    (7, "Deposited"),
+    (8, "VIP Member"),
+]
+
+_QUICK_REPLY_SEEDS: list[tuple[int, str, str]] = [
+    (1, "Qualify",      "Hey! Quick question — do you have any experience trading, or is this something new for you? 😊"),
+    (1, "Re-engage",    "Hey, hope you're well! Just circling back — do you have any experience trading before?"),
+    (2, "Objection",    "Totally understand! Is there something specific holding you back from getting started?"),
+    (2, "Probe",        "Makes sense. Is there something specific holding you back right now that I can help with?"),
+    (3, "Send link",    "Here's your link to open your free PuPrime account — takes about 2 minutes! 👇"),
+    (3, "Re-send link", "Sending over your link to open your free PuPrime account again in case you missed it 🔗"),
+    (4, "Confirm done", "Amazing — looks like you've got the hard part done! 🎉 Let me know once you're in and I'll sort your access."),
+    (4, "Check in",     "Hey! Just checking in — is the hard part done with the account setup? Happy to help if you're stuck!"),
+    (5, "Setup guide",  "Perfect! Let me walk you through exactly how to get set up with the signals 📊"),
+    (5, "Next steps",   "Great news! I'll show you exactly how to get set up from here — just follow these steps 👇"),
+    (6, "VIP access",   "Welcome to the VIP room! You're officially in 🔥 Here's everything you need to know to get started..."),
+    (6, "VIP entry",    "Welcome to the vip room — so pumped to have you here! Let's get you fully set up 🚀"),
+    (7, "Welcome",      "Really happy to have you here with us! Here's what to expect going forward 🙌"),
+    (7, "Onboard",      "I'm really happy to have you here — let's make sure you're getting the most out of everything!"),
+]
+
+
+def _seed_workspace() -> None:
+    """Create workspace id=1 if it does not exist."""
+    db = SessionLocal()
+    try:
+        if db.query(Workspace).filter(Workspace.id == 1).first():
+            return
+        db.add(Workspace(id=1, name="Default"))
+        db.commit()
+    finally:
+        db.close()
+
+
+def _seed_settings() -> None:
+    """Seed keywords, stage labels, and quick replies for workspace 1 if tables are empty."""
+    db = SessionLocal()
+    try:
+        if db.query(StageKeyword).filter(StageKeyword.workspace_id == 1).count() == 0:
+            for kw, stage in _KEYWORD_SEEDS:
+                db.add(StageKeyword(workspace_id=1, keyword=kw, target_stage=stage, is_active=True))
+            db.commit()
+
+        if db.query(StageLabel).filter(StageLabel.workspace_id == 1).count() == 0:
+            for stage_num, label in _STAGE_LABEL_SEEDS:
+                db.add(StageLabel(workspace_id=1, stage_num=stage_num, label=label))
+            db.commit()
+
+        if db.query(QuickReply).filter(QuickReply.workspace_id == 1).count() == 0:
+            for i, (stage_num, label, text) in enumerate(_QUICK_REPLY_SEEDS):
+                db.add(QuickReply(workspace_id=1, stage_num=stage_num, label=label, text=text, sort_order=i))
+            db.commit()
     finally:
         db.close()
 
@@ -333,6 +418,11 @@ def init_db() -> None:
     except Exception:
         pass
     _seed_templates()
+    try:
+        _seed_workspace()
+        _seed_settings()
+    except Exception:
+        pass
     try:
         _promote_vip_names()
     except Exception:

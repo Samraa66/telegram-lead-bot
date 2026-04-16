@@ -136,9 +136,68 @@ class FollowUpTemplate(Base):
     __tablename__ = "follow_up_templates"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
+    workspace_id = Column(Integer, nullable=False, default=1)
     stage = Column(Integer, nullable=False)
     sequence_num = Column(Integer, nullable=False)
     message_text = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+# ---------------------------------------------------------------------------
+# Settings tables (workspace-scoped, SaaS-ready)
+# ---------------------------------------------------------------------------
+
+class Workspace(Base):
+    """One row per tenant. Currently only workspace id=1 exists (single-tenant)."""
+
+    __tablename__ = "workspaces"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(255), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class StageKeyword(Base):
+    """
+    Keyword phrases that trigger pipeline stage advances.
+    Replaces the hardcoded STAGE_KEYWORDS list in pipeline.py.
+    """
+
+    __tablename__ = "stage_keywords"
+    __table_args__ = (UniqueConstraint("workspace_id", "keyword", name="uq_workspace_keyword"),)
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    workspace_id = Column(Integer, nullable=False, default=1)
+    keyword = Column(String(500), nullable=False)
+    target_stage = Column(Integer, nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class StageLabel(Base):
+    """Display label for each pipeline stage (1–8), editable per workspace."""
+
+    __tablename__ = "stage_labels"
+    __table_args__ = (UniqueConstraint("workspace_id", "stage_num", name="uq_workspace_stage"),)
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    workspace_id = Column(Integer, nullable=False, default=1)
+    stage_num = Column(Integer, nullable=False)
+    label = Column(String(255), nullable=False)
+
+
+class QuickReply(Base):
+    """CRM drawer quick-reply buttons, one row per button, scoped to a stage."""
+
+    __tablename__ = "quick_replies"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    workspace_id = Column(Integer, nullable=False, default=1)
+    stage_num = Column(Integer, nullable=False)
+    label = Column(String(255), nullable=False)
+    text = Column(Text, nullable=False)
+    sort_order = Column(Integer, nullable=False, default=0)
+    is_active = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 

@@ -1,17 +1,11 @@
 """
 CRM Stage Pipeline — canonical implementation.
 
-Stage advances when Talal's OUTGOING message contains a keyword phrase
+Stage advances when the operator's OUTGOING message contains a keyword phrase
 (case-insensitive substring match over normalised whitespace).
 
-Keywords → target stage:
-  "any experience trading"                        → 2
-  "is there something specific holding you back"  → 3
-  "your link to open your free puprime account"   → 4
-  "the hard part done"                            → 5
-  "exactly how to get set up"                     → 6
-  "welcome to the vip room"                       → 7
-  "really happy to have you here"                 → 8
+Keywords are loaded from the stage_keywords DB table (workspace_id=1).
+Hardcoded STAGE_KEYWORDS is kept as a fallback for tests that run without a DB.
 
 Multiple keyword matches in one message: highest stage wins.
 Every stage change is logged to stage_history with who/when/keyword.
@@ -25,11 +19,12 @@ from typing import Optional, Tuple
 
 from sqlalchemy.orm import Session, object_session
 
-from app.database.models import Contact, Message, StageHistory
+from app.database.models import Contact, Message, StageHistory, StageKeyword
 from app.services.classifier import classify_contact
 
 logger = logging.getLogger(__name__)
 
+# Fallback used only when no DB session is available (e.g. unit tests).
 STAGE_KEYWORDS: list[tuple[str, int]] = [
     ("any experience trading", 2),
     ("is there something specific holding you back", 3),
@@ -41,21 +36,40 @@ STAGE_KEYWORDS: list[tuple[str, int]] = [
 ]
 
 
+def _load_keywords(db: Session, workspace_id: int = 1) -> list[tuple[str, int]]:
+    """Load active keywords from DB for the given workspace."""
+    rows = (
+        db.query(StageKeyword)
+        .filter(StageKeyword.workspace_id == workspace_id, StageKeyword.is_active.is_(True))
+        .all()
+    )
+    if rows:
+        return [(r.keyword, r.target_stage) for r in rows]
+    # DB empty or table not yet seeded — fall back to hardcoded list
+    return STAGE_KEYWORDS
+
+
 def _normalize(text: str) -> str:
     """Lowercase and collapse whitespace for robust substring matching."""
     return " ".join((text or "").lower().split())
 
 
-def infer_stage(message_text: str) -> Optional[Tuple[int, str]]:
+def infer_stage(
+    message_text: str,
+    keywords: Optional[list[tuple[str, int]]] = None,
+) -> Optional[Tuple[int, str]]:
     """
     Return (target_stage, trigger_keyword) for the highest-stage keyword found,
     or None if no keyword matches.
+
+    Pass `keywords` to use a custom list; omit to use the hardcoded fallback.
     """
+    kw_list = keywords if keywords is not None else STAGE_KEYWORDS
     text = _normalize(message_text)
     best_stage: Optional[int] = None
     best_keyword: Optional[str] = None
-    for keyword, stage in STAGE_KEYWORDS:
-        if keyword in text:
+    for keyword, stage in kw_list:
+        if _normalize(keyword) in text:
             if best_stage is None or stage > best_stage:
                 best_stage = stage
                 best_keyword = keyword
@@ -103,7 +117,7 @@ def advance_stage(
         )
     )
 
-    result = infer_stage(message_text)
+    result = infer_stage(message_text, keywords=_load_keywords(session))
     if result is None:
         session.commit()
         return None

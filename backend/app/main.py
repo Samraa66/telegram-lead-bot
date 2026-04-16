@@ -1039,6 +1039,211 @@ def toggle_affiliate(
 
 
 # ---------------------------------------------------------------------------
+# Settings — keywords, follow-up templates, quick replies, stage labels
+# ---------------------------------------------------------------------------
+
+SETTINGS_ROLES = Depends(require_roles("developer", "admin"))
+
+_WORKSPACE_ID = 1  # single-tenant; becomes dynamic in Phase 8
+
+
+class KeywordCreateRequest(BaseModel):
+    keyword: str
+    target_stage: conint(ge=1, le=8)
+
+
+class KeywordUpdateRequest(BaseModel):
+    keyword: Optional[str] = None
+    target_stage: Optional[conint(ge=1, le=8)] = None
+    is_active: Optional[bool] = None
+
+
+class FollowUpUpdateRequest(BaseModel):
+    message_text: str
+
+
+class QuickReplyCreateRequest(BaseModel):
+    stage_num: conint(ge=1, le=8)
+    label: str
+    text: str
+    sort_order: int = 0
+
+
+class QuickReplyUpdateRequest(BaseModel):
+    label: Optional[str] = None
+    text: Optional[str] = None
+    sort_order: Optional[int] = None
+    is_active: Optional[bool] = None
+
+
+class StageLabelUpdateRequest(BaseModel):
+    label: str
+
+
+# --- Keywords ---
+
+@app.get("/settings/keywords")
+def settings_list_keywords(db: Session = Depends(get_db), _=SETTINGS_ROLES):
+    from app.database.models import StageKeyword
+    rows = (
+        db.query(StageKeyword)
+        .filter(StageKeyword.workspace_id == _WORKSPACE_ID)
+        .order_by(StageKeyword.target_stage, StageKeyword.id)
+        .all()
+    )
+    return [
+        {"id": r.id, "keyword": r.keyword, "target_stage": r.target_stage, "is_active": r.is_active}
+        for r in rows
+    ]
+
+
+@app.post("/settings/keywords", status_code=201)
+def settings_create_keyword(req: KeywordCreateRequest, db: Session = Depends(get_db), _=SETTINGS_ROLES):
+    from app.database.models import StageKeyword
+    kw = StageKeyword(workspace_id=_WORKSPACE_ID, keyword=req.keyword.strip(), target_stage=req.target_stage)
+    db.add(kw)
+    db.commit()
+    db.refresh(kw)
+    return {"id": kw.id, "keyword": kw.keyword, "target_stage": kw.target_stage, "is_active": kw.is_active}
+
+
+@app.patch("/settings/keywords/{kw_id}")
+def settings_update_keyword(kw_id: int, req: KeywordUpdateRequest, db: Session = Depends(get_db), _=SETTINGS_ROLES):
+    from app.database.models import StageKeyword
+    kw = db.query(StageKeyword).filter(StageKeyword.id == kw_id, StageKeyword.workspace_id == _WORKSPACE_ID).first()
+    if not kw:
+        raise HTTPException(status_code=404, detail="keyword not found")
+    if req.keyword is not None:
+        kw.keyword = req.keyword.strip()
+    if req.target_stage is not None:
+        kw.target_stage = req.target_stage
+    if req.is_active is not None:
+        kw.is_active = req.is_active
+    db.commit()
+    return {"id": kw.id, "keyword": kw.keyword, "target_stage": kw.target_stage, "is_active": kw.is_active}
+
+
+@app.delete("/settings/keywords/{kw_id}")
+def settings_delete_keyword(kw_id: int, db: Session = Depends(get_db), _=SETTINGS_ROLES):
+    from app.database.models import StageKeyword
+    kw = db.query(StageKeyword).filter(StageKeyword.id == kw_id, StageKeyword.workspace_id == _WORKSPACE_ID).first()
+    if not kw:
+        raise HTTPException(status_code=404, detail="keyword not found")
+    db.delete(kw)
+    db.commit()
+    return {"ok": True}
+
+
+# --- Follow-up Templates ---
+
+@app.get("/settings/follow-up-templates")
+def settings_list_templates(db: Session = Depends(get_db), _=SETTINGS_ROLES):
+    from app.database.models import FollowUpTemplate
+    rows = (
+        db.query(FollowUpTemplate)
+        .filter(FollowUpTemplate.workspace_id == _WORKSPACE_ID)
+        .order_by(FollowUpTemplate.stage, FollowUpTemplate.sequence_num)
+        .all()
+    )
+    return [
+        {"id": r.id, "stage": r.stage, "sequence_num": r.sequence_num, "message_text": r.message_text}
+        for r in rows
+    ]
+
+
+@app.patch("/settings/follow-up-templates/{tmpl_id}")
+def settings_update_template(tmpl_id: int, req: FollowUpUpdateRequest, db: Session = Depends(get_db), _=SETTINGS_ROLES):
+    from app.database.models import FollowUpTemplate
+    tmpl = db.query(FollowUpTemplate).filter(FollowUpTemplate.id == tmpl_id, FollowUpTemplate.workspace_id == _WORKSPACE_ID).first()
+    if not tmpl:
+        raise HTTPException(status_code=404, detail="template not found")
+    tmpl.message_text = req.message_text.strip()
+    db.commit()
+    return {"id": tmpl.id, "stage": tmpl.stage, "sequence_num": tmpl.sequence_num, "message_text": tmpl.message_text}
+
+
+# --- Quick Replies ---
+
+@app.get("/settings/quick-replies")
+def settings_list_quick_replies(db: Session = Depends(get_db), _=SETTINGS_ROLES):
+    from app.database.models import QuickReply
+    rows = (
+        db.query(QuickReply)
+        .filter(QuickReply.workspace_id == _WORKSPACE_ID)
+        .order_by(QuickReply.stage_num, QuickReply.sort_order, QuickReply.id)
+        .all()
+    )
+    return [
+        {"id": r.id, "stage_num": r.stage_num, "label": r.label, "text": r.text, "sort_order": r.sort_order, "is_active": r.is_active}
+        for r in rows
+    ]
+
+
+@app.post("/settings/quick-replies", status_code=201)
+def settings_create_quick_reply(req: QuickReplyCreateRequest, db: Session = Depends(get_db), _=SETTINGS_ROLES):
+    from app.database.models import QuickReply
+    qr = QuickReply(workspace_id=_WORKSPACE_ID, stage_num=req.stage_num, label=req.label.strip(), text=req.text.strip(), sort_order=req.sort_order)
+    db.add(qr)
+    db.commit()
+    db.refresh(qr)
+    return {"id": qr.id, "stage_num": qr.stage_num, "label": qr.label, "text": qr.text, "sort_order": qr.sort_order, "is_active": qr.is_active}
+
+
+@app.patch("/settings/quick-replies/{qr_id}")
+def settings_update_quick_reply(qr_id: int, req: QuickReplyUpdateRequest, db: Session = Depends(get_db), _=SETTINGS_ROLES):
+    from app.database.models import QuickReply
+    qr = db.query(QuickReply).filter(QuickReply.id == qr_id, QuickReply.workspace_id == _WORKSPACE_ID).first()
+    if not qr:
+        raise HTTPException(status_code=404, detail="quick reply not found")
+    if req.label is not None:
+        qr.label = req.label.strip()
+    if req.text is not None:
+        qr.text = req.text.strip()
+    if req.sort_order is not None:
+        qr.sort_order = req.sort_order
+    if req.is_active is not None:
+        qr.is_active = req.is_active
+    db.commit()
+    return {"id": qr.id, "stage_num": qr.stage_num, "label": qr.label, "text": qr.text, "sort_order": qr.sort_order, "is_active": qr.is_active}
+
+
+@app.delete("/settings/quick-replies/{qr_id}")
+def settings_delete_quick_reply(qr_id: int, db: Session = Depends(get_db), _=SETTINGS_ROLES):
+    from app.database.models import QuickReply
+    qr = db.query(QuickReply).filter(QuickReply.id == qr_id, QuickReply.workspace_id == _WORKSPACE_ID).first()
+    if not qr:
+        raise HTTPException(status_code=404, detail="quick reply not found")
+    db.delete(qr)
+    db.commit()
+    return {"ok": True}
+
+
+# --- Stage Labels ---
+
+@app.get("/settings/stage-labels")
+def settings_list_stage_labels(db: Session = Depends(get_db), _=Depends(get_current_user)):
+    from app.database.models import StageLabel
+    rows = (
+        db.query(StageLabel)
+        .filter(StageLabel.workspace_id == _WORKSPACE_ID)
+        .order_by(StageLabel.stage_num)
+        .all()
+    )
+    return [{"id": r.id, "stage_num": r.stage_num, "label": r.label} for r in rows]
+
+
+@app.patch("/settings/stage-labels/{label_id}")
+def settings_update_stage_label(label_id: int, req: StageLabelUpdateRequest, db: Session = Depends(get_db), _=SETTINGS_ROLES):
+    from app.database.models import StageLabel
+    lbl = db.query(StageLabel).filter(StageLabel.id == label_id, StageLabel.workspace_id == _WORKSPACE_ID).first()
+    if not lbl:
+        raise HTTPException(status_code=404, detail="stage label not found")
+    lbl.label = req.label.strip()
+    db.commit()
+    return {"id": lbl.id, "stage_num": lbl.stage_num, "label": lbl.label}
+
+
+# ---------------------------------------------------------------------------
 # Frontend static files (React dashboard)
 # ---------------------------------------------------------------------------
 
