@@ -22,6 +22,7 @@ Follow-ups are cancelled immediately when the lead sends an inbound message.
 from __future__ import annotations
 
 import logging
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -228,11 +229,16 @@ def _handle_post_sequence(db, contact: Contact, action: str, from_stage: int) ->
         db.commit()
 
 
+_SEND_DELAY_SECONDS = 3      # pause between each follow-up send
+_MAX_PER_TICK = 10           # cap sends per 5-minute tick to avoid flood
+
+
 def _fire_pending_follow_ups() -> None:
     """
     APScheduler job: runs every 5 minutes.
-    Fires all pending follow-ups that are due AND within the Dubai window.
-    Skips any where the contact has replied since the follow-up was scheduled.
+    Fires pending follow-ups that are due AND within the Dubai window.
+    Sends at most _MAX_PER_TICK per tick with a _SEND_DELAY_SECONDS gap between
+    each send to avoid Telegram PeerFloodError on the operator account.
     """
     now = datetime.utcnow()
     if not _within_window(now):
@@ -246,9 +252,11 @@ def _fire_pending_follow_ups() -> None:
                 FollowUpQueue.status == "pending",
                 FollowUpQueue.scheduled_at <= now,
             )
+            .limit(_MAX_PER_TICK)
             .all()
         )
 
+        sent_count = 0
         for fup in due:
             # Skip if lead replied after the follow-up was scheduled
             replied = (
@@ -279,13 +287,27 @@ def _fire_pending_follow_ups() -> None:
                 )
                 continue
 
+            # Pace sends to avoid PeerFloodError
+            if sent_count > 0:
+                time.sleep(_SEND_DELAY_SECONDS)
+
             try:
                 from app.services.telethon_client import send_as_operator_sync, get_client
                 from app.bot import send_message as bot_send
                 sent = send_as_operator_sync(contact.id, text) if get_client() else bot_send(contact.id, text)
             except Exception as e:
+                err_name = type(e).__name__
+                if "PeerFlood" in err_name or "FloodWait" in err_name:
+                    # Telegram rate limit — stop this tick entirely, retry next tick
+                    logger.warning(
+                        "Telegram flood limit hit (%s) on follow-up id=%s — stopping tick, will retry",
+                        err_name, fup.id,
+                    )
+                    break
                 logger.exception("Error sending follow-up id=%s: %s", fup.id, e)
                 continue
+
+            sent_count += 1
 
             if sent:
                 fup.fired_at = now
