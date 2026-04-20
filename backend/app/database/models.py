@@ -155,6 +155,10 @@ class Workspace(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     name = Column(String(255), nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
+    # Meta credentials — set via OAuth flow, override .env values
+    meta_access_token = Column(Text, nullable=True)
+    meta_ad_account_id = Column(String(100), nullable=True)
+    meta_pixel_id = Column(String(100), nullable=True)
 
 
 class StageKeyword(Base):
@@ -199,6 +203,33 @@ class QuickReply(Base):
     sort_order = Column(Integer, nullable=False, default=0)
     is_active = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class TeamMember(Base):
+    """
+    DB-backed team accounts (operator / vip_manager / admin).
+    Replaces the single static .env credentials for each role.
+    .env credentials remain as a fallback override for the developer account.
+
+    auth_type:
+      "password"  — username + password_hash, legacy path
+      "telegram"  — verified via Telegram Login Widget; telegram_id populated on first login
+    """
+
+    __tablename__ = "team_members"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    workspace_id = Column(Integer, nullable=False, default=1)
+    display_name = Column(String(255), nullable=False)
+    username = Column(String(100), unique=True, nullable=False)
+    password_hash = Column(String(255), nullable=False)
+    # operator | vip_manager | admin  (developer stays in .env only)
+    role = Column(String(50), nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    # Telegram login fields (added for SaaS auth)
+    auth_type = Column(String(20), nullable=False, default="password")
+    telegram_id = Column(BigInteger, nullable=True, unique=True)
 
 
 class Campaign(Base):

@@ -8,8 +8,11 @@ FastAPI application: lead tracking + signal mirroring.
 """
 
 import asyncio
+import json
 import logging
 import os
+import urllib.parse
+import urllib.request
 from contextlib import asynccontextmanager
 
 from typing import Optional
@@ -42,6 +45,11 @@ from app.services.analytics import (
 from app.services.crm_queries import get_contacts, get_contact_messages
 from app.services.scheduler import start_scheduler, stop_scheduler
 from app.services.pipeline import set_stage_manual
+
+GRAPH_API_VERSION = "v19.0"
+GRAPH_BASE = f"https://graph.facebook.com/{GRAPH_API_VERSION}"
+
+_WORKSPACE_ID = 1  # single-tenant; becomes dynamic in Phase 8
 
 # Configure logging for production
 logging.basicConfig(
@@ -219,6 +227,181 @@ def login(request: Request, req: LoginRequest, db: Session = Depends(get_db)):
 def me(current_user: dict = Depends(get_current_user)):
     """Return the current user's info."""
     return current_user
+
+
+@app.get("/auth/config")
+def auth_config():
+    """Public endpoint — returns the bot username needed by the Telegram Login Widget."""
+    from app.config import BOT_USERNAME, META_APP_ID
+    return {"bot_username": BOT_USERNAME, "meta_app_id": META_APP_ID}
+
+
+# ---------------------------------------------------------------------------
+# Meta OAuth
+# ---------------------------------------------------------------------------
+
+@app.get("/auth/meta/connect")
+def meta_oauth_connect(_=Depends(require_roles("developer", "admin"))):
+    """Return the Meta OAuth URL for the admin to redirect to."""
+    from app.config import META_APP_ID, APP_BASE_URL
+    if not META_APP_ID:
+        raise HTTPException(status_code=503, detail="META_APP_ID not configured on server")
+    redirect_uri = urllib.parse.quote(f"{APP_BASE_URL}/auth/meta/callback", safe="")
+    url = (
+        f"https://www.facebook.com/{GRAPH_API_VERSION}/dialog/oauth"
+        f"?client_id={META_APP_ID}"
+        f"&redirect_uri={redirect_uri}"
+        f"&scope=ads_read,ads_management"
+        f"&state={_WORKSPACE_ID}"
+    )
+    return {"url": url}
+
+
+@app.get("/auth/meta/callback")
+def meta_oauth_callback(code: str = "", state: str = "", error: str = ""):
+    """
+    Meta redirects here after the user approves.
+    Exchanges the code for a token, saves it to the workspace, then redirects to the frontend.
+    """
+    from app.config import META_APP_ID, META_APP_SECRET, APP_BASE_URL
+    from fastapi.responses import RedirectResponse
+
+    if error:
+        return RedirectResponse(f"{APP_BASE_URL}/settings?meta_error={urllib.parse.quote(error)}")
+
+    workspace_id = int(state) if state.isdigit() else _WORKSPACE_ID
+
+    # Exchange code for token
+    params = urllib.parse.urlencode({
+        "client_id": META_APP_ID,
+        "client_secret": META_APP_SECRET,
+        "redirect_uri": f"{APP_BASE_URL}/auth/meta/callback",
+        "code": code,
+    })
+    token_url = f"{GRAPH_BASE}/oauth/access_token?{params}"
+    try:
+        with urllib.request.urlopen(token_url, timeout=15) as r:
+            token_data = json.loads(r.read())
+    except Exception as e:
+        logger.error("Meta token exchange failed: %s", e)
+        return RedirectResponse(f"{APP_BASE_URL}/settings?meta_error=token_exchange_failed")
+
+    access_token = token_data.get("access_token")
+    if not access_token:
+        return RedirectResponse(f"{APP_BASE_URL}/settings?meta_error=no_token")
+
+    # Save token to workspace (account + pixel set separately via the picker)
+    db_session = next(get_db())
+    try:
+        from app.database.models import Workspace
+        ws = db_session.query(Workspace).filter(Workspace.id == workspace_id).first()
+        if ws:
+            ws.meta_access_token = access_token
+            db_session.commit()
+    finally:
+        db_session.close()
+
+    return RedirectResponse(f"{APP_BASE_URL}/settings?meta_connected=1#meta")
+
+
+@app.get("/settings/meta/accounts")
+def meta_list_accounts(_=Depends(require_roles("developer", "admin")), db: Session = Depends(get_db)):
+    """Fetch the Meta ad accounts accessible with the saved token."""
+    from app.database.models import Workspace
+    ws = db.query(Workspace).filter(Workspace.id == _WORKSPACE_ID).first()
+    if not ws or not ws.meta_access_token:
+        raise HTTPException(status_code=400, detail="Meta account not connected. Use /auth/meta/connect first.")
+    params = urllib.parse.urlencode({"fields": "id,name,account_id", "access_token": ws.meta_access_token})
+    url = f"{GRAPH_BASE}/me/adaccounts?{params}"
+    try:
+        with urllib.request.urlopen(url, timeout=10) as r:
+            data = json.loads(r.read())
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Meta API error: {e}")
+    return {"accounts": data.get("data", [])}
+
+
+class MetaAccountSelectRequest(BaseModel):
+    ad_account_id: str
+    pixel_id: str
+
+
+@app.post("/settings/meta/account")
+def meta_select_account(
+    req: MetaAccountSelectRequest,
+    _=Depends(require_roles("developer", "admin")),
+    db: Session = Depends(get_db),
+):
+    """Save the selected Meta ad account and pixel ID to the workspace."""
+    from app.database.models import Workspace
+    ws = db.query(Workspace).filter(Workspace.id == _WORKSPACE_ID).first()
+    if not ws or not ws.meta_access_token:
+        raise HTTPException(status_code=400, detail="Meta account not connected first.")
+    account_id = req.ad_account_id.strip()
+    if not account_id.startswith("act_"):
+        account_id = f"act_{account_id}"
+    ws.meta_ad_account_id = account_id
+    ws.meta_pixel_id = req.pixel_id.strip()
+    db.commit()
+    return {"ok": True}
+
+
+@app.get("/settings/meta/status")
+def meta_connection_status(_=Depends(require_roles("developer", "admin")), db: Session = Depends(get_db)):
+    """Return current Meta connection status for the workspace."""
+    from app.database.models import Workspace
+    ws = db.query(Workspace).filter(Workspace.id == _WORKSPACE_ID).first()
+    return {
+        "connected": bool(ws and ws.meta_access_token),
+        "ad_account_id": ws.meta_ad_account_id if ws else None,
+        "pixel_id": ws.meta_pixel_id if ws else None,
+    }
+
+
+class TelegramAuthRequest(BaseModel):
+    id: int
+    first_name: str
+    last_name: Optional[str] = None
+    username: Optional[str] = None
+    photo_url: Optional[str] = None
+    auth_date: int
+    hash: str
+
+
+@app.post("/auth/telegram")
+@limiter.limit("10/minute")
+def telegram_login(request: Request, req: TelegramAuthRequest, db: Session = Depends(get_db)):
+    """Authenticate via Telegram Login Widget and return a JWT."""
+    from app.config import BOT_TOKEN
+    from app.database.models import TeamMember
+    from app.auth import verify_telegram_auth, create_access_token
+
+    if not verify_telegram_auth(req.dict(), BOT_TOKEN):
+        raise HTTPException(status_code=401, detail="Invalid Telegram auth data")
+
+    # Match by telegram_id (returning user) or by stored username (first login)
+    member = db.query(TeamMember).filter(
+        TeamMember.workspace_id == _WORKSPACE_ID,
+        TeamMember.telegram_id == req.id,
+        TeamMember.is_active.is_(True),
+    ).first()
+
+    if not member and req.username:
+        member = db.query(TeamMember).filter(
+            TeamMember.workspace_id == _WORKSPACE_ID,
+            TeamMember.username == req.username.lower(),
+            TeamMember.auth_type == "telegram",
+            TeamMember.is_active.is_(True),
+        ).first()
+        if member:
+            member.telegram_id = req.id
+            db.commit()
+
+    if not member:
+        raise HTTPException(status_code=403, detail="Not authorized. Ask your admin to add your Telegram account.")
+
+    token = create_access_token(member.username, member.role)
+    return {"access_token": token, "role": member.role, "username": member.display_name}
 
 
 @app.get("/stats/today")
@@ -1039,12 +1222,175 @@ def toggle_affiliate(
 
 
 # ---------------------------------------------------------------------------
+# Settings — Team management
+# ---------------------------------------------------------------------------
+
+_ASSIGNABLE_ROLES = {"operator", "vip_manager", "admin"}
+
+
+class CreateTeamMemberRequest(BaseModel):
+    display_name: str
+    username: str
+    role: str
+    auth_type: str = "telegram"  # "telegram" | "password"
+
+
+class UpdateTeamMemberRequest(BaseModel):
+    display_name: Optional[str] = None
+    role: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
+@app.get("/settings/team")
+def settings_list_team(
+    db: Session = Depends(get_db),
+    _=Depends(require_roles("developer", "admin")),
+):
+    from app.database.models import TeamMember
+    rows = (
+        db.query(TeamMember)
+        .filter(TeamMember.workspace_id == _WORKSPACE_ID)
+        .order_by(TeamMember.created_at)
+        .all()
+    )
+    return [
+        {
+            "id": r.id,
+            "display_name": r.display_name,
+            "username": r.username,
+            "role": r.role,
+            "is_active": r.is_active,
+            "auth_type": r.auth_type,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+        }
+        for r in rows
+    ]
+
+
+@app.post("/settings/team", status_code=201)
+def settings_create_team_member(
+    req: CreateTeamMemberRequest,
+    db: Session = Depends(get_db),
+    _=Depends(require_roles("developer", "admin")),
+):
+    from app.database.models import TeamMember
+    from app.auth import generate_password, hash_password
+
+    if req.role not in _ASSIGNABLE_ROLES:
+        raise HTTPException(status_code=400, detail=f"role must be one of: {', '.join(sorted(_ASSIGNABLE_ROLES))}")
+    if req.auth_type not in ("telegram", "password"):
+        raise HTTPException(status_code=400, detail="auth_type must be 'telegram' or 'password'")
+
+    username = req.username.strip().lstrip("@").lower()
+    existing = db.query(TeamMember).filter(TeamMember.username == username).first()
+    if existing:
+        raise HTTPException(status_code=409, detail="username already taken")
+
+    plain_password = None
+    if req.auth_type == "telegram":
+        # Telegram members have no password — store an unusable placeholder
+        pw_hash = hash_password(secrets.token_hex(32))
+    else:
+        plain_password = generate_password()
+        pw_hash = hash_password(plain_password)
+
+    member = TeamMember(
+        workspace_id=_WORKSPACE_ID,
+        display_name=req.display_name.strip(),
+        username=username,
+        password_hash=pw_hash,
+        role=req.role,
+        auth_type=req.auth_type,
+    )
+    db.add(member)
+    db.commit()
+    db.refresh(member)
+    result = {
+        "id": member.id,
+        "display_name": member.display_name,
+        "username": member.username,
+        "role": member.role,
+        "is_active": member.is_active,
+        "auth_type": member.auth_type,
+        "created_at": member.created_at.isoformat() if member.created_at else None,
+    }
+    if plain_password:
+        result["password"] = plain_password
+    return result
+
+
+@app.patch("/settings/team/{member_id}")
+def settings_update_team_member(
+    member_id: int,
+    req: UpdateTeamMemberRequest,
+    db: Session = Depends(get_db),
+    _=Depends(require_roles("developer", "admin")),
+):
+    from app.database.models import TeamMember
+    member = db.query(TeamMember).filter(
+        TeamMember.id == member_id, TeamMember.workspace_id == _WORKSPACE_ID
+    ).first()
+    if not member:
+        raise HTTPException(status_code=404, detail="team member not found")
+    if req.role is not None and req.role not in _ASSIGNABLE_ROLES:
+        raise HTTPException(status_code=400, detail=f"role must be one of: {', '.join(sorted(_ASSIGNABLE_ROLES))}")
+    if req.display_name is not None:
+        member.display_name = req.display_name.strip()
+    if req.role is not None:
+        member.role = req.role
+    if req.is_active is not None:
+        member.is_active = req.is_active
+    db.commit()
+    return {
+        "id": member.id,
+        "display_name": member.display_name,
+        "username": member.username,
+        "role": member.role,
+        "is_active": member.is_active,
+    }
+
+
+@app.post("/settings/team/{member_id}/reset-password")
+def settings_reset_team_password(
+    member_id: int,
+    db: Session = Depends(get_db),
+    _=Depends(require_roles("developer", "admin")),
+):
+    from app.database.models import TeamMember
+    from app.auth import generate_password, hash_password
+    member = db.query(TeamMember).filter(
+        TeamMember.id == member_id, TeamMember.workspace_id == _WORKSPACE_ID
+    ).first()
+    if not member:
+        raise HTTPException(status_code=404, detail="team member not found")
+    plain_password = generate_password()
+    member.password_hash = hash_password(plain_password)
+    db.commit()
+    return {"ok": True, "password": plain_password}
+
+
+@app.delete("/settings/team/{member_id}")
+def settings_delete_team_member(
+    member_id: int,
+    db: Session = Depends(get_db),
+    _=Depends(require_roles("developer", "admin")),
+):
+    from app.database.models import TeamMember
+    member = db.query(TeamMember).filter(
+        TeamMember.id == member_id, TeamMember.workspace_id == _WORKSPACE_ID
+    ).first()
+    if not member:
+        raise HTTPException(status_code=404, detail="team member not found")
+    db.delete(member)
+    db.commit()
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
 # Settings — keywords, follow-up templates, quick replies, stage labels
 # ---------------------------------------------------------------------------
 
 SETTINGS_ROLES = Depends(require_roles("developer", "admin"))
-
-_WORKSPACE_ID = 1  # single-tenant; becomes dynamic in Phase 8
 
 
 class KeywordCreateRequest(BaseModel):

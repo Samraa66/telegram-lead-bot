@@ -1,11 +1,12 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import AppLayout from "@/components/AppLayout";
 import {
-  Keyword, FollowUpTemplate, QuickReply, StageLabel,
+  Keyword, FollowUpTemplate, QuickReply, StageLabel, TeamMember,
   fetchKeywords, createKeyword, updateKeyword, deleteKeyword,
   fetchFollowUpTemplates, updateFollowUpTemplate,
   fetchQuickReplies, createQuickReply, updateQuickReply, deleteQuickReply,
   fetchStageLabels, updateStageLabel,
+  fetchTeam, createTeamMember, updateTeamMember, resetTeamPassword, deleteTeamMember,
 } from "../api/settings";
 import { cn } from "../lib/utils";
 
@@ -450,47 +451,402 @@ function StageLabelsTab() {
   );
 }
 
+// ---- Team tab ----
+
+const ROLE_LABELS: Record<string, string> = {
+  admin: "Admin",
+  operator: "Operator",
+  vip_manager: "VIP Manager",
+};
+
+const ROLE_COLORS: Record<string, string> = {
+  admin: "bg-purple-100 text-purple-700",
+  operator: "bg-blue-100 text-blue-700",
+  vip_manager: "bg-emerald-100 text-emerald-700",
+};
+
+function CredentialBanner({ username, password, onDismiss }: { username: string; password: string; onDismiss: () => void }) {
+  return (
+    <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-4">
+      <p className="text-xs font-semibold text-amber-800 mb-2">Save these credentials — the password won't be shown again</p>
+      <div className="flex items-center gap-4 text-sm font-mono text-amber-900">
+        <span><span className="text-amber-600 font-sans text-xs">Username:</span> {username}</span>
+        <span><span className="text-amber-600 font-sans text-xs">Password:</span> {password}</span>
+      </div>
+      <button onClick={onDismiss} className="mt-2 text-xs text-amber-600 hover:underline">Dismiss</button>
+    </div>
+  );
+}
+
+function TeamTab() {
+  const [members, setMembers] = useState<TeamMember[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [newCreds, setNewCreds] = useState<{ username: string; password: string } | null>(null);
+  const [resetCreds, setResetCreds] = useState<{ username: string; password: string } | null>(null);
+  const [adding, setAdding] = useState(false);
+  const [form, setForm] = useState({ display_name: "", username: "", role: "operator" });
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetchTeam()
+      .then(setMembers)
+      .finally(() => setLoading(false));
+  }, []);
+
+  async function handleCreate() {
+    if (!form.display_name.trim() || !form.username.trim()) return;
+    setAdding(true);
+    setError(null);
+    try {
+      const created = await createTeamMember(form.display_name, form.username, form.role, "telegram");
+      setMembers(prev => [...prev, created]);
+      setForm({ display_name: "", username: "", role: "operator" });
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Failed to create member");
+    } finally {
+      setAdding(false);
+    }
+  }
+
+  async function handleToggleActive(m: TeamMember) {
+    const updated = await updateTeamMember(m.id, { is_active: !m.is_active });
+    setMembers(prev => prev.map(r => r.id === m.id ? updated : r));
+  }
+
+  async function handleResetPassword(m: TeamMember) {
+    const res = await resetTeamPassword(m.id);
+    setResetCreds({ username: m.username, password: res.password });
+  }
+
+  async function handleDelete(id: number) {
+    await deleteTeamMember(id);
+    setMembers(prev => prev.filter(m => m.id !== id));
+  }
+
+  if (loading) return <p className="text-sm text-muted-foreground">Loading…</p>;
+
+  return (
+    <div>
+      <SectionHeader
+        title="Team Members"
+        description="Add team members by their Telegram username. They sign in using the Telegram button on the login page."
+      />
+
+      {newCreds && (
+        <CredentialBanner
+          username={newCreds.username}
+          password={newCreds.password}
+          onDismiss={() => setNewCreds(null)}
+        />
+      )}
+      {resetCreds && (
+        <CredentialBanner
+          username={resetCreds.username}
+          password={resetCreds.password}
+          onDismiss={() => setResetCreds(null)}
+        />
+      )}
+
+      <div className="space-y-2 mb-6">
+        {members.length === 0 && (
+          <p className="text-sm text-muted-foreground py-4 text-center">No team members yet.</p>
+        )}
+        {members.map(m => (
+          <div key={m.id} className={cn("flex items-center gap-3 px-4 py-3 rounded-lg border bg-card", !m.is_active && "opacity-50")}>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-medium truncate">{m.display_name}</span>
+                <span className={cn("text-xs px-2 py-0.5 rounded-full font-medium", ROLE_COLORS[m.role] ?? "bg-gray-100 text-gray-600")}>
+                  {ROLE_LABELS[m.role] ?? m.role}
+                </span>
+                {m.auth_type === "telegram" && (
+                  <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-sky-100 text-sky-700">Telegram</span>
+                )}
+              </div>
+              <p className="text-xs text-muted-foreground mt-0.5">@{m.username}</p>
+            </div>
+            {m.auth_type === "password" && (
+              <button
+                onClick={() => handleResetPassword(m)}
+                className="text-xs px-2 py-1 rounded-md text-muted-foreground hover:bg-muted transition-colors shrink-0"
+              >
+                Reset password
+              </button>
+            )}
+            <button
+              onClick={() => handleToggleActive(m)}
+              className="text-xs px-2 py-1 rounded-md text-muted-foreground hover:bg-muted transition-colors shrink-0"
+            >
+              {m.is_active ? "Deactivate" : "Activate"}
+            </button>
+            <DeleteButton onClick={() => handleDelete(m.id)} />
+          </div>
+        ))}
+      </div>
+
+      <div className="rounded-lg border border-dashed bg-muted/30 p-4">
+        <p className="text-xs font-medium text-muted-foreground mb-3">Add team member</p>
+        <div className="flex items-center gap-2 mb-2">
+          <input
+            className="flex-1 text-sm border rounded-md px-3 py-1.5 bg-background"
+            placeholder="Display name (e.g. Talal)"
+            value={form.display_name}
+            onChange={e => setForm(f => ({ ...f, display_name: e.target.value }))}
+          />
+          <input
+            className="flex-1 text-sm border rounded-md px-3 py-1.5 bg-background"
+            placeholder="Telegram @username (without @)"
+            value={form.username}
+            onChange={e => setForm(f => ({ ...f, username: e.target.value.toLowerCase().replace(/[@\s]/g, "") }))}
+          />
+          <select
+            value={form.role}
+            onChange={e => setForm(f => ({ ...f, role: e.target.value }))}
+            className="text-sm border rounded-md px-2 py-1.5 bg-background shrink-0"
+          >
+            <option value="operator">Operator</option>
+            <option value="vip_manager">VIP Manager</option>
+            <option value="admin">Admin</option>
+          </select>
+        </div>
+        {error && <p className="text-xs text-red-500 mb-2">{error}</p>}
+        <button
+          onClick={handleCreate}
+          disabled={adding || !form.display_name.trim() || !form.username.trim()}
+          className="px-3 py-1.5 text-sm rounded-md bg-[hsl(199,86%,55%)] text-white hover:bg-[hsl(199,86%,45%)] disabled:opacity-50 transition-colors"
+        >
+          {adding ? "Creating…" : "Add Member"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ---- Main page ----
 
-type Tab = "keywords" | "followups" | "quickreplies" | "stagelabels";
+// ---- Meta Integration Tab ----
 
-const TABS: { id: Tab; label: string }[] = [
-  { id: "keywords", label: "Keywords" },
-  { id: "followups", label: "Follow-ups" },
+const API_BASE = import.meta.env.DEV
+  ? (import.meta.env.VITE_API_BASE_URL || "http://localhost:8000")
+  : "";
+
+function MetaTab() {
+  const [status, setStatus] = useState<{ connected: boolean; ad_account_id: string | null; pixel_id: string | null } | null>(null);
+  const [accounts, setAccounts] = useState<{ id: string; name: string }[]>([]);
+  const [selectedAccount, setSelectedAccount] = useState("");
+  const [pixelId, setPixelId] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState(false);
+  const hasLoadedAccounts = useRef(false);
+
+  useEffect(() => {
+    const token = localStorage.getItem("crm_token");
+    fetch(`${API_BASE}/settings/meta/status`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.json())
+      .then(setStatus)
+      .catch(() => {});
+
+    // If returning from OAuth, load ad accounts
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("meta_connected") === "1" && !hasLoadedAccounts.current) {
+      hasLoadedAccounts.current = true;
+      fetch(`${API_BASE}/settings/meta/accounts`, { headers: { Authorization: `Bearer ${token}` } })
+        .then(r => r.json())
+        .then(d => setAccounts(d.accounts || []))
+        .catch(() => {});
+      // Clean up URL
+      window.history.replaceState({}, "", window.location.pathname + "#meta");
+    }
+  }, []);
+
+  async function handleConnect() {
+    const token = localStorage.getItem("crm_token");
+    const res = await fetch(`${API_BASE}/auth/meta/connect`, { headers: { Authorization: `Bearer ${token}` } });
+    const data = await res.json();
+    if (data.url) window.location.href = data.url;
+  }
+
+  async function handleSaveAccount() {
+    if (!selectedAccount || !pixelId.trim()) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const token = localStorage.getItem("crm_token");
+      const res = await fetch(`${API_BASE}/settings/meta/account`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ ad_account_id: selectedAccount, pixel_id: pixelId.trim() }),
+      });
+      if (!res.ok) throw new Error((await res.json()).detail || "Failed");
+      setSuccess(true);
+      setStatus(s => s ? { ...s, ad_account_id: selectedAccount, pixel_id: pixelId.trim() } : s);
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="space-y-6">
+      <SectionHeader
+        title="Meta Integration"
+        description="Connect your Meta ad account to pull campaign analytics and fire conversion events automatically."
+      />
+
+      <div className="rounded-lg border bg-card p-4 space-y-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-sm font-medium">Meta Ads Account</p>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              {status?.connected
+                ? status.ad_account_id
+                  ? `Connected — ${status.ad_account_id}`
+                  : "Token saved — select an ad account below"
+                : "Not connected"}
+            </p>
+          </div>
+          <button
+            onClick={handleConnect}
+            className="px-3 py-1.5 text-sm rounded-md bg-[#1877F2] text-white hover:bg-[#166FE5] transition-colors shrink-0"
+          >
+            {status?.connected ? "Reconnect" : "Connect Meta Account"}
+          </button>
+        </div>
+
+        {status?.pixel_id && (
+          <p className="text-xs text-muted-foreground">Pixel ID: {status.pixel_id}</p>
+        )}
+      </div>
+
+      {accounts.length > 0 && (
+        <div className="rounded-lg border border-dashed bg-muted/30 p-4 space-y-3">
+          <p className="text-xs font-medium text-muted-foreground">Select ad account &amp; pixel</p>
+          <select
+            value={selectedAccount}
+            onChange={e => setSelectedAccount(e.target.value)}
+            className="w-full text-sm border rounded-md px-3 py-2 bg-background"
+          >
+            <option value="">Select ad account…</option>
+            {accounts.map(a => (
+              <option key={a.id} value={a.id}>{a.name} ({a.id})</option>
+            ))}
+          </select>
+          <input
+            className="w-full text-sm border rounded-md px-3 py-1.5 bg-background"
+            placeholder="Pixel ID (e.g. 123456789)"
+            value={pixelId}
+            onChange={e => setPixelId(e.target.value)}
+          />
+          {error && <p className="text-xs text-red-500">{error}</p>}
+          {success && <p className="text-xs text-green-600">Saved successfully.</p>}
+          <button
+            onClick={handleSaveAccount}
+            disabled={saving || !selectedAccount || !pixelId.trim()}
+            className="px-3 py-1.5 text-sm rounded-md bg-[hsl(199,86%,55%)] text-white hover:bg-[hsl(199,86%,45%)] disabled:opacity-50 transition-colors"
+          >
+            {saving ? "Saving…" : "Save"}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---- Main page ----
+
+type Section = "pipeline" | "team" | "meta";
+type PipelineTab = "keywords" | "followups" | "quickreplies" | "stagelabels";
+
+const SECTIONS: { id: Section; label: string; description: string }[] = [
+  { id: "pipeline", label: "Pipeline", description: "Keywords, follow-ups, quick replies, and stage labels" },
+  { id: "team",     label: "Team",     description: "Manage operator and manager accounts" },
+  { id: "meta",     label: "Meta Ads", description: "Connect your Meta ad account" },
+];
+
+const PIPELINE_TABS: { id: PipelineTab; label: string }[] = [
+  { id: "keywords",     label: "Keywords" },
+  { id: "followups",    label: "Follow-ups" },
   { id: "quickreplies", label: "Quick Replies" },
-  { id: "stagelabels", label: "Stage Labels" },
+  { id: "stagelabels",  label: "Stage Labels" },
 ];
 
 export default function SettingsPage() {
-  const [tab, setTab] = useState<Tab>("keywords");
+  const [section, setSection] = useState<Section>("pipeline");
+  const [pipelineTab, setPipelineTab] = useState<PipelineTab>("keywords");
 
   return (
     <AppLayout>
-      <div className="p-6 max-w-3xl">
-        <h1 className="text-xl font-semibold mb-1">Settings</h1>
-        <p className="text-sm text-muted-foreground mb-6">Configure your pipeline keywords, follow-up messages, and display labels.</p>
+      <div className="flex h-full">
+        {/* Left nav */}
+        <aside className="w-48 shrink-0 border-r py-6 px-3">
+          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide px-3 mb-2">Settings</p>
+          <nav className="space-y-0.5">
+            {SECTIONS.map(s => (
+              <button
+                key={s.id}
+                onClick={() => setSection(s.id)}
+                className={cn(
+                  "w-full text-left px-3 py-2 rounded-md text-sm transition-colors",
+                  section === s.id
+                    ? "bg-[hsl(199,86%,55%)]/10 text-[hsl(199,86%,45%)] font-medium"
+                    : "text-muted-foreground hover:text-foreground hover:bg-muted"
+                )}
+              >
+                {s.label}
+              </button>
+            ))}
+          </nav>
+        </aside>
 
-        <div className="flex gap-1 border-b mb-6">
-          {TABS.map(t => (
-            <button
-              key={t.id}
-              onClick={() => setTab(t.id)}
-              className={cn(
-                "px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors",
-                tab === t.id
-                  ? "border-[hsl(199,86%,55%)] text-[hsl(199,86%,45%)]"
-                  : "border-transparent text-muted-foreground hover:text-foreground"
-              )}
-            >
-              {t.label}
-            </button>
-          ))}
+        {/* Content */}
+        <div className="flex-1 overflow-auto p-6 max-w-3xl">
+          {section === "team" && (
+            <>
+              <h2 className="text-lg font-semibold mb-0.5">Team</h2>
+              <p className="text-sm text-muted-foreground mb-6">Manage operator and manager accounts.</p>
+              <TeamTab />
+            </>
+          )}
+
+          {section === "pipeline" && (
+            <>
+              <h2 className="text-lg font-semibold mb-0.5">Pipeline</h2>
+              <p className="text-sm text-muted-foreground mb-4">Configure how your CRM pipeline behaves.</p>
+
+              <div className="flex gap-1 border-b mb-6">
+                {PIPELINE_TABS.map(t => (
+                  <button
+                    key={t.id}
+                    onClick={() => setPipelineTab(t.id)}
+                    className={cn(
+                      "px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors",
+                      pipelineTab === t.id
+                        ? "border-[hsl(199,86%,55%)] text-[hsl(199,86%,45%)]"
+                        : "border-transparent text-muted-foreground hover:text-foreground"
+                    )}
+                  >
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+
+              {pipelineTab === "keywords"     && <KeywordsTab />}
+              {pipelineTab === "followups"    && <FollowUpsTab />}
+              {pipelineTab === "quickreplies" && <QuickRepliesTab />}
+              {pipelineTab === "stagelabels"  && <StageLabelsTab />}
+            </>
+          )}
+
+          {section === "meta" && (
+            <>
+              <h2 className="text-lg font-semibold mb-0.5">Meta Ads</h2>
+              <p className="text-sm text-muted-foreground mb-6">Connect your Meta ad account for campaign analytics and CAPI.</p>
+              <MetaTab />
+            </>
+          )}
         </div>
-
-        {tab === "keywords" && <KeywordsTab />}
-        {tab === "followups" && <FollowUpsTab />}
-        {tab === "quickreplies" && <QuickRepliesTab />}
-        {tab === "stagelabels" && <StageLabelsTab />}
       </div>
     </AppLayout>
   );

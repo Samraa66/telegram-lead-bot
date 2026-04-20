@@ -25,7 +25,7 @@ load_dotenv(Path(__file__).parent.parent.parent / ".env")
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from .models import Base, FollowUpTemplate, Workspace, StageKeyword, StageLabel, QuickReply
+from .models import Base, FollowUpTemplate, Workspace, StageKeyword, StageLabel, QuickReply, TeamMember
 
 # Use DATABASE_URL if set (PostgreSQL); otherwise SQLite for local dev
 _db_url = os.getenv("DATABASE_URL", "").strip()
@@ -177,6 +177,27 @@ def _ensure_columns() -> None:
                 _add_column("follow_up_templates", "workspace_id", "INTEGER DEFAULT 1")
             else:
                 _add_column("follow_up_templates", "workspace_id", "INTEGER DEFAULT 1")
+
+    if _table_exists("workspaces"):
+        existing_ws = _existing_columns("workspaces")
+        ws_needed = [
+            ("meta_access_token", "TEXT"),
+            ("meta_ad_account_id", "TEXT"),
+            ("meta_pixel_id", "TEXT"),
+        ]
+        for col, ddl in ws_needed:
+            if col not in existing_ws:
+                _add_column("workspaces", col, ddl)
+
+    if _table_exists("team_members"):
+        existing_team = _existing_columns("team_members")
+        team_needed = [
+            ("auth_type", "TEXT NOT NULL DEFAULT 'password'"),
+            ("telegram_id", "BIGINT"),
+        ]
+        for col, ddl in team_needed:
+            if col not in existing_team:
+                _add_column("team_members", col, ddl)
 
     if _table_exists("affiliates"):
         if dialect == "sqlite":

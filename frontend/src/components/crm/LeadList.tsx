@@ -18,7 +18,7 @@ function getUrgencyLevel(stageEnteredAt: string): "critical" | "high" | "normal"
   return "normal";
 }
 
-type ClassificationFilter = "all" | "new_lead" | "warm_lead" | "vip" | "affiliate" | "noise" | "escalated";
+type ClassificationFilter = "all" | "new_lead" | "warm_lead" | "affiliate" | "noise" | "escalated";
 type StageFilter = "all" | Stage;
 type SortMode = "waiting" | "active" | "newest";
 
@@ -27,7 +27,6 @@ const CLASSIFICATION_FILTERS: { key: ClassificationFilter; label: string }[] = [
   { key: "escalated",  label: "Escalated" },
   { key: "new_lead",   label: "New" },
   { key: "warm_lead",  label: "Warm" },
-  { key: "vip",        label: "VIP" },
   { key: "affiliate",  label: "Affiliate" },
   { key: "noise",      label: "Noise" },
 ];

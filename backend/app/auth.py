@@ -17,8 +17,10 @@ Token expiry: 24 hours.
 from __future__ import annotations
 
 import hashlib
+import hmac
 import os
 import secrets
+import time
 from datetime import datetime, timedelta
 from typing import Literal, Optional
 
@@ -102,6 +104,16 @@ def authenticate_user(username: str, password: str, db=None) -> Optional[dict]:
             return None
         return {"username": username, "role": user["role"]}
 
+    # Team member (DB-backed: operator / vip_manager / admin)
+    if db is not None:
+        from app.database.models import TeamMember
+        member = db.query(TeamMember).filter(
+            TeamMember.username == username,
+            TeamMember.is_active.is_(True),
+        ).first()
+        if member and verify_password(password, member.password_hash):
+            return {"username": username, "role": member.role, "team_member_id": member.id}
+
     # Affiliate (DB-backed)
     if db is not None:
         from app.database.models import Affiliate
@@ -158,3 +170,24 @@ def require_affiliate(current_user: dict = Depends(get_current_user)) -> dict:
     if current_user["role"] != "affiliate" or "affiliate_id" not in current_user:
         raise HTTPException(status_code=403, detail="Affiliate access only")
     return current_user
+
+
+# ---------------------------------------------------------------------------
+# Telegram Login Widget verification
+# ---------------------------------------------------------------------------
+
+def verify_telegram_auth(data: dict, bot_token: str) -> bool:
+    """
+    Verify the auth data returned by the Telegram Login Widget.
+    https://core.telegram.org/widgets/login#checking-authorization
+    """
+    received_hash = data.get("hash", "")
+    auth_date = int(data.get("auth_date", 0))
+    # Reject data older than 24 hours
+    if time.time() - auth_date > 86400:
+        return False
+    check_fields = {k: v for k, v in data.items() if k != "hash"}
+    data_check_string = "\n".join(f"{k}={v}" for k, v in sorted(check_fields.items()))
+    secret_key = hashlib.sha256(bot_token.encode()).digest()
+    computed = hmac.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest()
+    return secrets.compare_digest(computed, received_hash)

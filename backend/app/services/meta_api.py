@@ -23,9 +23,8 @@ from typing import Optional
 
 from sqlalchemy import func
 
-from app.config import META_ACCESS_TOKEN, META_AD_ACCOUNT_ID, META_PIXEL_ID
 from app.database import SessionLocal
-from app.database.models import AdCampaign, AdCreative, Contact, StageHistory
+from app.database.models import AdCampaign, AdCreative, Campaign, Contact, StageHistory, Workspace
 
 logger = logging.getLogger(__name__)
 
@@ -34,12 +33,36 @@ GRAPH_BASE = f"https://graph.facebook.com/{GRAPH_API_VERSION}"
 
 
 # ---------------------------------------------------------------------------
+# Credential helpers
+# ---------------------------------------------------------------------------
+
+def _get_workspace_credentials(workspace_id: int = 1) -> tuple[str, str, str]:
+    """
+    Return (access_token, ad_account_id, pixel_id) for a workspace.
+    Falls back to .env values for workspace 1 if DB has no token set.
+    """
+    from app.config import META_ACCESS_TOKEN, META_AD_ACCOUNT_ID, META_PIXEL_ID
+    db = SessionLocal()
+    try:
+        ws = db.query(Workspace).filter(Workspace.id == workspace_id).first()
+        if ws and ws.meta_access_token:
+            return ws.meta_access_token, ws.meta_ad_account_id or "", ws.meta_pixel_id or ""
+    finally:
+        db.close()
+    # Fallback to .env
+    return META_ACCESS_TOKEN, META_AD_ACCOUNT_ID, META_PIXEL_ID
+
+
+# ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-def _graph_get(path: str, params: dict) -> dict:
+def _graph_get(path: str, params: dict, access_token: str = "") -> dict:
     """GET request to the Meta Graph API. Returns parsed JSON or empty dict on failure."""
-    params["access_token"] = META_ACCESS_TOKEN
+    if not access_token:
+        from app.config import META_ACCESS_TOKEN
+        access_token = META_ACCESS_TOKEN
+    params["access_token"] = access_token
     query = urllib.parse.urlencode(params)
     url = f"{GRAPH_BASE}/{path}?{query}"
     try:
@@ -50,9 +73,12 @@ def _graph_get(path: str, params: dict) -> dict:
         return {}
 
 
-def _graph_post(path: str, payload: dict) -> dict:
+def _graph_post(path: str, payload: dict, access_token: str = "") -> dict:
     """POST request to the Meta Graph API. Returns parsed JSON or empty dict on failure."""
-    payload["access_token"] = META_ACCESS_TOKEN
+    if not access_token:
+        from app.config import META_ACCESS_TOKEN
+        access_token = META_ACCESS_TOKEN
+    payload["access_token"] = access_token
     data = json.dumps(payload).encode()
     url = f"{GRAPH_BASE}/{path}"
     req = urllib.request.Request(
@@ -73,20 +99,19 @@ def _graph_post(path: str, payload: dict) -> dict:
 # Marketing API pull
 # ---------------------------------------------------------------------------
 
-def pull_campaign_insights(for_date: Optional[date] = None) -> dict:
+def pull_campaign_insights(for_date: Optional[date] = None, workspace_id: int = 1) -> dict:
     """
     Fetch Meta campaign insights for `for_date` (defaults to yesterday) and
     upsert into the ad_campaigns table. Skips silently when credentials are absent.
     Returns a result dict with status, rows_upserted, and any error detail.
     """
-    if not META_ACCESS_TOKEN or not META_AD_ACCOUNT_ID:
-        logger.info("Meta credentials not set — skipping campaign pull")
-        return {"ok": False, "error": "Meta credentials not configured (META_ACCESS_TOKEN or META_AD_ACCOUNT_ID missing)"}
+    access_token, ad_account_id, _pixel_id = _get_workspace_credentials(workspace_id)
 
-    # Ensure the account ID has the required act_ prefix
-    account_id = META_AD_ACCOUNT_ID
-    if not account_id.startswith("act_"):
-        account_id = f"act_{account_id}"
+    if not access_token or not ad_account_id:
+        logger.info("Meta credentials not set — skipping campaign pull")
+        return {"ok": False, "error": "Meta credentials not configured"}
+
+    account_id = ad_account_id if ad_account_id.startswith("act_") else f"act_{ad_account_id}"
 
     target_date = for_date or (date.today() - timedelta(days=1))
     date_str = target_date.isoformat()
@@ -99,6 +124,7 @@ def pull_campaign_insights(for_date: Optional[date] = None) -> dict:
             "level": "campaign",
             "limit": "500",
         },
+        access_token=access_token,
     )
 
     if "error" in data:
@@ -122,11 +148,19 @@ def pull_campaign_insights(for_date: Optional[date] = None) -> dict:
             impressions = int(row.get("impressions", 0) or 0)
             clicks = int(row.get("clicks", 0) or 0)
 
-            # Attribution: contacts whose source tag matches this campaign_id
+            # Resolve the source_tag for this Meta campaign_id via the Campaign registry.
+            # contact.source stores the /start parameter (= source_tag), NOT the numeric Meta campaign_id.
+            campaign_record = (
+                db.query(Campaign)
+                .filter(Campaign.meta_campaign_id == campaign_id)
+                .first()
+            )
+            source_tag = campaign_record.source_tag if campaign_record else campaign_id
+
             leads_count = (
                 db.query(func.count(Contact.id))
                 .filter(
-                    Contact.source == campaign_id,
+                    Contact.source == source_tag,
                     func.date(Contact.first_seen) == target_date,
                 )
                 .scalar() or 0
@@ -135,7 +169,7 @@ def pull_campaign_insights(for_date: Optional[date] = None) -> dict:
                 db.query(func.count(StageHistory.id))
                 .join(Contact, Contact.id == StageHistory.contact_id)
                 .filter(
-                    Contact.source == campaign_id,
+                    Contact.source == source_tag,
                     StageHistory.to_stage == 7,
                     func.date(StageHistory.moved_at) == target_date,
                 )
@@ -176,22 +210,20 @@ def pull_campaign_insights(for_date: Optional[date] = None) -> dict:
     finally:
         db.close()
 
-    # Also pull ad-level creative data
-    pull_ad_creative_insights(for_date=target_date)
+    pull_ad_creative_insights(for_date=target_date, workspace_id=workspace_id)
     return upsert_result
 
 
-def pull_ad_creative_insights(for_date: Optional[date] = None) -> None:
+def pull_ad_creative_insights(for_date: Optional[date] = None, workspace_id: int = 1) -> None:
     """
     Pull Meta ad-level insights for `for_date` and upsert into ad_creatives.
     Called automatically at the end of pull_campaign_insights.
     """
-    if not META_ACCESS_TOKEN or not META_AD_ACCOUNT_ID:
+    access_token, ad_account_id, _pixel_id = _get_workspace_credentials(workspace_id)
+    if not access_token or not ad_account_id:
         return
 
-    account_id = META_AD_ACCOUNT_ID
-    if not account_id.startswith("act_"):
-        account_id = f"act_{account_id}"
+    account_id = ad_account_id if ad_account_id.startswith("act_") else f"act_{ad_account_id}"
 
     target_date = for_date or (date.today() - timedelta(days=1))
     date_str = target_date.isoformat()
@@ -204,6 +236,7 @@ def pull_ad_creative_insights(for_date: Optional[date] = None) -> None:
             "level": "ad",
             "limit": "500",
         },
+        access_token=access_token,
     )
 
     rows = data.get("data", [])
@@ -213,6 +246,9 @@ def pull_ad_creative_insights(for_date: Optional[date] = None) -> None:
 
     db = SessionLocal()
     try:
+        # Cache campaign_id → source_tag lookups for this batch
+        _source_tag_cache: dict[str, str] = {}
+
         for row in rows:
             ad_id = row.get("ad_id", "")
             if not ad_id:
@@ -222,12 +258,15 @@ def pull_ad_creative_insights(for_date: Optional[date] = None) -> None:
             impressions = int(row.get("impressions", 0) or 0)
             clicks = int(row.get("clicks", 0) or 0)
 
-            # Ad-level attribution: contacts whose source matches this campaign
-            # (we attribute at campaign level since source_tag maps to campaign)
+            if campaign_id not in _source_tag_cache:
+                rec = db.query(Campaign).filter(Campaign.meta_campaign_id == campaign_id).first()
+                _source_tag_cache[campaign_id] = rec.source_tag if rec else campaign_id
+            source_tag = _source_tag_cache[campaign_id]
+
             leads_count = (
                 db.query(func.count(Contact.id))
                 .filter(
-                    Contact.source == campaign_id,
+                    Contact.source == source_tag,
                     func.date(Contact.first_seen) == target_date,
                 )
                 .scalar() or 0
@@ -236,7 +275,7 @@ def pull_ad_creative_insights(for_date: Optional[date] = None) -> None:
                 db.query(func.count(StageHistory.id))
                 .join(Contact, Contact.id == StageHistory.contact_id)
                 .filter(
-                    Contact.source == campaign_id,
+                    Contact.source == source_tag,
                     StageHistory.to_stage == 7,
                     func.date(StageHistory.moved_at) == target_date,
                 )
@@ -284,13 +323,14 @@ def pull_ad_creative_insights(for_date: Optional[date] = None) -> None:
 # Conversions API (CAPI) — Stage 7 deposit event
 # ---------------------------------------------------------------------------
 
-def send_capi_conversion(contact_id: int, event_time: Optional[datetime] = None) -> None:
+def send_capi_conversion(contact_id: int, event_time: Optional[datetime] = None, workspace_id: int = 1) -> None:
     """
     Fire a Meta CAPI 'Purchase' event when a contact reaches Stage 7.
     Uses the contact's Telegram ID as a hashed external_id.
     Skips silently when credentials are absent.
     """
-    if not META_ACCESS_TOKEN or not META_PIXEL_ID:
+    access_token, _ad_account_id, pixel_id = _get_workspace_credentials(workspace_id)
+    if not access_token or not pixel_id:
         logger.info("Meta CAPI not configured — skipping conversion event for contact %s", contact_id)
         return
 
@@ -314,14 +354,14 @@ def send_capi_conversion(contact_id: int, event_time: Optional[datetime] = None)
                     },
                     "custom_data": {
                         "currency": "USD",
-                        "value": 1,  # placeholder — real deposit amount not stored yet
+                        "value": 1,
                         **({"campaign_source": contact.source} if contact.source else {}),
                     },
                 }
             ],
         }
 
-        resp = _graph_post(f"{META_PIXEL_ID}/events", payload)
+        resp = _graph_post(f"{pixel_id}/events", payload, access_token=access_token)
         logger.info("Meta CAPI conversion sent for contact %s: %s", contact_id, resp)
     except Exception as e:
         logger.exception("Meta CAPI failed for contact %s: %s", contact_id, e)

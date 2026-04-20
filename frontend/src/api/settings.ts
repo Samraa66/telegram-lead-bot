@@ -113,3 +113,45 @@ export const updateStageLabel = (id: number, label: string): Promise<StageLabel>
     method: "PATCH",
     body: JSON.stringify({ label }),
   });
+
+// ---- Team ----
+
+export interface TeamMember {
+  id: number;
+  display_name: string;
+  username: string;
+  role: string;
+  is_active: boolean;
+  auth_type: "telegram" | "password";
+  created_at: string | null;
+  password?: string; // only present on create / reset (password auth_type only)
+}
+
+export const fetchTeam = (): Promise<TeamMember[]> =>
+  apiFetch("/settings/team");
+
+export const createTeamMember = (
+  display_name: string,
+  username: string,
+  role: string,
+  auth_type: "telegram" | "password" = "telegram",
+): Promise<TeamMember> =>
+  apiFetch("/settings/team", {
+    method: "POST",
+    body: JSON.stringify({ display_name, username, role, auth_type }),
+  });
+
+export const updateTeamMember = (
+  id: number,
+  data: Partial<Pick<TeamMember, "display_name" | "role" | "is_active">>,
+): Promise<TeamMember> =>
+  apiFetch(`/settings/team/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(data),
+  });
+
+export const resetTeamPassword = (id: number): Promise<{ ok: boolean; password: string }> =>
+  apiFetch(`/settings/team/${id}/reset-password`, { method: "POST" });
+
+export const deleteTeamMember = (id: number): Promise<void> =>
+  apiFetch(`/settings/team/${id}`, { method: "DELETE" });

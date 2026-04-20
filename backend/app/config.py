@@ -70,6 +70,13 @@ META_ACCESS_TOKEN: str = os.getenv("META_ACCESS_TOKEN", "").strip()
 META_AD_ACCOUNT_ID: str = os.getenv("META_AD_ACCOUNT_ID", "").strip()  # format: act_XXXXXXXXX
 META_PIXEL_ID: str = os.getenv("META_PIXEL_ID", "").strip()
 
+# Meta OAuth App credentials (shared across all workspaces — from Meta Developer Console)
+META_APP_ID: str = os.getenv("META_APP_ID", "").strip()
+META_APP_SECRET: str = os.getenv("META_APP_SECRET", "").strip()
+
+# Public base URL of this server — used to build OAuth redirect URIs
+APP_BASE_URL: str = os.getenv("APP_BASE_URL", "https://telelytics.org").strip()
+
 # Ad performance alert thresholds
 ALERT_DAILY_SPEND_THRESHOLD: float = float(os.getenv("ALERT_DAILY_SPEND_THRESHOLD", "100"))
 ALERT_CPL_THRESHOLD: float = float(os.getenv("ALERT_CPL_THRESHOLD", "3"))

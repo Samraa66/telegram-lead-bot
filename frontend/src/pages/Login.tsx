@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { login } from "../api/auth";
+import { fetchAuthConfig, login, loginWithTelegram, TelegramAuthData } from "../api/auth";
 
 const LogoMark = ({ size = 36 }: { size?: number }) => (
   <svg width={size} height={size} viewBox="0 0 36 36" fill="none">
@@ -45,7 +45,43 @@ export default function Login() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [botUsername, setBotUsername] = useState<string | null>(null);
+  const telegramRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
+
+  useEffect(() => {
+    fetchAuthConfig().then(cfg => setBotUsername(cfg.bot_username)).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (!botUsername || !telegramRef.current) return;
+    const container = telegramRef.current;
+    container.innerHTML = "";
+
+    (window as any).onTelegramAuth = async (data: TelegramAuthData) => {
+      setLoading(true);
+      setError(null);
+      try {
+        const user = await loginWithTelegram(data);
+        navigate(user.role === "affiliate" ? "/portal" : "/");
+      } catch (err: any) {
+        setError(err?.message || "Telegram login failed");
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    const script = document.createElement("script");
+    script.src = "https://telegram.org/js/telegram-widget.js?22";
+    script.setAttribute("data-telegram-login", botUsername);
+    script.setAttribute("data-size", "large");
+    script.setAttribute("data-onauth", "onTelegramAuth(user)");
+    script.setAttribute("data-request-access", "write");
+    script.async = true;
+    container.appendChild(script);
+
+    return () => { container.innerHTML = ""; delete (window as any).onTelegramAuth; };
+  }, [botUsername]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -164,6 +200,18 @@ export default function Login() {
             </h1>
             <p className="text-sm text-white/25">Sign in to your account</p>
           </div>
+
+          {/* Telegram Login Widget */}
+          {botUsername && (
+            <div className="space-y-3">
+              <div ref={telegramRef} className="flex justify-center" />
+              <div className="flex items-center gap-3">
+                <div className="flex-1 h-px bg-white/[0.06]" />
+                <span className="text-[10px] text-white/20 uppercase tracking-widest">or</span>
+                <div className="flex-1 h-px bg-white/[0.06]" />
+              </div>
+            </div>
+          )}
 
           {/* Form */}
           <div className="space-y-4">
