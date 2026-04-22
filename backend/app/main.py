@@ -226,13 +226,14 @@ def list_workspaces(
 ):
     """List all workspaces (developer only)."""
     from app.database.models import Workspace
+    from app.services.telethon_client import get_client
     rows = db.query(Workspace).order_by(Workspace.id).all()
     return [
         {
             "id": ws.id,
             "name": ws.name,
             "created_at": ws.created_at.isoformat() if ws.created_at else None,
-            "has_telethon": bool(ws.telethon_session),
+            "has_telethon": get_client(ws.id) is not None,
             "has_meta": bool(ws.meta_access_token),
             "has_bot_token": bool(ws.bot_token),
         }
