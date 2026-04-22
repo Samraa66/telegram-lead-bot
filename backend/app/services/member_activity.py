@@ -67,7 +67,7 @@ def _last_inbound_at(db: Session, contact_id: int) -> Optional[datetime]:
 # VIP member list
 # ---------------------------------------------------------------------------
 
-def get_vip_members(db: Session) -> list:
+def get_vip_members(db: Session, workspace_id: int = 1) -> list:
     """
     Return all VIP contacts (Stage 7 or 8, non-noise) with their computed
     activity status and days since last activity.
@@ -75,6 +75,7 @@ def get_vip_members(db: Session) -> list:
     contacts = (
         db.query(Contact)
         .filter(
+            Contact.workspace_id == workspace_id,
             Contact.current_stage.in_([7, 8]),
             Contact.classification != "noise",
         )
@@ -119,7 +120,7 @@ def get_vip_members(db: Session) -> list:
 # Re-engagement — one-tap send
 # ---------------------------------------------------------------------------
 
-def send_reengage_message(contact_id: int, text: Optional[str] = None) -> bool:
+def send_reengage_message(contact_id: int, text: Optional[str] = None, workspace_id: int = 1) -> bool:
     """
     Send a re-engagement message to a VIP contact via Telethon (or bot fallback).
     Returns True on success.
@@ -128,9 +129,9 @@ def send_reengage_message(contact_id: int, text: Optional[str] = None) -> bool:
     try:
         from app.services.telethon_client import send_as_operator_sync, get_client
         from app.bot import send_message as bot_send
-        if get_client():
-            return send_as_operator_sync(contact_id, message)
-        return bot_send(contact_id, message)
+        if get_client(workspace_id):
+            return send_as_operator_sync(contact_id, message, workspace_id)
+        return bot_send(contact_id, message, workspace_id)
     except Exception as e:
         logger.exception("Re-engagement send failed for contact %s: %s", contact_id, e)
         return False

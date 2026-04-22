@@ -8,8 +8,7 @@ Used by:
 
 from __future__ import annotations
 
-from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -17,13 +16,8 @@ from sqlalchemy.orm import Session
 from app.database.models import Message, User
 
 
-def get_contacts(db: Session, include_noise: bool = False) -> List[Dict[str, Any]]:
-    """
-    List all contacts with:
-    - current_stage
-    - username
-    - last message timestamp
-    """
+def get_contacts(db: Session, workspace_id: int = 1, include_noise: bool = False) -> List[Dict[str, Any]]:
+    """List all contacts with current_stage, username, and last message timestamp."""
     last_msg_subq = (
         db.query(Message.user_id.label("user_id"), func.max(Message.timestamp).label("last_ts"))
         .group_by(Message.user_id)
@@ -42,6 +36,7 @@ def get_contacts(db: Session, include_noise: bool = False) -> List[Dict[str, Any
             User.stage_entered_at,
             last_msg_subq.c.last_ts,
         )
+        .filter(User.workspace_id == workspace_id)
         .outerjoin(last_msg_subq, User.id == last_msg_subq.c.user_id)
         .order_by(User.first_seen.desc())
     )
@@ -79,7 +74,6 @@ def get_contact_messages(db: Session, contact_id: int) -> List[Dict[str, Any]]:
 
     result: List[Dict[str, Any]] = []
     for m in messages:
-        # `content` is the CRM-friendly field; `message_text` is kept for backward compatibility.
         content = m.content if m.content is not None else m.message_text
         result.append(
             {
@@ -91,4 +85,3 @@ def get_contact_messages(db: Session, contact_id: int) -> List[Dict[str, Any]]:
             }
         )
     return result
-

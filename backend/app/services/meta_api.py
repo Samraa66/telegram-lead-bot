@@ -49,8 +49,10 @@ def _get_workspace_credentials(workspace_id: int = 1) -> tuple[str, str, str]:
             return ws.meta_access_token, ws.meta_ad_account_id or "", ws.meta_pixel_id or ""
     finally:
         db.close()
-    # Fallback to .env
-    return META_ACCESS_TOKEN, META_AD_ACCOUNT_ID, META_PIXEL_ID
+    # .env fallback is workspace-1 only — never expose client credentials to other workspaces
+    if workspace_id == 1:
+        return META_ACCESS_TOKEN, META_AD_ACCOUNT_ID, META_PIXEL_ID
+    return "", "", ""
 
 
 # ---------------------------------------------------------------------------

@@ -46,14 +46,15 @@ def ensure_contact(
     source: Optional[str],
     first_name: Optional[str] = None,
     last_name: Optional[str] = None,
+    workspace_id: int = 1,
 ) -> Contact:
     """
-    Get or create a Contact by Telegram user_id.
+    Get or create a Contact by Telegram user_id, scoped to the workspace.
 
     On create: sets classification via classifier, initialises stage to 1.
     On update: refreshes last_seen, updates username/source/name, re-classifies.
     """
-    contact = db.query(Contact).filter(Contact.id == user_id).first()
+    contact = db.query(Contact).filter(Contact.id == user_id, Contact.workspace_id == workspace_id).first()
     now = datetime.utcnow()
 
     if contact:
@@ -86,6 +87,7 @@ def ensure_contact(
     stage, entered_at = _vip_stage_from_name(first_name, last_name, now)
     contact = Contact(
         id=user_id,
+        workspace_id=workspace_id,
         username=username,
         first_name=first_name,
         last_name=last_name,
@@ -147,7 +149,7 @@ def record_message(
     return msg
 
 
-def process_lead_update(update: dict, db: Session) -> Tuple[Optional[str], Optional[int]]:
+def process_lead_update(update: dict, db: Session, workspace_id: int = 1) -> Tuple[Optional[str], Optional[int]]:
     """
     Process one Telegram update containing a private-chat message.
 
@@ -176,11 +178,11 @@ def process_lead_update(update: dict, db: Session) -> Tuple[Optional[str], Optio
 
     if is_start_command(text):
         source = extract_start_source(text)
-        ensure_contact(db, user_id, username, source, first_name, last_name)
+        ensure_contact(db, user_id, username, source, first_name, last_name, workspace_id=workspace_id)
         return WELCOME_MESSAGE, chat_id
 
     # Normal inbound message: ensure contact, record it, cancel follow-ups
-    ensure_contact(db, user_id, username, None, first_name, last_name)
+    ensure_contact(db, user_id, username, None, first_name, last_name, workspace_id=workspace_id)
     record_message(db, user_id, text, direction="inbound", sender="system")
 
     # Cancel pending follow-ups — the lead replied, so the sequence resets

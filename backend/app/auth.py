@@ -131,9 +131,14 @@ def authenticate_user(username: str, password: str, db=None) -> Optional[dict]:
 # Token
 # ---------------------------------------------------------------------------
 
-def create_access_token(username: str, role: str, affiliate_id: Optional[int] = None) -> str:
+def create_access_token(
+    username: str,
+    role: str,
+    workspace_id: int = 1,
+    affiliate_id: Optional[int] = None,
+) -> str:
     expire = datetime.utcnow() + timedelta(hours=TOKEN_EXPIRE_HOURS)
-    payload = {"sub": username, "role": role, "exp": expire}
+    payload = {"sub": username, "role": role, "workspace_id": workspace_id, "exp": expire}
     if affiliate_id is not None:
         payload["affiliate_id"] = affiliate_id
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
@@ -148,12 +153,21 @@ def get_current_user(
         role: str = payload.get("role", "")
         if not username or not role:
             raise HTTPException(status_code=401, detail="Invalid token")
-        result = {"username": username, "role": role}
+        result = {
+            "username": username,
+            "role": role,
+            "workspace_id": int(payload.get("workspace_id", 1)),
+        }
         if "affiliate_id" in payload:
             result["affiliate_id"] = payload["affiliate_id"]
         return result
     except JWTError:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+
+def get_workspace_id(current_user: dict = Depends(get_current_user)) -> int:
+    """FastAPI dependency — returns the workspace_id from the current JWT."""
+    return current_user.get("workspace_id", 1)
 
 
 def require_roles(*roles: str):

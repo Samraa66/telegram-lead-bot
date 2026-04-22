@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { ChevronDown, ExternalLink } from "lucide-react";
 import AppLayout from "@/components/AppLayout";
 import {
   Keyword, FollowUpTemplate, QuickReply, StageLabel, TeamMember,
@@ -13,6 +14,15 @@ import { cn } from "../lib/utils";
 // ---- helpers ----
 
 const STAGE_NUMS = [1, 2, 3, 4, 5, 6, 7, 8];
+
+const API_BASE = import.meta.env.DEV
+  ? (import.meta.env.VITE_API_BASE_URL || "http://localhost:8000")
+  : "";
+
+function authHeaders() {
+  const token = localStorage.getItem("crm_token");
+  return { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
+}
 
 function stageBadge(n: number) {
   return (
@@ -53,6 +63,38 @@ function DeleteButton({ onClick }: { onClick: () => void }) {
     >
       Remove
     </button>
+  );
+}
+
+// ---- Setup Guide ----
+
+function SetupGuide({ steps, defaultOpen = true }: {
+  steps: React.ReactNode[];
+  defaultOpen?: boolean;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div className="rounded-lg border border-[hsl(199,86%,55%)]/20 bg-[hsl(199,86%,55%)]/5">
+      <button
+        onClick={() => setOpen(v => !v)}
+        className="w-full flex items-center justify-between px-4 py-3 text-left gap-2"
+      >
+        <span className="text-xs font-semibold text-[hsl(199,86%,40%)]">Setup guide</span>
+        <ChevronDown className={cn("w-3.5 h-3.5 text-[hsl(199,86%,55%)] transition-transform shrink-0", open && "rotate-180")} />
+      </button>
+      {open && (
+        <ol className="px-4 pb-4 space-y-2.5">
+          {steps.map((step, i) => (
+            <li key={i} className="flex gap-3 text-sm">
+              <span className="flex-shrink-0 w-5 h-5 rounded-full bg-[hsl(199,86%,55%)]/20 text-[hsl(199,86%,40%)] text-xs font-semibold flex items-center justify-center mt-0.5">
+                {i + 1}
+              </span>
+              <span className="leading-relaxed text-foreground/80">{step}</span>
+            </li>
+          ))}
+        </ol>
+      )}
+    </div>
   );
 }
 
@@ -622,67 +664,400 @@ function TeamTab() {
   );
 }
 
-// ---- Main page ----
+// ---- Telegram Bot tab ----
 
-// ---- Meta Integration Tab ----
+function BotTab() {
+  const [status, setStatus] = useState<{
+    has_token: boolean;
+    webhook_url: string | null;
+    webhook_active: boolean;
+    webhook_correct: boolean | null;
+    expected_url: string | null;
+  } | null>(null);
+  const [form, setForm] = useState({ bot_token: "", webhook_secret: "" });
+  const [saving, setSaving] = useState(false);
+  const [registering, setRegistering] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
 
-const API_BASE = import.meta.env.DEV
-  ? (import.meta.env.VITE_API_BASE_URL || "http://localhost:8000")
-  : "";
+  async function refreshStatus() {
+    const s = await fetch(`${API_BASE}/settings/bot/status`, { headers: authHeaders() })
+      .then(r => r.json())
+      .catch(() => null);
+    if (s) setStatus(s);
+  }
+
+  useEffect(() => { refreshStatus(); }, []);
+
+  async function handleSave() {
+    if (!form.bot_token.trim()) return;
+    setSaving(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      const body: Record<string, string> = { bot_token: form.bot_token.trim() };
+      if (form.webhook_secret.trim()) body.webhook_secret = form.webhook_secret.trim();
+      const res = await fetch(`${API_BASE}/settings/bot/credentials`, {
+        method: "PATCH",
+        headers: authHeaders(),
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) throw new Error((await res.json()).detail || "Failed to save");
+      setSuccess("Bot token saved.");
+      setForm({ bot_token: "", webhook_secret: "" });
+      await refreshStatus();
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Unknown error");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleRegisterWebhook() {
+    setRegistering(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      const res = await fetch(`${API_BASE}/settings/bot/register-webhook`, {
+        method: "POST",
+        headers: authHeaders(),
+      });
+      if (!res.ok) throw new Error((await res.json()).detail || "Failed to register webhook");
+      setSuccess("Webhook registered — bot is live.");
+      await refreshStatus();
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Unknown error");
+    } finally {
+      setRegistering(false);
+    }
+  }
+
+  const webhookOk = status?.webhook_correct === true;
+  const webhookWrong = status?.webhook_active && status?.webhook_correct === false;
+
+  return (
+    <div className="space-y-6">
+      <SectionHeader
+        title="Telegram Bot"
+        description="Your bot handles incoming leads from Telegram and sends automated messages. Create one via BotFather, then paste the token here."
+      />
+
+      <SetupGuide
+        defaultOpen={!webhookOk}
+        steps={[
+          <>Open Telegram and search <code className="font-mono bg-muted px-1 rounded text-xs">@BotFather</code>, then tap <strong>Start</strong>.</>,
+          <>Send <code className="font-mono bg-muted px-1 rounded text-xs">/newbot</code> and follow the prompts — choose a display name, then a username ending in <code className="font-mono bg-muted px-1 rounded text-xs">_bot</code>.</>,
+          <>BotFather will reply with your token — a string like <code className="font-mono bg-muted px-1 rounded text-xs">123456789:ABCDef-ghijklmnop</code>. Copy it.</>,
+          <>Paste it in the <strong>Bot Token</strong> field below and click <strong>Save Token</strong>.</>,
+          <>Click <strong>Register Webhook</strong> — this points Telegram to your CRM so incoming messages are forwarded automatically.</>,
+        ]}
+      />
+
+      {/* Status card */}
+      {status && (
+        <div className={cn(
+          "rounded-lg border p-4 flex items-start gap-3",
+          webhookOk   ? "bg-green-50 border-green-200" :
+          webhookWrong ? "bg-amber-50 border-amber-200" :
+          "bg-muted/30 border-border"
+        )}>
+          <div className={cn(
+            "w-2 h-2 rounded-full shrink-0 mt-1.5",
+            webhookOk    ? "bg-green-500" :
+            webhookWrong ? "bg-amber-400" : "bg-gray-400"
+          )} />
+          <div className="flex-1 min-w-0">
+            {!status.has_token ? (
+              <p className="text-sm font-medium text-muted-foreground">No bot token saved yet</p>
+            ) : webhookOk ? (
+              <>
+                <p className="text-sm font-medium text-green-800">Bot connected and active</p>
+                <p className="text-xs text-muted-foreground mt-0.5 font-mono truncate">{status.webhook_url}</p>
+              </>
+            ) : webhookWrong ? (
+              <>
+                <p className="text-sm font-medium text-amber-800">Webhook pointing to wrong URL</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Current: <span className="font-mono">{status.webhook_url}</span>
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  Expected: <span className="font-mono">{status.expected_url}</span>
+                </p>
+              </>
+            ) : (
+              <>
+                <p className="text-sm font-medium">Token saved — webhook not yet registered</p>
+                <p className="text-xs text-muted-foreground mt-0.5">Register the webhook below to activate the bot.</p>
+              </>
+            )}
+          </div>
+          {status.has_token && !webhookOk && (
+            <button
+              onClick={handleRegisterWebhook}
+              disabled={registering}
+              className="text-xs px-3 py-1.5 rounded-md bg-[hsl(199,86%,55%)] text-white hover:bg-[hsl(199,86%,45%)] disabled:opacity-50 transition-colors shrink-0"
+            >
+              {registering ? "Registering…" : "Register Webhook"}
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Form */}
+      <div className="rounded-lg border border-dashed bg-muted/30 p-4 space-y-3">
+        <p className="text-xs font-medium text-muted-foreground">
+          {status?.has_token ? "Update bot token" : "Enter your bot token"}
+        </p>
+        <div>
+          <label className="text-xs text-muted-foreground mb-1 block">Bot Token</label>
+          <input
+            type="password"
+            className="w-full text-sm border rounded-md px-3 py-1.5 bg-background font-mono"
+            placeholder="123456789:ABCDef-ghijklmnop"
+            value={form.bot_token}
+            onChange={e => setForm(f => ({ ...f, bot_token: e.target.value }))}
+            onKeyDown={e => e.key === "Enter" && handleSave()}
+          />
+        </div>
+        <div>
+          <label className="text-xs text-muted-foreground mb-1 block">
+            Webhook Secret <span className="text-muted-foreground/50 font-normal">(optional)</span>
+          </label>
+          <input
+            className="w-full text-sm border rounded-md px-3 py-1.5 bg-background font-mono"
+            placeholder="Any random string — adds a security check on incoming updates"
+            value={form.webhook_secret}
+            onChange={e => setForm(f => ({ ...f, webhook_secret: e.target.value }))}
+          />
+        </div>
+        {error && <p className="text-xs text-red-500">{error}</p>}
+        {success && <p className="text-xs text-green-600">{success}</p>}
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleSave}
+            disabled={saving || !form.bot_token.trim()}
+            className="px-3 py-1.5 text-sm rounded-md bg-[hsl(199,86%,55%)] text-white hover:bg-[hsl(199,86%,45%)] disabled:opacity-50 transition-colors"
+          >
+            {saving ? "Saving…" : "Save Token"}
+          </button>
+          {webhookOk && (
+            <button
+              onClick={handleRegisterWebhook}
+              disabled={registering}
+              className="px-3 py-1.5 text-sm rounded-md border hover:bg-muted transition-colors disabled:opacity-50 text-sm"
+            >
+              {registering ? "Registering…" : "Re-register Webhook"}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---- Telegram Operator Account tab ----
+
+type TelethonStep = "idle" | "phone" | "otp" | "connected";
+
+function TelegramTab() {
+  const [connected, setConnected] = useState<boolean | null>(null);
+  const [step, setStep] = useState<TelethonStep>("idle");
+  const [phone, setPhone] = useState("");
+  const [phoneCodeHash, setPhoneCodeHash] = useState("");
+  const [code, setCode] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [disconnecting, setDisconnecting] = useState(false);
+
+  useEffect(() => {
+    fetch(`${API_BASE}/settings/telethon/status`, { headers: authHeaders() })
+      .then(r => r.json())
+      .then(d => { setConnected(d.connected); setStep(d.connected ? "connected" : "idle"); })
+      .catch(() => setConnected(false));
+  }, []);
+
+  async function handleSendCode() {
+    if (!phone.trim()) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch(`${API_BASE}/settings/telethon/connect`, {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify({ phone: phone.trim() }),
+      });
+      if (!res.ok) throw new Error((await res.json()).detail || "Failed to send code");
+      const data = await res.json();
+      setPhoneCodeHash(data.phone_code_hash);
+      setStep("otp");
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Unknown error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleVerify() {
+    if (!code.trim()) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch(`${API_BASE}/settings/telethon/verify`, {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify({ phone: phone.trim(), code: code.trim(), phone_code_hash: phoneCodeHash }),
+      });
+      if (!res.ok) throw new Error((await res.json()).detail || "Verification failed");
+      setConnected(true);
+      setStep("connected");
+      setPhone("");
+      setCode("");
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Unknown error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleDisconnect() {
+    setDisconnecting(true);
+    setError(null);
+    try {
+      await fetch(`${API_BASE}/settings/telethon/disconnect`, { method: "POST", headers: authHeaders() });
+      setConnected(false);
+      setStep("idle");
+    } catch {
+      setError("Failed to disconnect");
+    } finally {
+      setDisconnecting(false);
+    }
+  }
+
+  return (
+    <div className="space-y-6">
+      <SectionHeader
+        title="Telegram Operator Account"
+        description="Connects the operator's personal Telegram account so the CRM can read incoming messages and send replies on their behalf."
+      />
+
+      <SetupGuide
+        defaultOpen={!connected}
+        steps={[
+          <>This links a <strong>personal Telegram account</strong> (not a bot) — the operator's actual number that leads message in to.</>,
+          <>The CRM reads incoming messages from that account and automatically advances leads through your pipeline based on keywords.</>,
+          <>Enter the operator's phone number below in international format (e.g. <code className="font-mono bg-muted px-1 rounded text-xs">+971501234567</code>).</>,
+          <>Telegram will send a <strong>5-digit code</strong> to the Telegram app on that device — enter it to confirm the connection.</>,
+          <>The session is saved securely in the database. You only need to do this once — it survives server restarts automatically.</>,
+          <span className="text-amber-700">Note: if the account has 2-step verification enabled, contact support — 2FA via UI is not yet supported.</span>,
+        ]}
+      />
+
+      {connected === null ? (
+        <p className="text-sm text-muted-foreground">Loading…</p>
+      ) : step === "connected" ? (
+        <div className="rounded-lg border bg-green-50 border-green-200 p-4 flex items-center gap-3">
+          <div className="w-2 h-2 rounded-full bg-green-500 shrink-0" />
+          <div className="flex-1">
+            <p className="text-sm font-medium text-green-800">Operator account connected</p>
+            <p className="text-xs text-muted-foreground mt-0.5">Messages sent from the dashboard go through this account.</p>
+          </div>
+          <button
+            onClick={handleDisconnect}
+            disabled={disconnecting}
+            className="text-xs px-3 py-1.5 rounded-md text-red-600 hover:bg-red-50 border border-red-200 transition-colors shrink-0"
+          >
+            {disconnecting ? "Disconnecting…" : "Disconnect"}
+          </button>
+        </div>
+      ) : step === "idle" || step === "phone" ? (
+        <div className="rounded-lg border border-dashed bg-muted/30 p-4 space-y-3">
+          <p className="text-xs font-medium text-muted-foreground">Enter the operator's phone number</p>
+          <div className="flex gap-2">
+            <input
+              className="flex-1 text-sm border rounded-md px-3 py-1.5 bg-background"
+              placeholder="+971 50 123 4567"
+              value={phone}
+              onChange={e => setPhone(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && handleSendCode()}
+            />
+            <button
+              onClick={handleSendCode}
+              disabled={busy || !phone.trim()}
+              className="px-3 py-1.5 text-sm rounded-md bg-[hsl(199,86%,55%)] text-white hover:bg-[hsl(199,86%,45%)] disabled:opacity-50 transition-colors shrink-0"
+            >
+              {busy ? "Sending…" : "Send Code"}
+            </button>
+          </div>
+          {error && <p className="text-xs text-red-500">{error}</p>}
+        </div>
+      ) : (
+        <div className="rounded-lg border border-dashed bg-muted/30 p-4 space-y-3">
+          <p className="text-xs font-medium text-muted-foreground">
+            Enter the code Telegram sent to <span className="text-foreground font-mono">{phone}</span>
+          </p>
+          <div className="flex gap-2">
+            <input
+              className="flex-1 text-sm border rounded-md px-3 py-1.5 bg-background font-mono tracking-widest"
+              placeholder="12345"
+              value={code}
+              onChange={e => setCode(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && handleVerify()}
+              autoFocus
+            />
+            <button
+              onClick={handleVerify}
+              disabled={busy || !code.trim()}
+              className="px-3 py-1.5 text-sm rounded-md bg-[hsl(199,86%,55%)] text-white hover:bg-[hsl(199,86%,45%)] disabled:opacity-50 transition-colors shrink-0"
+            >
+              {busy ? "Verifying…" : "Verify"}
+            </button>
+          </div>
+          <button
+            onClick={() => { setStep("idle"); setError(null); setCode(""); }}
+            className="text-xs text-muted-foreground hover:underline"
+          >
+            Use a different number
+          </button>
+          {error && <p className="text-xs text-red-500">{error}</p>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---- Meta Integration tab ----
 
 function MetaTab() {
   const [status, setStatus] = useState<{ connected: boolean; ad_account_id: string | null; pixel_id: string | null } | null>(null);
-  const [accounts, setAccounts] = useState<{ id: string; name: string }[]>([]);
-  const [selectedAccount, setSelectedAccount] = useState("");
-  const [pixelId, setPixelId] = useState("");
+  const [form, setForm] = useState({ access_token: "", ad_account_id: "", pixel_id: "" });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
-  const hasLoadedAccounts = useRef(false);
 
   useEffect(() => {
-    const token = localStorage.getItem("crm_token");
-    fetch(`${API_BASE}/settings/meta/status`, { headers: { Authorization: `Bearer ${token}` } })
+    fetch(`${API_BASE}/settings/meta/status`, { headers: authHeaders() })
       .then(r => r.json())
       .then(setStatus)
       .catch(() => {});
-
-    // If returning from OAuth, load ad accounts
-    const params = new URLSearchParams(window.location.search);
-    if (params.get("meta_connected") === "1" && !hasLoadedAccounts.current) {
-      hasLoadedAccounts.current = true;
-      fetch(`${API_BASE}/settings/meta/accounts`, { headers: { Authorization: `Bearer ${token}` } })
-        .then(r => r.json())
-        .then(d => setAccounts(d.accounts || []))
-        .catch(() => {});
-      // Clean up URL
-      window.history.replaceState({}, "", window.location.pathname + "#meta");
-    }
   }, []);
 
-  async function handleConnect() {
-    const token = localStorage.getItem("crm_token");
-    const res = await fetch(`${API_BASE}/auth/meta/connect`, { headers: { Authorization: `Bearer ${token}` } });
-    const data = await res.json();
-    if (data.url) window.location.href = data.url;
-  }
-
-  async function handleSaveAccount() {
-    if (!selectedAccount || !pixelId.trim()) return;
+  async function handleSave() {
+    if (!form.access_token.trim() || !form.ad_account_id.trim() || !form.pixel_id.trim()) return;
     setSaving(true);
     setError(null);
+    setSuccess(false);
     try {
-      const token = localStorage.getItem("crm_token");
-      const res = await fetch(`${API_BASE}/settings/meta/account`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ ad_account_id: selectedAccount, pixel_id: pixelId.trim() }),
+      const res = await fetch(`${API_BASE}/settings/meta/credentials`, {
+        method: "PATCH",
+        headers: authHeaders(),
+        body: JSON.stringify(form),
       });
-      if (!res.ok) throw new Error((await res.json()).detail || "Failed");
+      if (!res.ok) throw new Error((await res.json()).detail || "Failed to save");
       setSuccess(true);
-      setStatus(s => s ? { ...s, ad_account_id: selectedAccount, pixel_id: pixelId.trim() } : s);
-    } catch (e: any) {
-      setError(e.message);
+      setStatus({ connected: true, ad_account_id: form.ad_account_id.trim(), pixel_id: form.pixel_id.trim() });
+      setForm({ access_token: "", ad_account_id: "", pixel_id: "" });
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Unknown error");
     } finally {
       setSaving(false);
     }
@@ -691,83 +1066,138 @@ function MetaTab() {
   return (
     <div className="space-y-6">
       <SectionHeader
-        title="Meta Integration"
-        description="Connect your Meta ad account to pull campaign analytics and fire conversion events automatically."
+        title="Meta Ads Integration"
+        description="Connect your Meta ad account to pull campaign analytics and fire conversion events when leads deposit."
       />
 
-      <div className="rounded-lg border bg-card p-4 space-y-4">
-        <div className="flex items-center justify-between">
+      <SetupGuide
+        defaultOpen={!status?.connected}
+        steps={[
+          // Access Token
+          <>
+            <span className="font-semibold text-foreground">Access Token —</span>{" "}
+            Go to{" "}
+            <a href="https://business.facebook.com" target="_blank" rel="noopener noreferrer" className="text-[hsl(199,86%,45%)] hover:underline inline-flex items-center gap-0.5">
+              business.facebook.com <ExternalLink className="w-3 h-3" />
+            </a>
+            {" "}→ <strong>Settings</strong> → <strong>Users</strong> → <strong>System Users</strong>.
+          </>,
+          <>Create or select a System User, then click <strong>Generate New Token</strong>. Choose your app and enable these permissions: <code className="font-mono bg-muted px-1 rounded text-xs">ads_read</code>, <code className="font-mono bg-muted px-1 rounded text-xs">ads_management</code>, <code className="font-mono bg-muted px-1 rounded text-xs">business_management</code>. Copy the token — it is only shown once.</>,
+          // Ad Account ID
+          <>
+            <span className="font-semibold text-foreground">Ad Account ID —</span>{" "}
+            Open{" "}
+            <a href="https://adsmanager.facebook.com" target="_blank" rel="noopener noreferrer" className="text-[hsl(199,86%,45%)] hover:underline inline-flex items-center gap-0.5">
+              Ads Manager <ExternalLink className="w-3 h-3" />
+            </a>. Your account ID appears at the top-left as <code className="font-mono bg-muted px-1 rounded text-xs">Act #1234567890</code>. Copy the number only — we add <code className="font-mono bg-muted px-1 rounded text-xs">act_</code> automatically.
+          </>,
+          // Pixel ID
+          <>
+            <span className="font-semibold text-foreground">Pixel ID —</span>{" "}
+            Go to{" "}
+            <a href="https://business.facebook.com/events_manager" target="_blank" rel="noopener noreferrer" className="text-[hsl(199,86%,45%)] hover:underline inline-flex items-center gap-0.5">
+              Events Manager <ExternalLink className="w-3 h-3" />
+            </a>
+            {" "}→ <strong>Data Sources</strong> → select your pixel. The Pixel ID is the number shown at the top of the settings panel.
+          </>,
+        ]}
+      />
+
+      {/* Status */}
+      {status && (
+        <div className={cn(
+          "rounded-lg border p-4 flex items-center gap-3",
+          status.connected ? "bg-green-50 border-green-200" : "bg-muted/30"
+        )}>
+          <div className={cn("w-2 h-2 rounded-full shrink-0", status.connected ? "bg-green-500" : "bg-gray-400")} />
           <div>
-            <p className="text-sm font-medium">Meta Ads Account</p>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              {status?.connected
-                ? status.ad_account_id
-                  ? `Connected — ${status.ad_account_id}`
-                  : "Token saved — select an ad account below"
-                : "Not connected"}
-            </p>
+            <p className="text-sm font-medium">{status.connected ? "Connected" : "Not connected"}</p>
+            {status.connected && (
+              <p className="text-xs text-muted-foreground mt-0.5">
+                {status.ad_account_id} · Pixel {status.pixel_id}
+              </p>
+            )}
           </div>
-          <button
-            onClick={handleConnect}
-            className="px-3 py-1.5 text-sm rounded-md bg-[#1877F2] text-white hover:bg-[#166FE5] transition-colors shrink-0"
-          >
-            {status?.connected ? "Reconnect" : "Connect Meta Account"}
-          </button>
-        </div>
-
-        {status?.pixel_id && (
-          <p className="text-xs text-muted-foreground">Pixel ID: {status.pixel_id}</p>
-        )}
-      </div>
-
-      {accounts.length > 0 && (
-        <div className="rounded-lg border border-dashed bg-muted/30 p-4 space-y-3">
-          <p className="text-xs font-medium text-muted-foreground">Select ad account &amp; pixel</p>
-          <select
-            value={selectedAccount}
-            onChange={e => setSelectedAccount(e.target.value)}
-            className="w-full text-sm border rounded-md px-3 py-2 bg-background"
-          >
-            <option value="">Select ad account…</option>
-            {accounts.map(a => (
-              <option key={a.id} value={a.id}>{a.name} ({a.id})</option>
-            ))}
-          </select>
-          <input
-            className="w-full text-sm border rounded-md px-3 py-1.5 bg-background"
-            placeholder="Pixel ID (e.g. 123456789)"
-            value={pixelId}
-            onChange={e => setPixelId(e.target.value)}
-          />
-          {error && <p className="text-xs text-red-500">{error}</p>}
-          {success && <p className="text-xs text-green-600">Saved successfully.</p>}
-          <button
-            onClick={handleSaveAccount}
-            disabled={saving || !selectedAccount || !pixelId.trim()}
-            className="px-3 py-1.5 text-sm rounded-md bg-[hsl(199,86%,55%)] text-white hover:bg-[hsl(199,86%,45%)] disabled:opacity-50 transition-colors"
-          >
-            {saving ? "Saving…" : "Save"}
-          </button>
         </div>
       )}
+
+      {/* Form */}
+      <div className="rounded-lg border border-dashed bg-muted/30 p-4 space-y-4">
+        <p className="text-xs font-medium text-muted-foreground">
+          {status?.connected ? "Update credentials" : "Enter your Meta credentials"}
+        </p>
+
+        <div>
+          <label className="text-xs text-muted-foreground mb-1 block">Access Token</label>
+          <input
+            type="password"
+            className="w-full text-sm border rounded-md px-3 py-1.5 bg-background font-mono"
+            placeholder="EAAxxxxxx…"
+            value={form.access_token}
+            onChange={e => setForm(f => ({ ...f, access_token: e.target.value }))}
+          />
+          <p className="text-xs text-muted-foreground/70 mt-1">
+            System User token from Meta Business Suite → Settings → System Users
+          </p>
+        </div>
+
+        <div className="flex gap-3">
+          <div className="flex-1">
+            <label className="text-xs text-muted-foreground mb-1 block">Ad Account ID</label>
+            <input
+              className="w-full text-sm border rounded-md px-3 py-1.5 bg-background"
+              placeholder="123456789"
+              value={form.ad_account_id}
+              onChange={e => setForm(f => ({ ...f, ad_account_id: e.target.value }))}
+            />
+            <p className="text-xs text-muted-foreground/70 mt-1">
+              Ads Manager top-left — number only, no <code className="font-mono text-xs">act_</code>
+            </p>
+          </div>
+          <div className="flex-1">
+            <label className="text-xs text-muted-foreground mb-1 block">Pixel ID</label>
+            <input
+              className="w-full text-sm border rounded-md px-3 py-1.5 bg-background"
+              placeholder="123456789"
+              value={form.pixel_id}
+              onChange={e => setForm(f => ({ ...f, pixel_id: e.target.value }))}
+            />
+            <p className="text-xs text-muted-foreground/70 mt-1">
+              Events Manager → Data Sources → your pixel
+            </p>
+          </div>
+        </div>
+
+        {error && <p className="text-xs text-red-500">{error}</p>}
+        {success && <p className="text-xs text-green-600">Credentials saved successfully.</p>}
+        <button
+          onClick={handleSave}
+          disabled={saving || !form.access_token.trim() || !form.ad_account_id.trim() || !form.pixel_id.trim()}
+          className="px-3 py-1.5 text-sm rounded-md bg-[hsl(199,86%,55%)] text-white hover:bg-[hsl(199,86%,45%)] disabled:opacity-50 transition-colors"
+        >
+          {saving ? "Saving…" : "Save Credentials"}
+        </button>
+      </div>
     </div>
   );
 }
 
 // ---- Main page ----
 
-type Section = "pipeline" | "team" | "meta";
+type Section = "pipeline" | "team" | "bot" | "telegram" | "meta";
 type PipelineTab = "keywords" | "followups" | "quickreplies" | "stagelabels";
 
-const SECTIONS: { id: Section; label: string; description: string }[] = [
-  { id: "pipeline", label: "Pipeline", description: "Keywords, follow-ups, quick replies, and stage labels" },
-  { id: "team",     label: "Team",     description: "Manage operator and manager accounts" },
-  { id: "meta",     label: "Meta Ads", description: "Connect your Meta ad account" },
+const SECTIONS: { id: Section; label: string }[] = [
+  { id: "pipeline", label: "Pipeline"  },
+  { id: "team",     label: "Team"      },
+  { id: "bot",      label: "Bot"       },
+  { id: "telegram", label: "Telegram"  },
+  { id: "meta",     label: "Meta Ads"  },
 ];
 
 const PIPELINE_TABS: { id: PipelineTab; label: string }[] = [
-  { id: "keywords",     label: "Keywords" },
-  { id: "followups",    label: "Follow-ups" },
+  { id: "keywords",     label: "Keywords"     },
+  { id: "followups",    label: "Follow-ups"   },
   { id: "quickreplies", label: "Quick Replies" },
   { id: "stagelabels",  label: "Stage Labels" },
 ];
@@ -839,10 +1269,26 @@ export default function SettingsPage() {
             </>
           )}
 
+          {section === "bot" && (
+            <>
+              <h2 className="text-lg font-semibold mb-0.5">Telegram Bot</h2>
+              <p className="text-sm text-muted-foreground mb-6">Connect your Telegram bot for lead intake and automated messaging.</p>
+              <BotTab />
+            </>
+          )}
+
+          {section === "telegram" && (
+            <>
+              <h2 className="text-lg font-semibold mb-0.5">Telegram Operator Account</h2>
+              <p className="text-sm text-muted-foreground mb-6">Connect the operator's personal account so the CRM can send and read messages on their behalf.</p>
+              <TelegramTab />
+            </>
+          )}
+
           {section === "meta" && (
             <>
               <h2 className="text-lg font-semibold mb-0.5">Meta Ads</h2>
-              <p className="text-sm text-muted-foreground mb-6">Connect your Meta ad account for campaign analytics and CAPI.</p>
+              <p className="text-sm text-muted-foreground mb-6">Connect your Meta ad account for campaign analytics and conversion tracking.</p>
               <MetaTab />
             </>
           )}

@@ -8,6 +8,7 @@ export interface AuthUser {
   username: string;
   role: Role;
   token: string;
+  workspace_id?: number;
 }
 
 const TOKEN_KEY = "crm_token";
@@ -15,7 +16,11 @@ const USER_KEY = "crm_user";
 
 export function saveAuth(user: AuthUser): void {
   localStorage.setItem(TOKEN_KEY, user.token);
-  localStorage.setItem(USER_KEY, JSON.stringify({ username: user.username, role: user.role }));
+  localStorage.setItem(USER_KEY, JSON.stringify({
+    username: user.username,
+    role: user.role,
+    workspace_id: user.workspace_id ?? 1,
+  }));
 }
 
 export function clearAuth(): void {
@@ -27,10 +32,13 @@ export function getToken(): string | null {
   return localStorage.getItem(TOKEN_KEY);
 }
 
-export function getStoredUser(): { username: string; role: Role } | null {
+export function getStoredUser(): { username: string; role: Role; workspace_id: number } | null {
   const raw = localStorage.getItem(USER_KEY);
   if (!raw) return null;
-  try { return JSON.parse(raw); } catch { return null; }
+  try {
+    const parsed = JSON.parse(raw);
+    return { workspace_id: 1, ...parsed };
+  } catch { return null; }
 }
 
 export function canManageAffiliates(role: Role): boolean {
@@ -60,7 +68,7 @@ export async function loginWithTelegram(data: TelegramAuthData): Promise<AuthUse
   });
   const json = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(json?.detail || "Telegram login failed");
-  const user: AuthUser = { username: json.username, role: json.role, token: json.access_token };
+  const user: AuthUser = { username: json.username, role: json.role, token: json.access_token, workspace_id: json.workspace_id ?? 1 };
   saveAuth(user);
   return user;
 }
@@ -78,7 +86,22 @@ export async function login(username: string, password: string): Promise<AuthUse
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data?.detail || "Invalid credentials");
-  const user: AuthUser = { username: data.username, role: data.role, token: data.access_token };
+  const user: AuthUser = { username: data.username, role: data.role, token: data.access_token, workspace_id: data.workspace_id ?? 1 };
   saveAuth(user);
   return user;
+}
+
+export async function switchWorkspace(workspaceId: number): Promise<{ workspace_name: string }> {
+  const token = getToken();
+  const res = await fetch(`${API_BASE}/auth/switch-workspace/${workspaceId}`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data?.detail || "Failed to switch workspace");
+  const stored = getStoredUser();
+  if (stored) {
+    saveAuth({ username: stored.username, role: stored.role, token: data.access_token, workspace_id: workspaceId });
+  }
+  return { workspace_name: data.workspace_name };
 }

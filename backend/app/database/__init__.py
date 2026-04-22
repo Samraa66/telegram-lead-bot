@@ -137,6 +137,7 @@ def _ensure_columns() -> None:
             ("first_name", "TEXT"),
             ("last_name", "TEXT"),
             ("activity_status", "TEXT"),
+            ("workspace_id", "INTEGER DEFAULT 1"),
         ]
     else:
         contacts_needed = [
@@ -152,6 +153,7 @@ def _ensure_columns() -> None:
             ("first_name", "VARCHAR(255)"),
             ("last_name", "VARCHAR(255)"),
             ("activity_status", "VARCHAR(20)"),
+            ("workspace_id", "INTEGER DEFAULT 1"),
         ]
 
     messages_needed = [
@@ -184,10 +186,18 @@ def _ensure_columns() -> None:
             ("meta_access_token", "TEXT"),
             ("meta_ad_account_id", "TEXT"),
             ("meta_pixel_id", "TEXT"),
+            ("bot_token", "TEXT"),
+            ("webhook_secret", "TEXT"),
+            ("telethon_session", "TEXT"),
         ]
         for col, ddl in ws_needed:
             if col not in existing_ws:
                 _add_column("workspaces", col, ddl)
+
+    if _table_exists("campaigns"):
+        existing_campaigns = _existing_columns("campaigns")
+        if "workspace_id" not in existing_campaigns:
+            _add_column("campaigns", "workspace_id", "INTEGER DEFAULT 1")
 
     if _table_exists("team_members"):
         existing_team = _existing_columns("team_members")
@@ -320,6 +330,32 @@ _QUICK_REPLY_SEEDS: list[tuple[int, str, str]] = [
 ]
 
 
+def seed_workspace_defaults(workspace_id: int, db) -> None:
+    """
+    Seed keywords, stage labels, quick replies, and follow-up templates for a workspace.
+    Safe to call on existing workspaces — skips tables that already have data.
+    """
+    if db.query(StageKeyword).filter(StageKeyword.workspace_id == workspace_id).count() == 0:
+        for kw, stage in _KEYWORD_SEEDS:
+            db.add(StageKeyword(workspace_id=workspace_id, keyword=kw, target_stage=stage, is_active=True))
+        db.commit()
+
+    if db.query(StageLabel).filter(StageLabel.workspace_id == workspace_id).count() == 0:
+        for stage_num, label in _STAGE_LABEL_SEEDS:
+            db.add(StageLabel(workspace_id=workspace_id, stage_num=stage_num, label=label))
+        db.commit()
+
+    if db.query(QuickReply).filter(QuickReply.workspace_id == workspace_id).count() == 0:
+        for i, (stage_num, label, text) in enumerate(_QUICK_REPLY_SEEDS):
+            db.add(QuickReply(workspace_id=workspace_id, stage_num=stage_num, label=label, text=text, sort_order=i))
+        db.commit()
+
+    if db.query(FollowUpTemplate).filter(FollowUpTemplate.workspace_id == workspace_id).count() == 0:
+        for stage, seq, text_body in _TEMPLATE_SEEDS:
+            db.add(FollowUpTemplate(workspace_id=workspace_id, stage=stage, sequence_num=seq, message_text=text_body))
+        db.commit()
+
+
 def _seed_workspace() -> None:
     """Create workspace id=1 if it does not exist."""
     db = SessionLocal()
@@ -333,25 +369,14 @@ def _seed_workspace() -> None:
 
 
 def _seed_settings() -> None:
-    """Seed keywords, stage labels, and quick replies for workspace 1 if tables are empty."""
+    """Seed default settings for workspace 1 if tables are empty."""
     db = SessionLocal()
     try:
-        if db.query(StageKeyword).filter(StageKeyword.workspace_id == 1).count() == 0:
-            for kw, stage in _KEYWORD_SEEDS:
-                db.add(StageKeyword(workspace_id=1, keyword=kw, target_stage=stage, is_active=True))
-            db.commit()
-
-        if db.query(StageLabel).filter(StageLabel.workspace_id == 1).count() == 0:
-            for stage_num, label in _STAGE_LABEL_SEEDS:
-                db.add(StageLabel(workspace_id=1, stage_num=stage_num, label=label))
-            db.commit()
-
-        if db.query(QuickReply).filter(QuickReply.workspace_id == 1).count() == 0:
-            for i, (stage_num, label, text) in enumerate(_QUICK_REPLY_SEEDS):
-                db.add(QuickReply(workspace_id=1, stage_num=stage_num, label=label, text=text, sort_order=i))
-            db.commit()
+        seed_workspace_defaults(1, db)
     finally:
         db.close()
+
+
 
 
 # ---------------------------------------------------------------------------

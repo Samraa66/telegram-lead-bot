@@ -1,6 +1,6 @@
 import { ChevronRight, AlertTriangle, StickyNote, Star, VolumeX } from "lucide-react";
 import { useState, useEffect } from "react";
-import { Lead, Stage, STAGES, STAGE_COLORS, STAGE_TEXT_COLORS, BUSINESS_OWNER_NAME, formatTimeInStage, classificationLabel, classificationColor } from "../../data/crmData";
+import { Lead, Stage, STAGES, STAGE_COLORS, STAGE_TEXT_COLORS, ESCALATION_CONTACT_NAME, formatTimeInStage, classificationLabel, classificationColor } from "../../data/crmData";
 import { Button } from "../ui/button";
 import { Textarea } from "../ui/textarea";
 import { cn } from "../../lib/utils";
@@ -115,7 +115,7 @@ export function LeadDetails({ lead, onUpdateLead, onSaveNotes, onEscalate, onTog
             className="w-full text-xs text-destructive hover:text-destructive rounded-xl"
           >
             <AlertTriangle className="h-3 w-3 mr-1" />
-            {escalated ? `Escalated to ${BUSINESS_OWNER_NAME} ✓` : `Escalate to ${BUSINESS_OWNER_NAME}`}
+            {escalated ? `Escalated to ${ESCALATION_CONTACT_NAME} ✓` : `Escalate to ${ESCALATION_CONTACT_NAME}`}
           </Button>
           {lead.classification !== "noise" && (
             <Button

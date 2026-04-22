@@ -147,10 +147,14 @@ def cancel_follow_ups(contact_id: int) -> None:
 # Scheduler job
 # ---------------------------------------------------------------------------
 
-def _get_template_text(db, stage: int, seq_num: int) -> Optional[str]:
+def _get_template_text(db, stage: int, seq_num: int, workspace_id: int = 1) -> Optional[str]:
     tmpl = (
         db.query(FollowUpTemplate)
-        .filter(FollowUpTemplate.stage == stage, FollowUpTemplate.sequence_num == seq_num)
+        .filter(
+            FollowUpTemplate.workspace_id == workspace_id,
+            FollowUpTemplate.stage == stage,
+            FollowUpTemplate.sequence_num == seq_num,
+        )
         .first()
     )
     return tmpl.message_text if tmpl else None
@@ -279,11 +283,12 @@ def _fire_pending_follow_ups() -> None:
                 db.commit()
                 continue
 
-            text = _get_template_text(db, fup.stage, fup.sequence_num)
+            ws_id: int = getattr(contact, "workspace_id", 1) or 1
+            text = _get_template_text(db, fup.stage, fup.sequence_num, ws_id)
             if text is None:
                 logger.warning(
-                    "No template for stage=%s seq=%s — skipping follow-up id=%s",
-                    fup.stage, fup.sequence_num, fup.id,
+                    "No template for stage=%s seq=%s ws=%s — skipping follow-up id=%s",
+                    fup.stage, fup.sequence_num, ws_id, fup.id,
                 )
                 continue
 
@@ -294,7 +299,11 @@ def _fire_pending_follow_ups() -> None:
             try:
                 from app.services.telethon_client import send_as_operator_sync, get_client
                 from app.bot import send_message as bot_send
-                sent = send_as_operator_sync(contact.id, text) if get_client() else bot_send(contact.id, text)
+                sent = (
+                    send_as_operator_sync(contact.id, text, ws_id)
+                    if get_client(ws_id)
+                    else bot_send(contact.id, text, ws_id)
+                )
             except Exception as e:
                 err_name = type(e).__name__
                 if "PeerFlood" in err_name or "FloodWait" in err_name:

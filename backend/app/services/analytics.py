@@ -1,8 +1,9 @@
 """
 Analytics queries for lead and message metrics.
 
-Provides data for the /stats/* API endpoints: today counts, by-source breakdown,
-and messages per day. Uses the Contact model (table: contacts).
+All functions accept workspace_id=1 to scope data per tenant.
+AdCampaign / AdCreative tables don't carry workspace_id yet — those queries
+are unscoped for now and will be wired up once the second workspace goes live.
 """
 
 from datetime import date as date_type, datetime, timedelta
@@ -13,43 +14,46 @@ from sqlalchemy.orm import Session
 from app.database.models import AdCampaign, AdCreative, Affiliate, Contact, Message, StageHistory
 
 
-def get_today_stats(db: Session) -> dict:
-    """Number of contacts first seen today and number of inbound messages today."""
+def get_today_stats(db: Session, workspace_id: int = 1) -> dict:
     today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
-    users_today = db.query(Contact).filter(Contact.first_seen >= today_start).count()
-    messages_today = (
-        db.query(Message)
-        .filter(Message.timestamp >= today_start)
-        .filter((Message.direction == "inbound") | (Message.direction.is_(None)))
+    users_today = (
+        db.query(Contact)
+        .filter(Contact.workspace_id == workspace_id, Contact.first_seen >= today_start)
         .count()
     )
-    return {
-        "users_today": users_today,
-        "messages_today": messages_today,
-    }
+    messages_today = (
+        db.query(Message)
+        .join(Contact, Contact.id == Message.user_id)
+        .filter(
+            Contact.workspace_id == workspace_id,
+            Message.timestamp >= today_start,
+            (Message.direction == "inbound") | (Message.direction.is_(None)),
+        )
+        .count()
+    )
+    return {"users_today": users_today, "messages_today": messages_today}
 
 
-def get_stats_by_source(db: Session) -> list:
-    """Lead count grouped by campaign source (from /start parameter)."""
+def get_stats_by_source(db: Session, workspace_id: int = 1) -> list:
     rows = (
         db.query(Contact.source, func.count(Contact.id).label("count"))
+        .filter(Contact.workspace_id == workspace_id)
         .group_by(Contact.source)
         .all()
     )
-    return [
-        {"source": (source if source else "unknown"), "count": count}
-        for source, count in rows
-    ]
+    return [{"source": (source or "unknown"), "count": count} for source, count in rows]
 
 
-def get_messages_per_day(db: Session, days: int = 30) -> list:
-    """Count of inbound messages grouped by day (UTC). Returns up to `days` recent days."""
-    since = datetime.utcnow() - timedelta(days=days)
-    since = since.replace(hour=0, minute=0, second=0, microsecond=0)
+def get_messages_per_day(db: Session, workspace_id: int = 1, days: int = 30) -> list:
+    since = (datetime.utcnow() - timedelta(days=days)).replace(hour=0, minute=0, second=0, microsecond=0)
     rows = (
         db.query(func.date(Message.timestamp).label("day"), func.count(Message.id).label("count"))
-        .filter(Message.timestamp >= since)
-        .filter((Message.direction == "inbound") | (Message.direction.is_(None)))
+        .join(Contact, Contact.id == Message.user_id)
+        .filter(
+            Contact.workspace_id == workspace_id,
+            Message.timestamp >= since,
+            (Message.direction == "inbound") | (Message.direction.is_(None)),
+        )
         .group_by(func.date(Message.timestamp))
         .order_by(func.date(Message.timestamp))
         .all()
@@ -76,7 +80,6 @@ DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
 
 def _date_filters(q, timestamp_col, from_dt: Optional[datetime], to_dt: Optional[datetime]):
-    """Apply optional from/to date filters to a query on a timestamp column."""
     if from_dt:
         q = q.filter(timestamp_col >= from_dt)
     if to_dt:
@@ -88,24 +91,21 @@ def _entries_at_stage(
     db: Session,
     stage: int,
     total_non_noise: int,
+    workspace_id: int = 1,
     from_dt: Optional[datetime] = None,
     to_dt: Optional[datetime] = None,
 ) -> int:
-    """
-    Count of non-noise contacts that entered a given stage within the date range.
-    Stage 1: contacts first_seen in range.
-    Stage 2-8: stage_history rows with to_stage = N and moved_at in range.
-    """
+    ws_filter = Contact.workspace_id == workspace_id
     if stage == 1:
         if from_dt is None and to_dt is None:
             return total_non_noise
-        q = db.query(func.count(Contact.id)).filter(Contact.classification != "noise")
+        q = db.query(func.count(Contact.id)).filter(ws_filter, Contact.classification != "noise")
         q = _date_filters(q, Contact.first_seen, from_dt, to_dt)
         return q.scalar() or 0
     q = (
         db.query(func.count(func.distinct(StageHistory.contact_id)))
         .join(Contact, Contact.id == StageHistory.contact_id)
-        .filter(Contact.classification != "noise", StageHistory.to_stage == stage)
+        .filter(ws_filter, Contact.classification != "noise", StageHistory.to_stage == stage)
     )
     q = _date_filters(q, StageHistory.moved_at, from_dt, to_dt)
     return q.scalar() or 0
@@ -113,42 +113,34 @@ def _entries_at_stage(
 
 def get_overview(
     db: Session,
+    workspace_id: int = 1,
     from_dt: Optional[datetime] = None,
     to_dt: Optional[datetime] = None,
 ) -> dict:
-    """
-    Header cards filtered to the selected date range:
-    - total leads entered in range
-    - new today / this week (always relative to now, ignores range)
-    - total deposited in range
-    - overall 1→7 conversion rate
-    - average days to deposit
-    """
     now = datetime.utcnow()
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     week_start = today_start - timedelta(days=7)
+    ws_filter = Contact.workspace_id == workspace_id
 
-    # Total non-noise (unfiltered, for relative context)
-    total_non_noise = db.query(Contact).filter(Contact.classification != "noise").count()
+    total_non_noise = db.query(Contact).filter(ws_filter, Contact.classification != "noise").count()
 
     new_today = (
         db.query(Contact)
-        .filter(Contact.classification != "noise", Contact.first_seen >= today_start)
+        .filter(ws_filter, Contact.classification != "noise", Contact.first_seen >= today_start)
         .count()
     )
     new_this_week = (
         db.query(Contact)
-        .filter(Contact.classification != "noise", Contact.first_seen >= week_start)
+        .filter(ws_filter, Contact.classification != "noise", Contact.first_seen >= week_start)
         .count()
     )
 
-    # Range-scoped entries
-    stage1_in_range = _entries_at_stage(db, 1, total_non_noise, from_dt, to_dt)
-    # Exclude synthetic vip_name_detected promotions from the deposit count
+    stage1_in_range = _entries_at_stage(db, 1, total_non_noise, workspace_id, from_dt, to_dt)
     stage7_q = (
         db.query(func.count(func.distinct(StageHistory.contact_id)))
         .join(Contact, Contact.id == StageHistory.contact_id)
         .filter(
+            ws_filter,
             Contact.classification != "noise",
             StageHistory.to_stage == 7,
             StageHistory.trigger_keyword != "vip_name_detected",
@@ -164,6 +156,7 @@ def get_overview(
             db.query(StageHistory.moved_at, Contact.first_seen)
             .join(Contact, Contact.id == StageHistory.contact_id)
             .filter(
+                ws_filter,
                 Contact.classification != "noise",
                 StageHistory.to_stage == 7,
                 StageHistory.trigger_keyword != "vip_name_detected",
@@ -191,23 +184,19 @@ def _cohort_conversion(
     db: Session,
     from_stage: int,
     to_stage: int,
+    workspace_id: int,
     from_dt: Optional[datetime],
     to_dt: Optional[datetime],
 ) -> tuple[int, int, Optional[float]]:
-    """
-    Cohort conversion: find contacts who entered from_stage within the date window,
-    then count how many of that same cohort have ever reached to_stage (at any time).
-    Rate = converted / cohort_size * 100. Can never exceed 100%.
-    """
-    # Build cohort: contacts who entered from_stage in the date window
+    ws_filter = Contact.workspace_id == workspace_id
     if from_stage == 1:
-        q = db.query(Contact.id).filter(Contact.classification != "noise")
+        q = db.query(Contact.id).filter(ws_filter, Contact.classification != "noise")
         q = _date_filters(q, Contact.first_seen, from_dt, to_dt)
     else:
         q = (
             db.query(func.distinct(StageHistory.contact_id).label("contact_id"))
             .join(Contact, Contact.id == StageHistory.contact_id)
-            .filter(Contact.classification != "noise", StageHistory.to_stage == from_stage)
+            .filter(ws_filter, Contact.classification != "noise", StageHistory.to_stage == from_stage)
         )
         q = _date_filters(q, StageHistory.moved_at, from_dt, to_dt)
 
@@ -216,9 +205,6 @@ def _cohort_conversion(
     if cohort_size == 0:
         return 0, 0, None
 
-    # Of that cohort, how many have ever reached to_stage via real pipeline progression?
-    # Exclude "vip_name_detected" entries — those are synthetic bulk-migration records,
-    # not organic conversions through the sales pipeline.
     converted = (
         db.query(func.count(func.distinct(StageHistory.contact_id)))
         .filter(
@@ -235,20 +221,15 @@ def _cohort_conversion(
 
 def get_conversion_metrics(
     db: Session,
+    workspace_id: int = 1,
     from_dt: Optional[datetime] = None,
     to_dt: Optional[datetime] = None,
 ) -> list:
-    """
-    True cohort conversion metrics.
-    from_entries = contacts who entered from_stage in the selected window.
-    to_entries   = of that cohort, how many ever reached to_stage.
-    Rate can never exceed 100%.
-    """
-    f1, t2, r12 = _cohort_conversion(db, 1, 2, from_dt, to_dt)
-    f2, t4, r24 = _cohort_conversion(db, 2, 4, from_dt, to_dt)
-    f4, t5, r45 = _cohort_conversion(db, 4, 5, from_dt, to_dt)
-    f5, t7, r57 = _cohort_conversion(db, 5, 7, from_dt, to_dt)
-    f1b, t7b, r17 = _cohort_conversion(db, 1, 7, from_dt, to_dt)
+    f1, t2, r12 = _cohort_conversion(db, 1, 2, workspace_id, from_dt, to_dt)
+    f2, t4, r24 = _cohort_conversion(db, 2, 4, workspace_id, from_dt, to_dt)
+    f4, t5, r45 = _cohort_conversion(db, 4, 5, workspace_id, from_dt, to_dt)
+    f5, t7, r57 = _cohort_conversion(db, 5, 7, workspace_id, from_dt, to_dt)
+    f1b, t7b, r17 = _cohort_conversion(db, 1, 7, workspace_id, from_dt, to_dt)
 
     return [
         {"label": "Stage 1 → 2", "from_entries": f1,  "to_entries": t2,  "rate": r12, "target": 40},
@@ -259,11 +240,10 @@ def get_conversion_metrics(
     ]
 
 
-def get_stage_distribution(db: Session) -> list:
-    """Current contact count at each stage (non-noise). Not date-filtered — reflects live state."""
+def get_stage_distribution(db: Session, workspace_id: int = 1) -> list:
     current_rows = (
         db.query(Contact.current_stage, func.count(Contact.id).label("cnt"))
-        .filter(Contact.classification != "noise", Contact.current_stage.isnot(None))
+        .filter(Contact.workspace_id == workspace_id, Contact.classification != "noise", Contact.current_stage.isnot(None))
         .group_by(Contact.current_stage)
         .all()
     )
@@ -276,12 +256,18 @@ def get_stage_distribution(db: Session) -> list:
 
 def get_hourly_heatmap(
     db: Session,
+    workspace_id: int = 1,
     from_dt: Optional[datetime] = None,
     to_dt: Optional[datetime] = None,
 ) -> list:
-    """Inbound message count by hour of day (Dubai time), optionally date-filtered."""
-    q = db.query(Message.timestamp).filter(
-        Message.direction == "inbound", Message.timestamp.isnot(None)
+    q = (
+        db.query(Message.timestamp)
+        .join(Contact, Contact.id == Message.user_id)
+        .filter(
+            Contact.workspace_id == workspace_id,
+            Message.direction == "inbound",
+            Message.timestamp.isnot(None),
+        )
     )
     q = _date_filters(q, Message.timestamp, from_dt, to_dt)
     rows = q.all()
@@ -294,19 +280,21 @@ def get_hourly_heatmap(
 
 def get_day_of_week(
     db: Session,
+    workspace_id: int = 1,
     from_dt: Optional[datetime] = None,
     to_dt: Optional[datetime] = None,
 ) -> list:
-    """New leads and deposits by day of week (Dubai time), optionally date-filtered."""
-    lq = db.query(Contact.first_seen).filter(
-        Contact.classification != "noise", Contact.first_seen.isnot(None)
+    ws_filter = Contact.workspace_id == workspace_id
+    lq = (
+        db.query(Contact.first_seen)
+        .filter(ws_filter, Contact.classification != "noise", Contact.first_seen.isnot(None))
     )
     lq = _date_filters(lq, Contact.first_seen, from_dt, to_dt)
 
     dq = (
         db.query(StageHistory.moved_at)
         .join(Contact, Contact.id == StageHistory.contact_id)
-        .filter(Contact.classification != "noise", StageHistory.to_stage == 7, StageHistory.moved_at.isnot(None))
+        .filter(ws_filter, Contact.classification != "noise", StageHistory.to_stage == 7, StageHistory.moved_at.isnot(None))
     )
     dq = _date_filters(dq, StageHistory.moved_at, from_dt, to_dt)
 
@@ -324,16 +312,16 @@ def get_day_of_week(
 
 def get_leads_over_time(
     db: Session,
+    workspace_id: int = 1,
     from_dt: Optional[datetime] = None,
     to_dt: Optional[datetime] = None,
     days: int = 30,
 ) -> list:
-    """New leads per day. Uses from_dt/to_dt if provided, otherwise last N days."""
     if from_dt is None:
         from_dt = (datetime.utcnow() - timedelta(days=days)).replace(hour=0, minute=0, second=0, microsecond=0)
     q = (
         db.query(func.date(Contact.first_seen).label("day"), func.count(Contact.id).label("count"))
-        .filter(Contact.classification != "noise", Contact.first_seen >= from_dt)
+        .filter(Contact.workspace_id == workspace_id, Contact.classification != "noise", Contact.first_seen >= from_dt)
     )
     if to_dt:
         q = q.filter(Contact.first_seen <= to_dt)
@@ -347,13 +335,10 @@ def get_leads_over_time(
 
 def get_campaign_performance(
     db: Session,
+    workspace_id: int = 1,
     from_dt: Optional[datetime] = None,
     to_dt: Optional[datetime] = None,
 ) -> list:
-    """
-    Aggregate ad_campaigns rows by campaign, optionally scoped to a date range.
-    Returns spend, impressions, clicks, leads, deposits, CPL, CPD per campaign.
-    """
     q = db.query(AdCampaign)
     if from_dt:
         q = q.filter(AdCampaign.date >= from_dt.date())
@@ -367,11 +352,7 @@ def get_campaign_performance(
             campaigns[row.campaign_id] = {
                 "campaign_id": row.campaign_id,
                 "campaign_name": row.campaign_name or row.campaign_id,
-                "spend": 0.0,
-                "impressions": 0,
-                "clicks": 0,
-                "leads": 0,
-                "deposits": 0,
+                "spend": 0.0, "impressions": 0, "clicks": 0, "leads": 0, "deposits": 0,
             }
         c = campaigns[row.campaign_id]
         c["spend"] += row.spend
@@ -384,21 +365,12 @@ def get_campaign_performance(
     for c in campaigns.values():
         cpl = round(c["spend"] / c["leads"], 2) if c["leads"] > 0 else None
         cpd = round(c["spend"] / c["deposits"], 2) if c["deposits"] > 0 else None
-        result.append({
-            **c,
-            "spend": round(c["spend"], 2),
-            "cpl": cpl,
-            "cpd": cpd,
-        })
+        result.append({**c, "spend": round(c["spend"], 2), "cpl": cpl, "cpd": cpd})
 
     return sorted(result, key=lambda x: x["spend"], reverse=True)
 
 
-def get_underperforming_campaigns(db: Session) -> list:
-    """
-    Flag campaigns where cost-per-deposit (CPD) exceeds 200 EUR
-    for 3 or more consecutive days in the last 30 days.
-    """
+def get_underperforming_campaigns(db: Session, workspace_id: int = 1) -> list:
     cutoff = date_type.today() - timedelta(days=30)
     rows = (
         db.query(AdCampaign)
@@ -407,7 +379,6 @@ def get_underperforming_campaigns(db: Session) -> list:
         .all()
     )
 
-    # Group daily rows by campaign
     by_campaign: dict[str, list] = {}
     for row in rows:
         by_campaign.setdefault(row.campaign_id, []).append(row)
@@ -424,7 +395,6 @@ def get_underperforming_campaigns(db: Session) -> list:
             else:
                 consecutive = 0
                 worst_cpd = 0.0
-
             if consecutive >= 3:
                 flagged.append({
                     "campaign_id": campaign_id,
@@ -437,13 +407,7 @@ def get_underperforming_campaigns(db: Session) -> list:
     return flagged
 
 
-def get_campaign_alerts(db: Session) -> list:
-    """
-    Returns active alerts based on yesterday's campaign data:
-    - Daily spend exceeds ALERT_DAILY_SPEND_THRESHOLD
-    - CPL exceeds ALERT_CPL_THRESHOLD (€3)
-    - CPD exceeds ALERT_CPD_THRESHOLD (€150)
-    """
+def get_campaign_alerts(db: Session, workspace_id: int = 1) -> list:
     from app.config import ALERT_DAILY_SPEND_THRESHOLD, ALERT_CPL_THRESHOLD, ALERT_CPD_THRESHOLD
 
     yesterday = date_type.today() - timedelta(days=1)
@@ -457,30 +421,21 @@ def get_campaign_alerts(db: Session) -> list:
 
         if row.spend > ALERT_DAILY_SPEND_THRESHOLD:
             alerts.append({
-                "type": "spend",
-                "severity": "warning",
-                "campaign_name": name,
+                "type": "spend", "severity": "warning", "campaign_name": name,
                 "message": f"Daily spend €{row.spend:.2f} exceeds threshold €{ALERT_DAILY_SPEND_THRESHOLD:.0f}",
-                "value": round(row.spend, 2),
-                "threshold": ALERT_DAILY_SPEND_THRESHOLD,
+                "value": round(row.spend, 2), "threshold": ALERT_DAILY_SPEND_THRESHOLD,
             })
         if cpl is not None and cpl > ALERT_CPL_THRESHOLD:
             alerts.append({
-                "type": "cpl",
-                "severity": "warning",
-                "campaign_name": name,
+                "type": "cpl", "severity": "warning", "campaign_name": name,
                 "message": f"CPL €{cpl:.2f} exceeds threshold €{ALERT_CPL_THRESHOLD:.0f}",
-                "value": round(cpl, 2),
-                "threshold": ALERT_CPL_THRESHOLD,
+                "value": round(cpl, 2), "threshold": ALERT_CPL_THRESHOLD,
             })
         if cpd is not None and cpd > ALERT_CPD_THRESHOLD:
             alerts.append({
-                "type": "cpd",
-                "severity": "critical",
-                "campaign_name": name,
+                "type": "cpd", "severity": "critical", "campaign_name": name,
                 "message": f"CPD €{cpd:.2f} exceeds threshold €{ALERT_CPD_THRESHOLD:.0f}",
-                "value": round(cpd, 2),
-                "threshold": ALERT_CPD_THRESHOLD,
+                "value": round(cpd, 2), "threshold": ALERT_CPD_THRESHOLD,
             })
 
     return alerts
@@ -488,13 +443,10 @@ def get_campaign_alerts(db: Session) -> list:
 
 def get_best_performing_creatives(
     db: Session,
+    workspace_id: int = 1,
     from_dt: Optional[datetime] = None,
     to_dt: Optional[datetime] = None,
 ) -> list:
-    """
-    Aggregate AdCreative rows by ad_id and return sorted by CPD ascending (best first).
-    Creatives with no deposits are listed last.
-    """
     q = db.query(AdCreative)
     if from_dt:
         q = q.filter(AdCreative.date >= from_dt.date())
@@ -506,15 +458,9 @@ def get_best_performing_creatives(
     for row in rows:
         if row.ad_id not in creatives:
             creatives[row.ad_id] = {
-                "ad_id": row.ad_id,
-                "ad_name": row.ad_name or row.ad_id,
-                "campaign_id": row.campaign_id,
-                "campaign_name": row.campaign_name or row.campaign_id,
-                "spend": 0.0,
-                "impressions": 0,
-                "clicks": 0,
-                "leads": 0,
-                "deposits": 0,
+                "ad_id": row.ad_id, "ad_name": row.ad_name or row.ad_id,
+                "campaign_id": row.campaign_id, "campaign_name": row.campaign_name or row.campaign_id,
+                "spend": 0.0, "impressions": 0, "clicks": 0, "leads": 0, "deposits": 0,
             }
         c = creatives[row.ad_id]
         c["spend"] += row.spend
@@ -529,7 +475,6 @@ def get_best_performing_creatives(
         cpd = round(c["spend"] / c["deposits"], 2) if c["deposits"] > 0 else None
         result.append({**c, "spend": round(c["spend"], 2), "cpl": cpl, "cpd": cpd})
 
-    # Sort: creatives with deposits first (by CPD asc), then no-deposit creatives by spend desc
     return sorted(result, key=lambda x: (x["cpd"] is None, x["cpd"] or 0, -x["spend"]))
 
 
@@ -537,26 +482,34 @@ def get_best_performing_creatives(
 # Phase 6: Affiliate Dashboard
 # ---------------------------------------------------------------------------
 
-def get_affiliate_performance(db: Session) -> list:
-    """
-    For each active affiliate: count attributed leads and deposits via contact.source,
-    compute conversion rate and commission earned (lots_traded × commission_rate).
-    Sorted by deposits descending (leaderboard order).
-    """
+def get_affiliate_performance(db: Session, workspace_id: int = 1) -> list:
     from app.config import BOT_USERNAME
 
-    affiliates = db.query(Affiliate).filter(Affiliate.is_active.is_(True)).order_by(Affiliate.created_at).all()
+    affiliates = (
+        db.query(Affiliate)
+        .filter(Affiliate.workspace_id == workspace_id, Affiliate.is_active.is_(True))
+        .order_by(Affiliate.created_at)
+        .all()
+    )
     result = []
     for aff in affiliates:
         leads = (
             db.query(func.count(Contact.id))
-            .filter(Contact.source == aff.referral_tag, Contact.classification != "noise")
+            .filter(
+                Contact.workspace_id == workspace_id,
+                Contact.source == aff.referral_tag,
+                Contact.classification != "noise",
+            )
             .scalar() or 0
         )
         deposits = (
             db.query(func.count(func.distinct(StageHistory.contact_id)))
             .join(Contact, Contact.id == StageHistory.contact_id)
-            .filter(Contact.source == aff.referral_tag, StageHistory.to_stage == 7)
+            .filter(
+                Contact.workspace_id == workspace_id,
+                Contact.source == aff.referral_tag,
+                StageHistory.to_stage == 7,
+            )
             .scalar() or 0
         )
         conversion_rate = round(deposits / leads * 100, 1) if leads > 0 else 0.0
@@ -578,7 +531,6 @@ def get_affiliate_performance(db: Session) -> list:
             "commission_earned": commission_earned,
             "is_active": aff.is_active,
             "created_at": aff.created_at.isoformat() if aff.created_at else None,
-            # Onboarding checklist
             "esim_done": bool(aff.esim_done),
             "free_channel_id": aff.free_channel_id,
             "free_channel_members": aff.free_channel_members or 0,

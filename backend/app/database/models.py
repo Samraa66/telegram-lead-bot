@@ -24,11 +24,13 @@ class Contact(Base):
     """
     A Telegram user tracked as a CRM contact.
     Primary key is the Telegram user ID to prevent duplicates.
+    workspace_id scopes contacts per tenant — same Telegram user can only exist in one workspace.
     """
 
     __tablename__ = "contacts"
 
     id = Column(BigInteger, primary_key=True)  # Telegram user id (64-bit)
+    workspace_id = Column(Integer, nullable=False, default=1)
     username = Column(String(255), nullable=True)
     first_name = Column(String(255), nullable=True)
     last_name = Column(String(255), nullable=True)
@@ -148,17 +150,22 @@ class FollowUpTemplate(Base):
 # ---------------------------------------------------------------------------
 
 class Workspace(Base):
-    """One row per tenant. Currently only workspace id=1 exists (single-tenant)."""
+    """One row per tenant."""
 
     __tablename__ = "workspaces"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     name = Column(String(255), nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
-    # Meta credentials — set via OAuth flow, override .env values
+    # Meta credentials — saved via Settings UI, override .env values
     meta_access_token = Column(Text, nullable=True)
     meta_ad_account_id = Column(String(100), nullable=True)
     meta_pixel_id = Column(String(100), nullable=True)
+    # Telegram bot credentials per workspace
+    bot_token = Column(Text, nullable=True)
+    webhook_secret = Column(String(255), nullable=True)
+    # Telethon operator session — StringSession serialized string
+    telethon_session = Column(Text, nullable=True)
 
 
 class StageKeyword(Base):
@@ -242,9 +249,10 @@ class Campaign(Base):
     __tablename__ = "campaigns"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    source_tag = Column(String(100), unique=True, nullable=False)   # e.g. "cmp_a3f8b2c1"
+    workspace_id = Column(Integer, nullable=False, default=1)
+    source_tag = Column(String(100), unique=True, nullable=False)
     name = Column(String(500), nullable=False)
-    meta_campaign_id = Column(String(255), nullable=True)           # optional link to Meta data
+    meta_campaign_id = Column(String(255), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     is_active = Column(Boolean, default=True, nullable=False)
 
@@ -282,6 +290,7 @@ class Affiliate(Base):
     __tablename__ = "affiliates"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
+    workspace_id = Column(Integer, nullable=False, default=1)
     name = Column(String(255), nullable=False)
     username = Column(String(255), nullable=True)        # Telegram handle (optional)
     referral_tag = Column(String(100), unique=True, nullable=False)  # /start param value

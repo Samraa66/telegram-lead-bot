@@ -117,7 +117,8 @@ def advance_stage(
         )
     )
 
-    result = infer_stage(message_text, keywords=_load_keywords(session))
+    ws_id = getattr(contact, "workspace_id", 1) or 1
+    result = infer_stage(message_text, keywords=_load_keywords(session, ws_id))
     if result is None:
         session.commit()
         return None
