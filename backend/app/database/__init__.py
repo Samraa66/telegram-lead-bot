@@ -262,6 +262,7 @@ def _ensure_columns() -> None:
             ("login_username", "TEXT"),
             ("login_password_hash", "TEXT"),
             ("workspace_id", "INTEGER DEFAULT 1"),
+            ("affiliate_workspace_id", "INTEGER"),
         ]
         existing_affiliates = _existing_columns("affiliates")
         for col, ddl in affiliates_needed:

@@ -1347,6 +1347,7 @@ def list_affiliates(
             "lots_traded": a.lots_traded,
             "is_active": a.is_active,
             "created_at": a.created_at.isoformat() if a.created_at else None,
+            "affiliate_workspace_id": a.affiliate_workspace_id,
         }
         for a in affiliates
     ]
@@ -1356,29 +1357,54 @@ def list_affiliates(
 def create_affiliate(
     req: CreateAffiliateRequest,
     db: Session = Depends(get_db),
-    _=Depends(require_roles("developer", "admin")),
+    current_user: dict = Depends(require_roles("developer", "admin")),
 ):
-    """Register a new affiliate and generate a unique referral tag."""
+    """
+    Register a new affiliate, generate their credentials, and auto-provision
+    a child CRM workspace for them within the caller's org.
+    """
     import uuid
-    from app.database.models import Affiliate
+    from app.database.models import Affiliate, Workspace
+    from app.database import seed_workspace_defaults
     from app.config import BOT_USERNAME
-
     from app.auth import generate_password, hash_password
+
     referral_tag = "ref_" + uuid.uuid4().hex[:8]
     login_username = "aff_" + uuid.uuid4().hex[:8]
     plain_password = generate_password()
 
+    # Provision a child workspace in the caller's org
+    caller_org_id = current_user.get("org_id", 1)
+    caller_ws_id = current_user.get("workspace_id", 1)
+    parent_ws = db.query(Workspace).filter(Workspace.id == caller_ws_id).first()
+    root_ws_id = (parent_ws.root_workspace_id or caller_ws_id) if parent_ws else caller_ws_id
+
+    aff_workspace = Workspace(
+        name=req.name.strip(),
+        org_id=caller_org_id,
+        parent_workspace_id=caller_ws_id,
+        root_workspace_id=root_ws_id,
+        workspace_role="affiliate",
+    )
+    db.add(aff_workspace)
+    db.flush()  # get aff_workspace.id without committing yet
+
     affiliate = Affiliate(
+        workspace_id=caller_ws_id,  # the parent (Walid's) workspace
         name=req.name.strip(),
         username=req.username.strip() if req.username else None,
         referral_tag=referral_tag,
         commission_rate=req.commission_rate,
         login_username=login_username,
         login_password_hash=hash_password(plain_password),
+        affiliate_workspace_id=aff_workspace.id,
     )
     db.add(affiliate)
     db.commit()
     db.refresh(affiliate)
+    db.refresh(aff_workspace)
+
+    seed_workspace_defaults(aff_workspace.id, db)
 
     # Fire welcome DM in background — non-blocking
     affiliate_id = affiliate.id
@@ -1401,6 +1427,7 @@ def create_affiliate(
         "lots_traded": affiliate.lots_traded,
         "is_active": affiliate.is_active,
         "created_at": affiliate.created_at.isoformat(),
+        "affiliate_workspace_id": aff_workspace.id,
         # Credentials — shown once at creation
         "login_username": login_username,
         "login_password": plain_password,

@@ -331,6 +331,8 @@ class Affiliate(Base):
     # Login credentials (auto-generated on create)
     login_username = Column(String(100), unique=True, nullable=True)
     login_password_hash = Column(String(255), nullable=True)  # pbkdf2 salt$hash
+    # Provisioned CRM workspace for this affiliate (null = not yet provisioned)
+    affiliate_workspace_id = Column(Integer, nullable=True)
 
     # Onboarding checklist
     esim_done = Column(Boolean, default=False, nullable=False)
