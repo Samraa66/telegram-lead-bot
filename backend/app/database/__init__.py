@@ -204,10 +204,16 @@ def _ensure_columns() -> None:
         team_needed = [
             ("auth_type", "TEXT NOT NULL DEFAULT 'password'"),
             ("telegram_id", "BIGINT"),
+            ("workspace_id", "INTEGER DEFAULT 1"),
         ]
         for col, ddl in team_needed:
             if col not in existing_team:
                 _add_column("team_members", col, ddl)
+
+    for tbl in ("stage_keywords", "stage_labels", "quick_replies"):
+        if _table_exists(tbl):
+            if "workspace_id" not in _existing_columns(tbl):
+                _add_column(tbl, "workspace_id", "INTEGER DEFAULT 1")
 
     if _table_exists("affiliates"):
         if dialect == "sqlite":
@@ -240,10 +246,11 @@ def _ensure_columns() -> None:
                 ("ads_live", "BOOLEAN DEFAULT FALSE"),
                 ("pixel_setup_done", "BOOLEAN DEFAULT FALSE"),
             ]
-        # Credential columns (same DDL for both dialects)
+        # Credential + workspace columns (same DDL for both dialects)
         affiliates_needed += [
             ("login_username", "TEXT"),
             ("login_password_hash", "TEXT"),
+            ("workspace_id", "INTEGER DEFAULT 1"),
         ]
         existing_affiliates = _existing_columns("affiliates")
         for col, ddl in affiliates_needed:
