@@ -135,10 +135,19 @@ def create_access_token(
     username: str,
     role: str,
     workspace_id: int = 1,
+    org_id: int = 1,
+    org_role: str = "member",
     affiliate_id: Optional[int] = None,
 ) -> str:
     expire = datetime.utcnow() + timedelta(hours=TOKEN_EXPIRE_HOURS)
-    payload = {"sub": username, "role": role, "workspace_id": workspace_id, "exp": expire}
+    payload = {
+        "sub": username,
+        "role": role,
+        "workspace_id": workspace_id,
+        "org_id": org_id,
+        "org_role": org_role,
+        "exp": expire,
+    }
     if affiliate_id is not None:
         payload["affiliate_id"] = affiliate_id
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
@@ -157,6 +166,8 @@ def get_current_user(
             "username": username,
             "role": role,
             "workspace_id": int(payload.get("workspace_id", 1)),
+            "org_id": int(payload.get("org_id", 1)),
+            "org_role": payload.get("org_role", "member"),
         }
         if "affiliate_id" in payload:
             result["affiliate_id"] = payload["affiliate_id"]
@@ -168,6 +179,18 @@ def get_current_user(
 def get_workspace_id(current_user: dict = Depends(get_current_user)) -> int:
     """FastAPI dependency — returns the workspace_id from the current JWT."""
     return current_user.get("workspace_id", 1)
+
+
+def get_org_id(current_user: dict = Depends(get_current_user)) -> int:
+    """FastAPI dependency — returns the org_id from the current JWT."""
+    return current_user.get("org_id", 1)
+
+
+def require_org_owner(current_user: dict = Depends(get_current_user)) -> dict:
+    """Dependency that ensures the caller is an org owner (can manage child workspaces)."""
+    if current_user.get("org_role") != "org_owner":
+        raise HTTPException(status_code=403, detail="Org owner access required")
+    return current_user
 
 
 def require_roles(*roles: str):

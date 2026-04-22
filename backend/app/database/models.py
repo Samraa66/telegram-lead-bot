@@ -20,6 +20,19 @@ from sqlalchemy.ext.declarative import declarative_base
 Base = declarative_base()
 
 
+class Organization(Base):
+    """
+    Top-level client isolation boundary.
+    Every workspace belongs to one org; no data crosses org boundaries.
+    """
+
+    __tablename__ = "organizations"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(255), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 class Contact(Base):
     """
     A Telegram user tracked as a CRM contact.
@@ -150,13 +163,29 @@ class FollowUpTemplate(Base):
 # ---------------------------------------------------------------------------
 
 class Workspace(Base):
-    """One row per tenant."""
+    """
+    One row per workspace (tenant scope).
+
+    Hierarchy:
+      org_id               — client isolation; all workspaces in an org share data rules
+      parent_workspace_id  — immediate parent (null = org root)
+      root_workspace_id    — always the org root workspace id (O(1) subtree queries)
+      workspace_role       — "owner" (root) | "affiliate" (child)
+
+    A second client gets a new Organization + a new root Workspace (org_id differs).
+    Affiliates of affiliates are just deeper children in the same org tree.
+    """
 
     __tablename__ = "workspaces"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     name = Column(String(255), nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
+    # Org hierarchy
+    org_id = Column(Integer, nullable=True, default=1)
+    parent_workspace_id = Column(Integer, nullable=True)   # null = org root
+    root_workspace_id = Column(Integer, nullable=True)     # always points to tree root
+    workspace_role = Column(String(50), nullable=True, default="owner")  # owner | affiliate
     # Meta credentials — saved via Settings UI, override .env values
     meta_access_token = Column(Text, nullable=True)
     meta_ad_account_id = Column(String(100), nullable=True)

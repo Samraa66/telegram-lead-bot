@@ -9,6 +9,8 @@ export interface AuthUser {
   role: Role;
   token: string;
   workspace_id?: number;
+  org_id?: number;
+  org_role?: string;
 }
 
 const TOKEN_KEY = "crm_token";
@@ -20,6 +22,8 @@ export function saveAuth(user: AuthUser): void {
     username: user.username,
     role: user.role,
     workspace_id: user.workspace_id ?? 1,
+    org_id: user.org_id ?? 1,
+    org_role: user.org_role ?? "member",
   }));
 }
 
@@ -32,12 +36,12 @@ export function getToken(): string | null {
   return localStorage.getItem(TOKEN_KEY);
 }
 
-export function getStoredUser(): { username: string; role: Role; workspace_id: number } | null {
+export function getStoredUser(): { username: string; role: Role; workspace_id: number; org_id: number; org_role: string } | null {
   const raw = localStorage.getItem(USER_KEY);
   if (!raw) return null;
   try {
     const parsed = JSON.parse(raw);
-    return { workspace_id: 1, ...parsed };
+    return { workspace_id: 1, org_id: 1, org_role: "member", ...parsed };
   } catch { return null; }
 }
 
@@ -68,7 +72,10 @@ export async function loginWithTelegram(data: TelegramAuthData): Promise<AuthUse
   });
   const json = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(json?.detail || "Telegram login failed");
-  const user: AuthUser = { username: json.username, role: json.role, token: json.access_token, workspace_id: json.workspace_id ?? 1 };
+  const user: AuthUser = {
+    username: json.username, role: json.role, token: json.access_token,
+    workspace_id: json.workspace_id ?? 1, org_id: json.org_id ?? 1, org_role: json.org_role ?? "member",
+  };
   saveAuth(user);
   return user;
 }
@@ -86,7 +93,10 @@ export async function login(username: string, password: string): Promise<AuthUse
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data?.detail || "Invalid credentials");
-  const user: AuthUser = { username: data.username, role: data.role, token: data.access_token, workspace_id: data.workspace_id ?? 1 };
+  const user: AuthUser = {
+    username: data.username, role: data.role, token: data.access_token,
+    workspace_id: data.workspace_id ?? 1, org_id: data.org_id ?? 1, org_role: data.org_role ?? "member",
+  };
   saveAuth(user);
   return user;
 }
@@ -101,7 +111,10 @@ export async function switchWorkspace(workspaceId: number): Promise<{ workspace_
   if (!res.ok) throw new Error(data?.detail || "Failed to switch workspace");
   const stored = getStoredUser();
   if (stored) {
-    saveAuth({ username: stored.username, role: stored.role, token: data.access_token, workspace_id: workspaceId });
+    saveAuth({
+      username: stored.username, role: stored.role, token: data.access_token,
+      workspace_id: workspaceId, org_id: data.org_id ?? stored.org_id, org_role: stored.org_role,
+    });
   }
   return { workspace_name: data.workspace_name };
 }

@@ -25,7 +25,7 @@ load_dotenv(Path(__file__).parent.parent.parent / ".env")
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from .models import Base, FollowUpTemplate, Workspace, StageKeyword, StageLabel, QuickReply, TeamMember
+from .models import Base, FollowUpTemplate, Organization, Workspace, StageKeyword, StageLabel, QuickReply, TeamMember
 
 # Use DATABASE_URL if set (PostgreSQL); otherwise SQLite for local dev
 _db_url = os.getenv("DATABASE_URL", "").strip()
@@ -189,10 +189,21 @@ def _ensure_columns() -> None:
             ("bot_token", "TEXT"),
             ("webhook_secret", "TEXT"),
             ("telethon_session", "TEXT"),
+            # Org hierarchy
+            ("org_id", "INTEGER DEFAULT 1"),
+            ("parent_workspace_id", "INTEGER"),
+            ("root_workspace_id", "INTEGER"),
+            ("workspace_role", "TEXT DEFAULT 'owner'"),
         ]
         for col, ddl in ws_needed:
             if col not in existing_ws:
                 _add_column("workspaces", col, ddl)
+        # Backfill root_workspace_id for existing rows where it is NULL
+        with engine.connect() as conn:
+            conn.execute(text(
+                "UPDATE workspaces SET root_workspace_id = id WHERE root_workspace_id IS NULL"
+            ))
+            conn.commit()
 
     if _table_exists("campaigns"):
         existing_campaigns = _existing_columns("campaigns")
@@ -363,14 +374,44 @@ def seed_workspace_defaults(workspace_id: int, db) -> None:
         db.commit()
 
 
-def _seed_workspace() -> None:
-    """Create workspace id=1 if it does not exist."""
+def _seed_organization() -> None:
+    """Create organization id=1 if it does not exist."""
     db = SessionLocal()
     try:
-        if db.query(Workspace).filter(Workspace.id == 1).first():
+        if db.query(Organization).filter(Organization.id == 1).first():
             return
-        db.add(Workspace(id=1, name="Default"))
+        db.add(Organization(id=1, name="Default"))
         db.commit()
+    finally:
+        db.close()
+
+
+def _seed_workspace() -> None:
+    """Create workspace id=1 if it does not exist. Backfill org hierarchy on existing rows."""
+    db = SessionLocal()
+    try:
+        ws = db.query(Workspace).filter(Workspace.id == 1).first()
+        if not ws:
+            db.add(Workspace(
+                id=1, name="Default",
+                org_id=1, parent_workspace_id=None,
+                root_workspace_id=1, workspace_role="owner",
+            ))
+            db.commit()
+        else:
+            # Backfill hierarchy fields if missing (existing installations)
+            changed = False
+            if ws.org_id is None:
+                ws.org_id = 1
+                changed = True
+            if ws.root_workspace_id is None:
+                ws.root_workspace_id = ws.id
+                changed = True
+            if ws.workspace_role is None:
+                ws.workspace_role = "owner"
+                changed = True
+            if changed:
+                db.commit()
     finally:
         db.close()
 
@@ -472,6 +513,7 @@ def init_db() -> None:
         pass
     _seed_templates()
     try:
+        _seed_organization()
         _seed_workspace()
         _seed_settings()
     except Exception:

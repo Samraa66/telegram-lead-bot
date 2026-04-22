@@ -26,7 +26,7 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 
-from app.auth import authenticate_user, create_access_token, get_current_user, get_workspace_id, require_roles, require_affiliate
+from app.auth import authenticate_user, create_access_token, get_current_user, get_workspace_id, get_org_id, require_roles, require_affiliate, require_org_owner
 from app.config import WEBHOOK_SECRET
 from app.database import get_db, init_db, SessionLocal
 from app.database.models import User, PendingChannel
@@ -269,15 +269,128 @@ def create_workspace(
 def switch_workspace(
     workspace_id: int,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(require_roles("developer")),
+    current_user: dict = Depends(require_org_owner),
 ):
-    """Issue a new JWT scoped to a different workspace (developer only)."""
+    """Issue a new JWT scoped to a different workspace (org owners only)."""
     from app.database.models import Workspace
-    ws = db.query(Workspace).filter(Workspace.id == workspace_id).first()
+    caller_org_id = current_user.get("org_id", 1)
+    # Org owners can only switch to workspaces within their org
+    # Developers (role=developer) can switch to any workspace
+    if current_user["role"] == "developer":
+        ws = db.query(Workspace).filter(Workspace.id == workspace_id).first()
+    else:
+        ws = db.query(Workspace).filter(
+            Workspace.id == workspace_id,
+            Workspace.org_id == caller_org_id,
+        ).first()
     if not ws:
         raise HTTPException(status_code=404, detail="Workspace not found")
-    token = create_access_token(current_user["username"], current_user["role"], workspace_id=workspace_id)
-    return {"access_token": token, "workspace_id": workspace_id, "workspace_name": ws.name}
+    token = create_access_token(
+        current_user["username"], current_user["role"],
+        workspace_id=workspace_id,
+        org_id=ws.org_id or caller_org_id,
+        org_role=current_user.get("org_role", "org_owner"),
+    )
+    return {
+        "access_token": token,
+        "workspace_id": workspace_id,
+        "workspace_name": ws.name,
+        "org_id": ws.org_id or caller_org_id,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Org workspace management (tree-scoped)
+# ---------------------------------------------------------------------------
+
+class OrgWorkspaceCreateRequest(BaseModel):
+    name: str
+    parent_workspace_id: Optional[int] = None
+
+
+@app.get("/org/workspaces")
+def list_org_workspaces(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_org_owner),
+):
+    """
+    Return all workspaces in the caller's org, ordered by id.
+    The tree structure is encoded via parent_workspace_id / root_workspace_id.
+    """
+    from app.database.models import Workspace
+    from app.services.telethon_client import get_client
+    org_id = current_user.get("org_id", 1)
+    rows = db.query(Workspace).filter(Workspace.org_id == org_id).order_by(Workspace.id).all()
+    return [
+        {
+            "id": ws.id,
+            "name": ws.name,
+            "org_id": ws.org_id,
+            "parent_workspace_id": ws.parent_workspace_id,
+            "root_workspace_id": ws.root_workspace_id,
+            "workspace_role": ws.workspace_role or "owner",
+            "created_at": ws.created_at.isoformat() if ws.created_at else None,
+            "has_telethon": get_client(ws.id) is not None,
+            "has_meta": bool(ws.meta_access_token),
+            "has_bot_token": bool(ws.bot_token),
+        }
+        for ws in rows
+    ]
+
+
+@app.post("/org/workspaces", status_code=201)
+def create_org_workspace(
+    req: OrgWorkspaceCreateRequest,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_org_owner),
+):
+    """
+    Create a child workspace under the caller's org.
+    parent_workspace_id defaults to the caller's own workspace (one level down).
+    """
+    from app.database.models import Workspace
+    from app.database import seed_workspace_defaults
+
+    org_id = current_user.get("org_id", 1)
+    caller_ws_id = current_user.get("workspace_id", 1)
+    parent_id = req.parent_workspace_id or caller_ws_id
+
+    # Verify parent belongs to caller's org
+    parent = db.query(Workspace).filter(
+        Workspace.id == parent_id,
+        Workspace.org_id == org_id,
+    ).first()
+    if not parent:
+        raise HTTPException(status_code=404, detail="Parent workspace not found in your org")
+
+    root_id = parent.root_workspace_id or parent.id
+
+    ws = Workspace(
+        name=req.name.strip(),
+        org_id=org_id,
+        parent_workspace_id=parent_id,
+        root_workspace_id=root_id,
+        workspace_role="affiliate",
+    )
+    db.add(ws)
+    db.commit()
+    db.refresh(ws)
+
+    seed_workspace_defaults(ws.id, db)
+
+    from app.services.telethon_client import get_client
+    return {
+        "id": ws.id,
+        "name": ws.name,
+        "org_id": ws.org_id,
+        "parent_workspace_id": ws.parent_workspace_id,
+        "root_workspace_id": ws.root_workspace_id,
+        "workspace_role": ws.workspace_role,
+        "created_at": ws.created_at.isoformat() if ws.created_at else None,
+        "has_telethon": get_client(ws.id) is not None,
+        "has_meta": bool(ws.meta_access_token),
+        "has_bot_token": bool(ws.bot_token),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -296,13 +409,42 @@ def login(request: Request, req: LoginRequest, db: Session = Depends(get_db)):
     user = authenticate_user(req.username, req.password, db=db)
     if not user:
         raise HTTPException(status_code=401, detail="Invalid credentials")
+
     ws_id = user.get("workspace_id", 1)
+
+    # Resolve org context from the workspace the user belongs to
+    from app.database.models import Workspace as WsModel, Affiliate as AffModel
+    org_id = 1
+    org_role = "member"
+
+    if user["role"] in ("developer", "admin"):
+        org_role = "org_owner"
+
+    # For affiliates look up their workspace via affiliate record
+    if user["role"] == "affiliate" and user.get("affiliate_id"):
+        aff = db.query(AffModel).filter(AffModel.id == user["affiliate_id"]).first()
+        if aff and aff.workspace_id:
+            ws_id = aff.workspace_id
+
+    ws = db.query(WsModel).filter(WsModel.id == ws_id).first()
+    if ws and ws.org_id:
+        org_id = ws.org_id
+
     token = create_access_token(
         user["username"], user["role"],
         workspace_id=ws_id,
+        org_id=org_id,
+        org_role=org_role,
         affiliate_id=user.get("affiliate_id"),
     )
-    return {"access_token": token, "role": user["role"], "username": user["username"], "workspace_id": ws_id}
+    return {
+        "access_token": token,
+        "role": user["role"],
+        "username": user["username"],
+        "workspace_id": ws_id,
+        "org_id": org_id,
+        "org_role": org_role,
+    }
 
 
 @app.get("/auth/me")
