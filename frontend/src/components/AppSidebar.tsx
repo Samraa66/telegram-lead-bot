@@ -56,7 +56,7 @@ function WorkspaceSwitcher({
     setSwitching(true);
     try {
       await switchWorkspace(workspaceId);
-      window.location.reload();
+      window.location.href = "/";
     } catch {
       setSwitching(false);
     }
