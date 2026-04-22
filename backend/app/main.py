@@ -26,7 +26,7 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 
-from app.auth import authenticate_user, create_access_token, get_current_user, get_workspace_id, get_org_id, require_roles, require_affiliate, require_org_owner
+from app.auth import authenticate_user, create_access_token, get_current_user, get_workspace_id, get_org_id, require_roles, require_affiliate, require_org_owner, require_workspace_owner
 from app.config import WEBHOOK_SECRET
 from app.database import get_db, init_db, SessionLocal
 from app.database.models import User, PendingChannel
@@ -294,20 +294,29 @@ def create_workspace(
 def switch_workspace(
     workspace_id: int,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(require_org_owner),
+    current_user: dict = Depends(require_workspace_owner),
 ):
-    """Issue a new JWT scoped to a different workspace (org owners only)."""
+    """Issue a new JWT scoped to a different workspace."""
     from app.database.models import Workspace
     caller_org_id = current_user.get("org_id", 1)
-    # Org owners can only switch to workspaces within their org
-    # Developers (role=developer) can switch to any workspace
+    caller_ws_id = current_user.get("workspace_id", 1)
+    org_role = current_user.get("org_role", "member")
+
     if current_user["role"] == "developer":
+        # Developer can switch to any workspace
         ws = db.query(Workspace).filter(Workspace.id == workspace_id).first()
-    else:
+    elif org_role == "org_owner":
+        # Org owner can switch to any workspace in their org
         ws = db.query(Workspace).filter(
             Workspace.id == workspace_id,
             Workspace.org_id == caller_org_id,
         ).first()
+    else:
+        # Workspace owner can only switch within their subtree
+        all_ws = db.query(Workspace).filter(Workspace.org_id == caller_org_id).all()
+        subtree = _ws_subtree(all_ws, caller_ws_id)
+        ws = next((w for w in subtree if w.id == workspace_id), None)
+
     if not ws:
         raise HTTPException(status_code=404, detail="Workspace not found")
     token = create_access_token(
@@ -333,21 +342,47 @@ class OrgWorkspaceCreateRequest(BaseModel):
     parent_workspace_id: Optional[int] = None
 
 
+def _ws_subtree(all_ws: list, root_id: int) -> list:
+    """Return all workspaces in the subtree rooted at root_id (BFS, no SQL recursion)."""
+    children_map: dict[int, list] = {}
+    ws_map = {ws.id: ws for ws in all_ws}
+    for ws in all_ws:
+        if ws.parent_workspace_id:
+            children_map.setdefault(ws.parent_workspace_id, []).append(ws.id)
+    result, queue = [], [root_id]
+    while queue:
+        cid = queue.pop(0)
+        if cid in ws_map:
+            result.append(ws_map[cid])
+            queue.extend(children_map.get(cid, []))
+    return result
+
+
 @app.get("/org/workspaces")
 def list_org_workspaces(
     db: Session = Depends(get_db),
-    current_user: dict = Depends(require_org_owner),
+    current_user: dict = Depends(require_workspace_owner),
 ):
     """
-    Return all workspaces in the caller's org, ordered by id.
-    The tree structure is encoded via parent_workspace_id / root_workspace_id.
+    Return workspaces visible to the caller:
+    - org_owner / developer / admin → all workspaces in the org
+    - workspace_owner (affiliate)   → their own workspace + their subtree only
     """
     from app.database.models import Workspace
     from app.services.telethon_client import get_client
     org_id = current_user.get("org_id", 1)
-    rows = db.query(Workspace).filter(Workspace.org_id == org_id).order_by(Workspace.id).all()
-    return [
-        {
+    org_role = current_user.get("org_role", "member")
+    caller_ws_id = current_user.get("workspace_id", 1)
+
+    all_ws = db.query(Workspace).filter(Workspace.org_id == org_id).order_by(Workspace.id).all()
+
+    if org_role == "org_owner" or current_user.get("role") in ("developer", "admin"):
+        rows = all_ws
+    else:
+        rows = _ws_subtree(all_ws, caller_ws_id)
+
+    def _fmt(ws):
+        return {
             "id": ws.id,
             "name": ws.name,
             "org_id": ws.org_id,
@@ -359,15 +394,14 @@ def list_org_workspaces(
             "has_meta": bool(ws.meta_access_token),
             "has_bot_token": bool(ws.bot_token),
         }
-        for ws in rows
-    ]
+    return [_fmt(ws) for ws in rows]
 
 
 @app.post("/org/workspaces", status_code=201)
 def create_org_workspace(
     req: OrgWorkspaceCreateRequest,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(require_org_owner),
+    current_user: dict = Depends(require_workspace_owner),
 ):
     """
     Create a child workspace under the caller's org.
@@ -445,11 +479,14 @@ def login(request: Request, req: LoginRequest, db: Session = Depends(get_db)):
     if user["role"] in ("developer", "admin"):
         org_role = "org_owner"
 
-    # For affiliates look up their workspace via affiliate record
+    # For affiliates: scope to their own provisioned workspace, not the parent's
     if user["role"] == "affiliate" and user.get("affiliate_id"):
         aff = db.query(AffModel).filter(AffModel.id == user["affiliate_id"]).first()
-        if aff and aff.workspace_id:
-            ws_id = aff.workspace_id
+        if aff:
+            # affiliate_workspace_id = their own CRM workspace
+            # workspace_id = their parent's workspace (fallback for legacy affiliates)
+            ws_id = aff.affiliate_workspace_id or aff.workspace_id or ws_id
+            org_role = "workspace_owner"
 
     ws = db.query(WsModel).filter(WsModel.id == ws_id).first()
     if ws and ws.org_id:
@@ -1382,11 +1419,13 @@ def list_affiliates(
 def create_affiliate(
     req: CreateAffiliateRequest,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(require_roles("developer", "admin")),
+    current_user: dict = Depends(require_workspace_owner),
 ):
     """
     Register a new affiliate, generate their credentials, and auto-provision
     a child CRM workspace for them within the caller's org.
+    Callable by org_owner (Walid creating affiliates) and workspace_owner
+    (affiliate creating their own sub-affiliates).
     """
     import uuid
     from app.database.models import Affiliate, Workspace

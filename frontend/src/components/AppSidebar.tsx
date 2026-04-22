@@ -180,8 +180,8 @@ const AppSidebar = ({ onNavigate }: { onNavigate?: () => void } = {}) => {
         </div>
       </div>
 
-      {/* Workspace switcher — org owners; fall back to role for pre-JWT sessions */}
-      {(orgRole === "org_owner" || role === "developer" || role === "admin") && (
+      {/* Workspace switcher — org/workspace owners; role fallback for pre-JWT sessions */}
+      {(orgRole === "org_owner" || orgRole === "workspace_owner" || role === "developer" || role === "admin") && (
         <WorkspaceSwitcher
           currentWorkspaceId={workspaceId}
           storedWorkspaceName={storedUser?.workspace_name ?? null}

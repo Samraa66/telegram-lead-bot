@@ -188,9 +188,8 @@ def get_org_id(current_user: dict = Depends(get_current_user)) -> int:
 
 def require_org_owner(current_user: dict = Depends(get_current_user)) -> dict:
     """
-    Ensure the caller is an org owner.
-    Accepts org_role=org_owner (new JWTs) OR role=developer/admin (legacy JWTs
-    that predate the org_role claim — same people, just older tokens).
+    Ensure the caller is an org owner (sees the whole org).
+    Accepts org_role=org_owner (new JWTs) OR role=developer/admin (legacy JWTs).
     """
     if (
         current_user.get("org_role") == "org_owner"
@@ -198,6 +197,21 @@ def require_org_owner(current_user: dict = Depends(get_current_user)) -> dict:
     ):
         return current_user
     raise HTTPException(status_code=403, detail="Org owner access required")
+
+
+def require_workspace_owner(current_user: dict = Depends(get_current_user)) -> dict:
+    """
+    Ensure the caller can manage their own workspace subtree.
+    - org_owner   → full org access
+    - workspace_owner (affiliate with sub-affiliate rights) → subtree only
+    - developer/admin roles → legacy fallback, treated as org_owner
+    """
+    if (
+        current_user.get("org_role") in ("org_owner", "workspace_owner")
+        or current_user.get("role") in ("developer", "admin")
+    ):
+        return current_user
+    raise HTTPException(status_code=403, detail="Workspace owner access required")
 
 
 def require_roles(*roles: str):
