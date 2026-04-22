@@ -27,6 +27,7 @@ function WorkspaceSwitcher({
 }) {
   const [open, setOpen] = useState(false);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
+  const [fetched, setFetched] = useState(false);
   const [switching, setSwitching] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -36,16 +37,14 @@ function WorkspaceSwitcher({
 
   useEffect(() => {
     fetchOrgWorkspaces()
-      .then(setWorkspaces)
-      .catch(() => {});
+      .then(ws => { setWorkspaces(ws); setFetched(true); })
+      .catch(() => setFetched(true));
   }, []);
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) {
         setOpen(false);
-        setCreatingUnder(null);
-        setNewName("");
       }
     };
     document.addEventListener("mousedown", handler);
@@ -117,8 +116,11 @@ function WorkspaceSwitcher({
       {open && (
         <div className="absolute bottom-full left-3 right-3 mb-1 bg-card border border-border rounded-xl shadow-xl overflow-hidden z-50">
           <div className="py-1 max-h-64 overflow-y-auto">
-            {roots.length === 0 && (
+            {!fetched && (
               <p className="px-4 py-3 text-xs text-muted-foreground">Loading…</p>
+            )}
+            {fetched && roots.length === 0 && (
+              <p className="px-4 py-3 text-xs text-muted-foreground">No workspaces found</p>
             )}
             {roots.map(ws => renderWorkspace(ws, 0))}
           </div>

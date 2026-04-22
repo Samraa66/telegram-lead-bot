@@ -187,10 +187,17 @@ def get_org_id(current_user: dict = Depends(get_current_user)) -> int:
 
 
 def require_org_owner(current_user: dict = Depends(get_current_user)) -> dict:
-    """Dependency that ensures the caller is an org owner (can manage child workspaces)."""
-    if current_user.get("org_role") != "org_owner":
-        raise HTTPException(status_code=403, detail="Org owner access required")
-    return current_user
+    """
+    Ensure the caller is an org owner.
+    Accepts org_role=org_owner (new JWTs) OR role=developer/admin (legacy JWTs
+    that predate the org_role claim — same people, just older tokens).
+    """
+    if (
+        current_user.get("org_role") == "org_owner"
+        or current_user.get("role") in ("developer", "admin")
+    ):
+        return current_user
+    raise HTTPException(status_code=403, detail="Org owner access required")
 
 
 def require_roles(*roles: str):
