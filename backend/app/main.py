@@ -79,6 +79,12 @@ async def lifespan(app: FastAPI):
 
 limiter = Limiter(key_func=get_remote_address)
 
+# Resolve frontend dist path once at startup — used by the SPA middleware below
+_FRONTEND_DIST = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "..", "frontend", "dist")
+)
+_SPA_INDEX = os.path.join(_FRONTEND_DIST, "index.html")
+
 app = FastAPI(
     title="Lead Tracking & Signal Mirroring Bot API",
     description="Webhook for leads and signal mirroring; analytics for leads.",
@@ -87,6 +93,25 @@ app = FastAPI(
 
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# SPA fallback — must be added BEFORE security-headers middleware so it runs first.
+# When a browser navigates to a frontend route (e.g. /affiliates after a hard refresh),
+# it sends Accept: text/html and no Authorization header.  API calls from JavaScript
+# always include Authorization.  We intercept browser navigations and serve index.html
+# so the React router can handle the path instead of letting the API route return 401.
+_API_PASS_THROUGH = ("/assets/", "/webhook", "/auth/", "/health", "/api/")
+
+@app.middleware("http")
+async def spa_browser_nav_middleware(request: Request, call_next):
+    if (
+        os.path.isfile(_SPA_INDEX)
+        and "text/html" in request.headers.get("Accept", "")
+        and "Authorization" not in request.headers
+        and not any(request.url.path.startswith(p) for p in _API_PASS_THROUGH)
+    ):
+        return FileResponse(_SPA_INDEX)
+    return await call_next(request)
+
 
 # Security headers on every response
 @app.middleware("http")
@@ -2075,10 +2100,6 @@ def settings_update_stage_label(label_id: int, req: StageLabelUpdateRequest, db:
 # Frontend static files (React dashboard)
 # ---------------------------------------------------------------------------
 
-_FRONTEND_DIST = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "..", "frontend", "dist")
-)
-
 if os.path.isdir(_FRONTEND_DIST):
     _assets_dir = os.path.join(_FRONTEND_DIST, "assets")
     if os.path.isdir(_assets_dir):
@@ -2087,4 +2108,4 @@ if os.path.isdir(_FRONTEND_DIST):
     @app.get("/{full_path:path}", include_in_schema=False)
     def serve_frontend(full_path: str):
         """Serve the React SPA for any route not matched by the API."""
-        return FileResponse(os.path.join(_FRONTEND_DIST, "index.html"))
+        return FileResponse(_SPA_INDEX)
