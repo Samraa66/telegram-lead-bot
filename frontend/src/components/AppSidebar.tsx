@@ -114,8 +114,8 @@ function WorkspaceSwitcher({
       </button>
 
       {open && (
-        <div className="absolute bottom-full left-3 right-3 mb-1 bg-card border border-border rounded-xl shadow-xl overflow-hidden z-50">
-          <div className="py-1 max-h-64 overflow-y-auto">
+        <div className="absolute top-full left-0 right-0 mt-1 bg-card border border-border rounded-xl shadow-xl overflow-hidden z-50">
+          <div className="py-1 max-h-72 overflow-y-auto">
             {!fetched && (
               <p className="px-4 py-3 text-xs text-muted-foreground">Loading…</p>
             )}
