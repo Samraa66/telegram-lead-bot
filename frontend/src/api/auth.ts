@@ -9,6 +9,7 @@ export interface AuthUser {
   role: Role;
   token: string;
   workspace_id?: number;
+  workspace_name?: string;
   org_id?: number;
   org_role?: string;
 }
@@ -22,6 +23,7 @@ export function saveAuth(user: AuthUser): void {
     username: user.username,
     role: user.role,
     workspace_id: user.workspace_id ?? 1,
+    workspace_name: user.workspace_name ?? null,
     org_id: user.org_id ?? 1,
     org_role: user.org_role ?? "member",
   }));
@@ -36,12 +38,12 @@ export function getToken(): string | null {
   return localStorage.getItem(TOKEN_KEY);
 }
 
-export function getStoredUser(): { username: string; role: Role; workspace_id: number; org_id: number; org_role: string } | null {
+export function getStoredUser(): { username: string; role: Role; workspace_id: number; workspace_name: string | null; org_id: number; org_role: string } | null {
   const raw = localStorage.getItem(USER_KEY);
   if (!raw) return null;
   try {
     const parsed = JSON.parse(raw);
-    return { workspace_id: 1, org_id: 1, org_role: "member", ...parsed };
+    return { workspace_id: 1, workspace_name: null, org_id: 1, org_role: "member", ...parsed };
   } catch { return null; }
 }
 
@@ -113,7 +115,8 @@ export async function switchWorkspace(workspaceId: number): Promise<{ workspace_
   if (stored) {
     saveAuth({
       username: stored.username, role: stored.role, token: data.access_token,
-      workspace_id: workspaceId, org_id: data.org_id ?? stored.org_id, org_role: stored.org_role,
+      workspace_id: workspaceId, workspace_name: data.workspace_name,
+      org_id: data.org_id ?? stored.org_id, org_role: stored.org_role,
     });
   }
   return { workspace_name: data.workspace_name };

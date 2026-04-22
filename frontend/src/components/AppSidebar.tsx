@@ -18,17 +18,25 @@ const ALL_NAV_ITEMS = [
 // Workspace switcher — developer only
 // ---------------------------------------------------------------------------
 
-function WorkspaceSwitcher({ currentWorkspaceId }: { currentWorkspaceId: number }) {
+function WorkspaceSwitcher({
+  currentWorkspaceId,
+  storedWorkspaceName,
+}: {
+  currentWorkspaceId: number;
+  storedWorkspaceName: string | null;
+}) {
   const [open, setOpen] = useState(false);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [loading, setLoading] = useState(false);
   const [switching, setSwitching] = useState(false);
-  // creating: null = not creating, number = parent_workspace_id to create under
+  // null = not creating, number = parent_workspace_id to create under
   const [creatingUnder, setCreatingUnder] = useState<number | null>(null);
   const [newName, setNewName] = useState("");
   const ref = useRef<HTMLDivElement>(null);
 
+  // Use the stored name immediately — no flash while fetch runs
   const current = workspaces.find(w => w.id === currentWorkspaceId);
+  const displayName = current?.name ?? storedWorkspaceName ?? `Workspace ${currentWorkspaceId}`;
 
   useEffect(() => {
     fetchOrgWorkspaces()
@@ -80,7 +88,6 @@ function WorkspaceSwitcher({ currentWorkspaceId }: { currentWorkspaceId: number 
   function renderWorkspace(ws: Workspace, depth: number): React.ReactNode {
     const children = childrenOf(ws.id);
     const isCurrent = ws.id === currentWorkspaceId;
-    const indent = depth * 12;
     return (
       <div key={ws.id}>
         <button
@@ -92,26 +99,19 @@ function WorkspaceSwitcher({ currentWorkspaceId }: { currentWorkspaceId: number 
               ? "text-[hsl(199,86%,45%)] bg-[hsl(199,86%,55%)]/5"
               : "text-foreground hover:bg-muted"
           )}
-          style={{ paddingLeft: `${16 + indent}px` }}
+          style={{ paddingLeft: `${14 + depth * 14}px` }}
         >
+          {depth > 0 && (
+            <span className="text-muted-foreground/40 text-xs shrink-0">└</span>
+          )}
           {isCurrent
-            ? <Check className="w-3.5 h-3.5 shrink-0" />
+            ? <Check className="w-3.5 h-3.5 shrink-0 text-[hsl(199,86%,45%)]" />
             : <Building2 className="w-3.5 h-3.5 shrink-0 text-muted-foreground" />
           }
-          <span className="flex-1 truncate">{ws.name}</span>
-          <span className="flex gap-1 items-center">
-            {ws.workspace_role === "affiliate" && (
-              <span className="text-[10px] text-muted-foreground bg-muted rounded px-1 leading-4">aff</span>
-            )}
-            {ws.has_telethon && <span className="w-1.5 h-1.5 rounded-full bg-green-500" title="Telethon connected" />}
-            {ws.has_meta    && <span className="w-1.5 h-1.5 rounded-full bg-blue-500" title="Meta connected" />}
-            <button
-              onClick={e => { e.stopPropagation(); setCreatingUnder(ws.id); setNewName(""); }}
-              className="ml-1 p-0.5 rounded hover:bg-border transition-colors"
-              title={`Add affiliate under ${ws.name}`}
-            >
-              <Plus className="w-3 h-3 text-muted-foreground" />
-            </button>
+          <span className="flex-1 truncate text-xs">{ws.name}</span>
+          <span className="flex gap-1 items-center shrink-0">
+            {ws.has_telethon && <span className="w-1.5 h-1.5 rounded-full bg-green-500" title="Telethon" />}
+            {ws.has_meta    && <span className="w-1.5 h-1.5 rounded-full bg-blue-500" title="Meta" />}
           </span>
         </button>
         {children.map(child => renderWorkspace(child, depth + 1))}
@@ -123,48 +123,83 @@ function WorkspaceSwitcher({ currentWorkspaceId }: { currentWorkspaceId: number 
     <div className="px-3 pb-1 relative" ref={ref}>
       <button
         onClick={() => setOpen(v => !v)}
-        className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm hover:bg-sidebar-accent transition-colors"
+        className="w-full flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-sidebar-accent transition-colors"
       >
         <Building2 className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
         <span className="flex-1 text-left text-xs text-muted-foreground truncate">
-          {current?.name ?? `Workspace ${currentWorkspaceId}`}
+          {displayName}
         </span>
-        <ChevronDown className={cn("w-3 h-3 text-muted-foreground transition-transform", open && "rotate-180")} />
+        <ChevronDown className={cn("w-3 h-3 text-muted-foreground transition-transform shrink-0", open && "rotate-180")} />
       </button>
 
       {open && (
-        <div className="absolute bottom-full left-3 right-3 mb-1 bg-card border border-border rounded-xl shadow-xl overflow-hidden z-50 max-h-80 overflow-y-auto">
-          <div className="py-1">
+        <div className="absolute bottom-full left-3 right-3 mb-1 bg-card border border-border rounded-xl shadow-xl overflow-hidden z-50">
+          {/* Workspace tree */}
+          <div className="py-1 max-h-52 overflow-y-auto">
+            {roots.length === 0 && (
+              <p className="px-4 py-3 text-xs text-muted-foreground">Loading…</p>
+            )}
             {roots.map(ws => renderWorkspace(ws, 0))}
           </div>
 
-          {creatingUnder !== null && (
-            <div className="border-t border-border px-3 py-2">
-              <p className="text-[10px] text-muted-foreground mb-1.5">
-                New affiliate under <strong>{workspaces.find(w => w.id === creatingUnder)?.name}</strong>
-              </p>
-              <div className="flex items-center gap-1.5">
-                <input
-                  autoFocus
-                  className="flex-1 text-xs border rounded-md px-2 py-1.5 bg-background"
-                  placeholder="Workspace name…"
-                  value={newName}
-                  onChange={e => setNewName(e.target.value)}
-                  onKeyDown={e => {
-                    if (e.key === "Enter") handleCreate();
-                    if (e.key === "Escape") { setCreatingUnder(null); setNewName(""); }
-                  }}
-                />
-                <button
-                  onClick={handleCreate}
-                  disabled={loading || !newName.trim()}
-                  className="px-2 py-1.5 text-xs rounded-md bg-[hsl(199,86%,55%)] text-white disabled:opacity-50"
-                >
-                  {loading ? "…" : "Add"}
-                </button>
+          {/* Add affiliate workspace */}
+          <div className="border-t border-border px-3 py-2">
+            {creatingUnder === null ? (
+              <button
+                onClick={() => {
+                  // Default parent = the root workspace (first in list)
+                  const root = workspaces.find(w => w.parent_workspace_id === null);
+                  setCreatingUnder(root?.id ?? currentWorkspaceId);
+                  setNewName("");
+                }}
+                className="w-full flex items-center gap-2 px-1 py-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors rounded-md hover:bg-muted"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                Add affiliate workspace
+              </button>
+            ) : (
+              <div>
+                <div className="flex items-center gap-1.5 mb-1.5">
+                  <span className="text-[10px] text-muted-foreground">Under:</span>
+                  <select
+                    className="flex-1 text-xs border rounded px-1 py-0.5 bg-background"
+                    value={creatingUnder}
+                    onChange={e => setCreatingUnder(Number(e.target.value))}
+                  >
+                    {workspaces.map(ws => (
+                      <option key={ws.id} value={ws.id}>{ws.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <input
+                    autoFocus
+                    className="flex-1 text-xs border rounded-md px-2 py-1.5 bg-background"
+                    placeholder="Workspace name…"
+                    value={newName}
+                    onChange={e => setNewName(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === "Enter") handleCreate();
+                      if (e.key === "Escape") { setCreatingUnder(null); setNewName(""); }
+                    }}
+                  />
+                  <button
+                    onClick={handleCreate}
+                    disabled={loading || !newName.trim()}
+                    className="px-2 py-1.5 text-xs rounded-md bg-[hsl(199,86%,55%)] text-white disabled:opacity-50"
+                  >
+                    {loading ? "…" : "Add"}
+                  </button>
+                  <button
+                    onClick={() => { setCreatingUnder(null); setNewName(""); }}
+                    className="px-2 py-1.5 text-xs rounded-md hover:bg-muted text-muted-foreground"
+                  >
+                    ✕
+                  </button>
+                </div>
               </div>
-            </div>
-          )}
+            )}
+          </div>
         </div>
       )}
     </div>
@@ -220,7 +255,10 @@ const AppSidebar = ({ onNavigate }: { onNavigate?: () => void } = {}) => {
 
       {/* Workspace switcher — org owners only */}
       {orgRole === "org_owner" && (
-        <WorkspaceSwitcher currentWorkspaceId={workspaceId} />
+        <WorkspaceSwitcher
+          currentWorkspaceId={workspaceId}
+          storedWorkspaceName={storedUser?.workspace_name ?? null}
+        />
       )}
 
       {/* Nav */}
