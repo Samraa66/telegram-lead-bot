@@ -849,8 +849,9 @@ def bot_register_webhook(
 
     webhook_url = f"{APP_BASE_URL}/webhook/{workspace_id}"
     payload: dict = {"url": webhook_url}
-    if ws and ws.webhook_secret:
-        payload["secret_token"] = ws.webhook_secret
+    effective_secret = (ws.webhook_secret if ws else None) or (WEBHOOK_SECRET if workspace_id == 1 else None)
+    if effective_secret:
+        payload["secret_token"] = effective_secret
 
     try:
         data = json.dumps(payload).encode()
