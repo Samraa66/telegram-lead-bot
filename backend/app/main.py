@@ -687,6 +687,7 @@ def telethon_status(
 def forwarding_status(
     workspace_id: int = Depends(get_workspace_id),
     _=Depends(require_roles("developer", "admin")),
+    db: Session = Depends(get_db),
 ):
     """Return signal forwarding health: operator running, source set, destinations configured."""
     from app.services.forwarding import get_all_destination_channels
