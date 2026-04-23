@@ -870,36 +870,43 @@ type ForwardingStatus = {
 
 function ForwardingStatusCard() {
   const [status, setStatus] = useState<ForwardingStatus>(null);
+  const [failed, setFailed] = useState(false);
 
   useEffect(() => {
     fetch(`${API_BASE}/settings/forwarding/status`, { headers: authHeaders() })
-      .then(r => r.json())
-      .then(setStatus)
-      .catch(() => {});
+      .then(r => { if (!r.ok) throw new Error(); return r.json(); })
+      .then(d => setStatus(d))
+      .catch(() => setFailed(true));
   }, []);
 
-  if (!status) return null;
+  if (failed) return null;
+  if (!status) return (
+    <div className="rounded-lg border p-4 flex items-center gap-2 text-xs text-muted-foreground">
+      <span className="h-2 w-2 rounded-full bg-muted-foreground/30 animate-pulse shrink-0" />
+      Checking forwarding status…
+    </div>
+  );
 
   const checks = [
     { label: "Bot token",            ok: status.bot_configured    },
     { label: "Source channel",       ok: status.source_configured },
     { label: "Destination channels", ok: status.destination_count > 0,
-      detail: status.destination_count > 0 ? `${status.destination_count} channel${status.destination_count !== 1 ? "s" : ""}` : "none" },
+      detail: status.destination_count > 0 ? `${status.destination_count} channel${status.destination_count !== 1 ? "s" : ""}` : "none configured" },
   ];
 
   return (
     <div className={cn(
       "rounded-lg border p-4 space-y-3",
-      status.active ? "bg-green-50 border-green-200" : "bg-amber-50 border-amber-200"
+      status.active ? "bg-green-500/10 border-green-500/30" : "bg-amber-500/10 border-amber-500/30"
     )}>
       <div className="flex items-center gap-2">
         <span className={cn(
           "h-2.5 w-2.5 rounded-full shrink-0",
-          status.active ? "bg-green-500 animate-pulse" : "bg-amber-400"
+          status.active ? "bg-green-500 animate-pulse" : "bg-amber-500"
         )} />
         <p className={cn(
           "text-sm font-semibold",
-          status.active ? "text-green-800" : "text-amber-800"
+          status.active ? "text-green-500" : "text-amber-500"
         )}>
           Signal forwarding {status.active ? "active" : "inactive"}
         </p>
@@ -907,8 +914,8 @@ function ForwardingStatusCard() {
       <div className="space-y-1.5">
         {checks.map(({ label, ok, detail }) => (
           <div key={label} className="flex items-center gap-2 text-xs">
-            <span className={cn("h-1.5 w-1.5 rounded-full shrink-0", ok ? "bg-green-500" : "bg-gray-300")} />
-            <span className={cn(ok ? "text-green-700" : "text-muted-foreground")}>{label}</span>
+            <span className={cn("h-1.5 w-1.5 rounded-full shrink-0", ok ? "bg-green-500" : "bg-muted-foreground/40")} />
+            <span className={cn(ok ? "text-foreground" : "text-muted-foreground")}>{label}</span>
             {detail && <span className="text-muted-foreground">— {detail}</span>}
           </div>
         ))}
