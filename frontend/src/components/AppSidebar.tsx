@@ -7,8 +7,8 @@ import { cn } from "@/lib/utils";
 
 const ALL_NAV_ITEMS = [
   { label: "Dashboard",  icon: LayoutDashboard, path: "/",           roles: null },
-  { label: "Leads",      icon: Users,           path: "/leads",      roles: ["developer", "admin", "operator"] },
-  { label: "Analytics",  icon: BarChart3,        path: "/analytics",  roles: ["developer", "admin", "operator"] },
+  { label: "Leads",      icon: Users,           path: "/leads",      roles: ["developer", "admin", "operator", "affiliate"] },
+  { label: "Analytics",  icon: BarChart3,        path: "/analytics",  roles: ["developer", "admin", "operator", "affiliate"] },
   { label: "Members",    icon: Star,             path: "/members",    roles: ["developer", "admin", "vip_manager"] },
   { label: "Affiliates", icon: UserPlus,         path: "/affiliates", roles: ["developer", "admin"] },
   { label: "Settings",   icon: Settings,         path: "/settings",   roles: null },

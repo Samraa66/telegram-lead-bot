@@ -1,0 +1,372 @@
+import { useState } from "react";
+import { Check, Bot, Smartphone, Radio, ArrowRight, Loader2, Eye, EyeOff } from "lucide-react";
+import { markOnboardingComplete, getToken, clearAuth } from "../api/auth";
+import { cn } from "../lib/utils";
+
+const API_BASE = import.meta.env.DEV
+  ? (import.meta.env.VITE_API_BASE_URL || "http://localhost:8000")
+  : "";
+
+function authHeaders() {
+  return { "Content-Type": "application/json", Authorization: `Bearer ${getToken()}` };
+}
+
+async function api(method: string, path: string, body?: object) {
+  const res = await fetch(`${API_BASE}${path}`, {
+    method,
+    headers: authHeaders(),
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data?.detail || "Request failed");
+  return data;
+}
+
+// ---------------------------------------------------------------------------
+// Step indicators
+// ---------------------------------------------------------------------------
+
+const STEPS = [
+  { icon: Bot,       label: "Bot"      },
+  { icon: Smartphone, label: "Operator" },
+  { icon: Radio,     label: "Channel"  },
+];
+
+function StepDots({ current }: { current: number }) {
+  return (
+    <div className="flex items-center gap-2 justify-center mb-8">
+      {STEPS.map((s, i) => {
+        const Icon = s.icon;
+        const done = i < current;
+        const active = i === current;
+        return (
+          <div key={i} className="flex items-center gap-2">
+            <div className={cn(
+              "h-8 w-8 rounded-full flex items-center justify-center transition-all",
+              done   ? "bg-primary text-primary-foreground" :
+              active ? "bg-primary/15 text-primary ring-2 ring-primary/40" :
+                       "bg-secondary text-muted-foreground"
+            )}>
+              {done ? <Check className="h-3.5 w-3.5" strokeWidth={3} /> : <Icon className="h-3.5 w-3.5" />}
+            </div>
+            {i < STEPS.length - 1 && (
+              <div className={cn("h-px w-8", done ? "bg-primary" : "bg-border")} />
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Step 1 — Bot token
+// ---------------------------------------------------------------------------
+
+function StepBot({ onDone, onSkip }: { onDone: () => void; onSkip: () => void }) {
+  const [token, setToken] = useState("");
+  const [show, setShow] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleSubmit() {
+    if (!token.trim()) return;
+    setLoading(true); setError(null);
+    try {
+      await api("PATCH", "/settings/bot/credentials", { bot_token: token.trim() });
+      await api("POST", "/settings/bot/register-webhook");
+      onDone();
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="space-y-5">
+      <div>
+        <h2 className="text-[18px] font-bold text-foreground">Connect your Telegram bot</h2>
+        <p className="text-sm text-muted-foreground mt-1">
+          Your bot is the entry point for leads. Create one via BotFather if you haven't already.
+        </p>
+      </div>
+
+      <div className="ios-card p-4 space-y-2 text-[13px] text-muted-foreground">
+        <p className="font-semibold text-foreground text-[12px] uppercase tracking-wider">How to get your token</p>
+        <ol className="list-decimal list-inside space-y-1 leading-relaxed">
+          <li>Open Telegram and search <span className="font-mono text-foreground">@BotFather</span></li>
+          <li>Send <span className="font-mono text-foreground">/newbot</span> and follow the prompts</li>
+          <li>Copy the token BotFather gives you and paste it below</li>
+        </ol>
+      </div>
+
+      <div>
+        <label className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Bot Token</label>
+        <div className="relative mt-1.5">
+          <input
+            type={show ? "text" : "password"}
+            value={token}
+            onChange={e => setToken(e.target.value)}
+            placeholder="123456789:ABCDef-ghijklmnop"
+            className="w-full px-3 py-2.5 pr-10 rounded-xl bg-secondary text-[13px] text-foreground font-mono outline-none placeholder:text-muted-foreground/40"
+          />
+          <button
+            type="button"
+            onClick={() => setShow(s => !s)}
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground"
+          >
+            {show ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+          </button>
+        </div>
+      </div>
+
+      {error && <p className="text-[12px] text-destructive">{error}</p>}
+
+      <button
+        onClick={handleSubmit}
+        disabled={!token.trim() || loading}
+        className="w-full py-3 rounded-xl bg-primary text-primary-foreground text-[14px] font-semibold disabled:opacity-50 flex items-center justify-center gap-2"
+      >
+        {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <><span>Save & continue</span><ArrowRight className="h-4 w-4" /></>}
+      </button>
+
+      <button onClick={onSkip} className="w-full text-[12px] text-muted-foreground text-center py-1">
+        Set up later
+      </button>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Step 2 — Telethon operator account
+// ---------------------------------------------------------------------------
+
+type TelethonStep = "phone" | "otp";
+
+function StepTelethon({ onDone, onSkip }: { onDone: () => void; onSkip: () => void }) {
+  const [phase, setPhase] = useState<TelethonStep>("phone");
+  const [phone, setPhone] = useState("");
+  const [code, setCode] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handlePhone() {
+    if (!phone.trim()) return;
+    setLoading(true); setError(null);
+    try {
+      await api("POST", "/settings/telethon/connect", { phone: phone.trim() });
+      setPhase("otp");
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleOtp() {
+    if (!code.trim()) return;
+    setLoading(true); setError(null);
+    try {
+      await api("POST", "/settings/telethon/verify", { phone: phone.trim(), code: code.trim() });
+      onDone();
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="space-y-5">
+      <div>
+        <h2 className="text-[18px] font-bold text-foreground">Connect operator account</h2>
+        <p className="text-sm text-muted-foreground mt-1">
+          This is the Telegram account that will handle lead conversations. Use the number linked to your eSIM.
+        </p>
+      </div>
+
+      {phase === "phone" ? (
+        <>
+          <div>
+            <label className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Phone number</label>
+            <input
+              type="tel"
+              value={phone}
+              onChange={e => setPhone(e.target.value)}
+              placeholder="+44 7700 900000"
+              className="mt-1.5 w-full px-3 py-2.5 rounded-xl bg-secondary text-[13px] text-foreground outline-none placeholder:text-muted-foreground/40"
+            />
+          </div>
+          {error && <p className="text-[12px] text-destructive">{error}</p>}
+          <button
+            onClick={handlePhone}
+            disabled={!phone.trim() || loading}
+            className="w-full py-3 rounded-xl bg-primary text-primary-foreground text-[14px] font-semibold disabled:opacity-50 flex items-center justify-center gap-2"
+          >
+            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <><span>Send code</span><ArrowRight className="h-4 w-4" /></>}
+          </button>
+        </>
+      ) : (
+        <>
+          <div className="ios-card p-3 text-[13px] text-muted-foreground">
+            Code sent to <span className="text-foreground font-medium">{phone}</span>. Check your Telegram app.
+          </div>
+          <div>
+            <label className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">5-digit code</label>
+            <input
+              type="text"
+              inputMode="numeric"
+              maxLength={5}
+              value={code}
+              onChange={e => setCode(e.target.value.replace(/\D/g, ""))}
+              placeholder="12345"
+              className="mt-1.5 w-full px-3 py-2.5 rounded-xl bg-secondary text-[13px] text-foreground font-mono tracking-widest text-center outline-none placeholder:text-muted-foreground/40"
+            />
+          </div>
+          {error && <p className="text-[12px] text-destructive">{error}</p>}
+          <button
+            onClick={handleOtp}
+            disabled={code.length < 5 || loading}
+            className="w-full py-3 rounded-xl bg-primary text-primary-foreground text-[14px] font-semibold disabled:opacity-50 flex items-center justify-center gap-2"
+          >
+            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <><span>Verify & continue</span><ArrowRight className="h-4 w-4" /></>}
+          </button>
+          <button onClick={() => setPhase("phone")} className="w-full text-[12px] text-muted-foreground text-center">
+            Wrong number? Go back
+          </button>
+        </>
+      )}
+
+      <button onClick={onSkip} className="w-full text-[12px] text-muted-foreground text-center py-1">
+        Set up later
+      </button>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Step 3 — VIP channel
+// ---------------------------------------------------------------------------
+
+function StepChannel({ onDone, onSkip }: { onDone: () => void; onSkip: () => void }) {
+  const [channelId, setChannelId] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleSubmit() {
+    if (!channelId.trim()) return;
+    setLoading(true); setError(null);
+    try {
+      await api("PATCH", "/affiliate/me/checklist", { vip_channel_id: channelId.trim() });
+      onDone();
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="space-y-5">
+      <div>
+        <h2 className="text-[18px] font-bold text-foreground">Link your VIP channel</h2>
+        <p className="text-sm text-muted-foreground mt-1">
+          Trade signals will be forwarded to this channel automatically once you paste the channel ID.
+        </p>
+      </div>
+
+      <div className="ios-card p-4 space-y-2 text-[13px] text-muted-foreground">
+        <p className="font-semibold text-foreground text-[12px] uppercase tracking-wider">How to get your channel ID</p>
+        <ol className="list-decimal list-inside space-y-1 leading-relaxed">
+          <li>Add <span className="font-mono text-foreground">@userinfobot</span> to your VIP channel as an admin</li>
+          <li>It will reply with the channel ID (starts with <span className="font-mono text-foreground">-100</span>)</li>
+          <li>Paste it below and remove the bot</li>
+        </ol>
+      </div>
+
+      <div>
+        <label className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Channel ID</label>
+        <input
+          type="text"
+          value={channelId}
+          onChange={e => setChannelId(e.target.value)}
+          placeholder="-1001234567890"
+          className="mt-1.5 w-full px-3 py-2.5 rounded-xl bg-secondary text-[13px] text-foreground font-mono outline-none placeholder:text-muted-foreground/40"
+        />
+      </div>
+
+      {error && <p className="text-[12px] text-destructive">{error}</p>}
+
+      <button
+        onClick={handleSubmit}
+        disabled={!channelId.trim() || loading}
+        className="w-full py-3 rounded-xl bg-primary text-primary-foreground text-[14px] font-semibold disabled:opacity-50 flex items-center justify-center gap-2"
+      >
+        {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <><span>Finish setup</span><Check className="h-4 w-4" strokeWidth={3} /></>}
+      </button>
+
+      <button onClick={onSkip} className="w-full text-[12px] text-muted-foreground text-center py-1">
+        Set up later
+      </button>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Main onboarding page
+// ---------------------------------------------------------------------------
+
+export default function OnboardingPage() {
+  const [step, setStep] = useState(0);
+  const [completing, setCompleting] = useState(false);
+
+  async function finish() {
+    setCompleting(true);
+    try {
+      await api("POST", "/settings/onboarding/complete");
+    } catch { /* non-fatal */ }
+    markOnboardingComplete();
+    window.location.href = "/";
+  }
+
+  return (
+    <div className="min-h-screen bg-[hsl(var(--ios-grouped-bg))] flex flex-col items-center justify-center px-4 py-12">
+      <div className="w-full max-w-sm">
+
+        {/* Logo / brand */}
+        <div className="text-center mb-8">
+          <div className="h-12 w-12 rounded-2xl bg-primary flex items-center justify-center mx-auto mb-3">
+            <svg viewBox="0 0 24 24" className="h-6 w-6 text-primary-foreground" fill="currentColor">
+              <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+          </div>
+          <h1 className="text-[22px] font-bold text-foreground">Welcome to Telelytics</h1>
+          <p className="text-sm text-muted-foreground mt-1">Let's get your workspace live in 3 steps.</p>
+        </div>
+
+        <StepDots current={step} />
+
+        <div className="ios-card p-5">
+          {step === 0 && <StepBot onDone={() => setStep(1)} onSkip={() => setStep(1)} />}
+          {step === 1 && <StepTelethon onDone={() => setStep(2)} onSkip={() => setStep(2)} />}
+          {step === 2 && <StepChannel onDone={finish} onSkip={finish} />}
+        </div>
+
+        {completing && (
+          <div className="mt-4 flex items-center justify-center gap-2 text-sm text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            Setting up your workspace…
+          </div>
+        )}
+
+        <button
+          onClick={() => { clearAuth(); window.location.href = "/login"; }}
+          className="mt-6 w-full text-[12px] text-muted-foreground text-center"
+        >
+          Sign out
+        </button>
+      </div>
+    </div>
+  );
+}

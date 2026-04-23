@@ -61,9 +61,9 @@ export interface Lead {
 
 export function classificationLabel(c: string): string {
   switch (c) {
-    case "new_lead":   return "New Lead";
-    case "warm_lead":  return "Warm Lead";
-    case "vip":        return "VIP / Depositor";
+    case "new_lead":   return "New";
+    case "warm_lead":  return "Warm";
+    case "vip":        return "VIP";
     case "affiliate":  return "Affiliate";
     case "noise":      return "Noise";
     default:           return c;
@@ -72,12 +72,12 @@ export function classificationLabel(c: string): string {
 
 export function classificationColor(c: string): string {
   switch (c) {
-    case "new_lead":   return "bg-blue-100 text-blue-700";
-    case "warm_lead":  return "bg-amber-100 text-amber-700";
-    case "vip":        return "bg-emerald-100 text-emerald-700";
-    case "affiliate":  return "bg-purple-100 text-purple-700";
-    case "noise":      return "bg-gray-100 text-gray-500";
-    default:           return "bg-gray-100 text-gray-500";
+    case "new_lead":   return "bg-blue-500/15 text-blue-500";
+    case "warm_lead":  return "bg-amber-500/15 text-amber-500";
+    case "vip":        return "bg-emerald-500/15 text-emerald-500";
+    case "affiliate":  return "bg-purple-500/15 text-purple-500";
+    case "noise":      return "bg-gray-500/15 text-gray-500";
+    default:           return "bg-gray-500/15 text-gray-500";
   }
 }
 

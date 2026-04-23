@@ -12,6 +12,7 @@ export interface AuthUser {
   workspace_name?: string;
   org_id?: number;
   org_role?: string;
+  onboarding_complete?: boolean;
 }
 
 const TOKEN_KEY = "crm_token";
@@ -26,7 +27,17 @@ export function saveAuth(user: AuthUser): void {
     workspace_name: user.workspace_name ?? null,
     org_id: user.org_id ?? 1,
     org_role: user.org_role ?? "member",
+    onboarding_complete: user.onboarding_complete ?? true,
   }));
+}
+
+export function markOnboardingComplete(): void {
+  const raw = localStorage.getItem(USER_KEY);
+  if (!raw) return;
+  try {
+    const parsed = JSON.parse(raw);
+    localStorage.setItem(USER_KEY, JSON.stringify({ ...parsed, onboarding_complete: true }));
+  } catch { /* ignore */ }
 }
 
 export function clearAuth(): void {
@@ -38,12 +49,12 @@ export function getToken(): string | null {
   return localStorage.getItem(TOKEN_KEY);
 }
 
-export function getStoredUser(): { username: string; role: Role; workspace_id: number; workspace_name: string | null; org_id: number; org_role: string } | null {
+export function getStoredUser(): { username: string; role: Role; workspace_id: number; workspace_name: string | null; org_id: number; org_role: string; onboarding_complete: boolean } | null {
   const raw = localStorage.getItem(USER_KEY);
   if (!raw) return null;
   try {
     const parsed = JSON.parse(raw);
-    return { workspace_id: 1, workspace_name: null, org_id: 1, org_role: "member", ...parsed };
+    return { workspace_id: 1, workspace_name: null, org_id: 1, org_role: "member", onboarding_complete: true, ...parsed };
   } catch { return null; }
 }
 
@@ -98,6 +109,7 @@ export async function login(username: string, password: string): Promise<AuthUse
   const user: AuthUser = {
     username: data.username, role: data.role, token: data.access_token,
     workspace_id: data.workspace_id ?? 1, org_id: data.org_id ?? 1, org_role: data.org_role ?? "member",
+    onboarding_complete: data.onboarding_complete ?? true,
   };
   saveAuth(user);
   return user;

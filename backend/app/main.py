@@ -506,6 +506,7 @@ def login(request: Request, req: LoginRequest, db: Session = Depends(get_db)):
         "workspace_id": ws_id,
         "org_id": org_id,
         "org_role": org_role,
+        "onboarding_complete": (bool(ws.onboarding_complete) if ws else True) if user["role"] == "affiliate" else True,
     }
 
 
@@ -869,6 +870,21 @@ def bot_register_webhook(
         raise HTTPException(status_code=502, detail=result.get("description", "setWebhook failed"))
 
     return {"ok": True, "webhook_url": webhook_url}
+
+
+@app.post("/settings/onboarding/complete")
+def complete_onboarding(
+    db: Session = Depends(get_db),
+    workspace_id: int = Depends(get_workspace_id),
+    _=Depends(require_roles("affiliate", "developer", "admin")),
+):
+    """Mark the affiliate workspace onboarding as complete."""
+    from app.database.models import Workspace
+    ws = db.query(Workspace).filter(Workspace.id == workspace_id).first()
+    if ws:
+        ws.onboarding_complete = True
+        db.commit()
+    return {"ok": True}
 
 
 class TelegramAuthRequest(BaseModel):

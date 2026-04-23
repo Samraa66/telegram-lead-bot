@@ -194,6 +194,7 @@ def _ensure_columns() -> None:
             ("parent_workspace_id", "INTEGER"),
             ("root_workspace_id", "INTEGER"),
             ("workspace_role", "TEXT DEFAULT 'owner'"),
+            ("onboarding_complete", "BOOLEAN DEFAULT FALSE"),
         ]
         for col, ddl in ws_needed:
             if col not in existing_ws:

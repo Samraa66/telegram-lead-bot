@@ -71,6 +71,7 @@ export function LeadList({
   const [classFilter, setClassFilter] = useState<ClassificationFilter>("all");
   const [stageFilter, setStageFilter] = useState<StageFilter>("all");
   const [sortMode, setSortMode] = useState<SortMode>("waiting");
+  const [stageRowOpen, setStageRowOpen] = useState(false);
 
   function cycleSortMode() {
     setSortMode((prev) => {
@@ -131,10 +132,24 @@ export function LeadList({
     <div className="flex flex-col h-full bg-[hsl(var(--ios-grouped-bg))]">
       {/* Sticky search + filter header */}
       <div className="bg-card/80 backdrop-blur-xl sticky top-0 z-10">
-        <div className="px-4 pt-2 pb-1">
+        <div className="px-4 pt-2 pb-1 flex items-center justify-between">
           <p className="text-xs text-muted-foreground">
-            {totalLeads} total · {unreadCount} unread
+            {totalLeads} total
+            {unreadCount > 0 && (
+              <> · <span className="text-primary font-medium">{unreadCount} unread</span></>
+            )}
+            {urgentCount > 0 && (
+              <> · <span className="text-destructive font-medium">{urgentCount} urgent</span></>
+            )}
           </p>
+          {/* Desktop sort button lives here on desktop */}
+          <button
+            onClick={cycleSortMode}
+            className="hidden md:flex items-center gap-1 px-2.5 py-1 rounded-full bg-secondary text-muted-foreground text-[11px] font-semibold whitespace-nowrap active:bg-accent transition-all"
+          >
+            <ArrowUpDown className="h-3 w-3" />
+            {sortMode === "waiting" ? "Longest" : sortMode === "active" ? "Active" : "Newest"}
+          </button>
         </div>
 
         {/* Search */}
@@ -150,7 +165,7 @@ export function LeadList({
           </div>
         </div>
 
-        {/* Classification filter pills */}
+        {/* Classification filter pills + mobile controls */}
         <div className="px-4 pb-1 flex gap-1.5 overflow-x-auto scrollbar-hide">
           {CLASSIFICATION_FILTERS.map(({ key, label }) => (
             <button
@@ -166,10 +181,34 @@ export function LeadList({
               {label}
             </button>
           ))}
+          {/* Mobile: sort + stage toggle at end of row */}
+          <div className="md:hidden ml-auto flex gap-1.5 shrink-0 pl-1">
+            <button
+              onClick={cycleSortMode}
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-full bg-secondary text-muted-foreground text-[12px] font-semibold whitespace-nowrap active:bg-accent transition-all"
+            >
+              <ArrowUpDown className="h-3 w-3" />
+              {sortMode === "waiting" ? "Longest" : sortMode === "active" ? "Active" : "Newest"}
+            </button>
+            <button
+              onClick={() => setStageRowOpen((s) => !s)}
+              className={cn(
+                "px-3 py-1.5 rounded-full text-[12px] font-semibold whitespace-nowrap transition-all",
+                stageFilter !== "all" || stageRowOpen
+                  ? "bg-foreground text-background"
+                  : "bg-secondary text-muted-foreground active:bg-accent",
+              )}
+            >
+              Stage{stageFilter !== "all" ? " ·" : ""}
+            </button>
+          </div>
         </div>
 
-        {/* Stage filter pills + sort button */}
-        <div className="px-4 pb-2 flex items-center gap-1.5">
+        {/* Stage filter pills — always on desktop, toggleable on mobile */}
+        <div className={cn(
+          "px-4 pb-2 items-center gap-1.5",
+          stageRowOpen ? "flex" : "hidden md:flex",
+        )}>
           <div className="flex-1 flex gap-1.5 overflow-x-auto scrollbar-hide">
             <button
               onClick={() => setStageFilter("all")}
@@ -197,57 +236,35 @@ export function LeadList({
               </button>
             ))}
           </div>
-
-          {/* Sort cycle button */}
-          <button
-            onClick={cycleSortMode}
-            className="shrink-0 flex items-center gap-1 px-2.5 py-1 rounded-full bg-secondary text-muted-foreground text-[11px] font-semibold whitespace-nowrap active:bg-accent transition-all"
-            title={SORT_MODES.find((s) => s.key === sortMode)?.label}
-          >
-            <ArrowUpDown className="h-3 w-3" />
-            {sortMode === "waiting"
-              ? "Longest"
-              : sortMode === "active"
-                ? "Active"
-                : "Newest"}
-          </button>
         </div>
       </div>
 
-      {/* Stats cards - iOS grouped style */}
-      <div className="px-4 py-3 grid grid-cols-4 gap-2">
+      {/* Stats cards — desktop only */}
+      <div className="hidden md:grid px-4 py-3 grid-cols-4 gap-2">
         <div className="ios-card p-2.5 text-center">
           <Users className="h-4 w-4 text-primary mx-auto mb-1" />
-          <p className="text-lg font-bold text-foreground leading-none">
-            {totalLeads}
-          </p>
+          <p className="text-lg font-bold text-foreground leading-none">{totalLeads}</p>
           <p className="text-[10px] text-muted-foreground mt-0.5">Total</p>
         </div>
         <div className="ios-card p-2.5 text-center">
           <MessageCircle className="h-4 w-4 text-stage-new mx-auto mb-1" />
-          <p className="text-lg font-bold text-foreground leading-none">
-            {unreadCount}
-          </p>
+          <p className="text-lg font-bold text-foreground leading-none">{unreadCount}</p>
           <p className="text-[10px] text-muted-foreground mt-0.5">Unread</p>
         </div>
         <div className="ios-card p-2.5 text-center">
           <Clock className="h-4 w-4 text-stage-hesitant mx-auto mb-1" />
-          <p className="text-lg font-bold text-foreground leading-none">
-            {urgentCount}
-          </p>
+          <p className="text-lg font-bold text-foreground leading-none">{urgentCount}</p>
           <p className="text-[10px] text-muted-foreground mt-0.5">Urgent</p>
         </div>
         <div className="ios-card p-2.5 text-center">
           <TrendingUp className="h-4 w-4 text-stage-deposited mx-auto mb-1" />
-          <p className="text-lg font-bold text-foreground leading-none">
-            {depositedCount}
-          </p>
+          <p className="text-lg font-bold text-foreground leading-none">{depositedCount}</p>
           <p className="text-[10px] text-muted-foreground mt-0.5">Converted</p>
         </div>
       </div>
 
       {/* Leads list - iOS grouped table style */}
-      <div className="flex-1 overflow-y-auto px-4 pb-4">
+      <div className="flex-1 overflow-y-auto px-4 pb-8 md:pb-4">
         <div className="ios-card overflow-hidden divide-y divide-[hsl(var(--ios-separator))]">
           {filtered.map((lead) => {
             const urgency = getUrgencyLevel(lead.stageEnteredAt);

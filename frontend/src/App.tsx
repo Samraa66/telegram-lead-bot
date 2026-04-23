@@ -7,20 +7,24 @@ import AnalyticsPage from "./pages/AnalyticsPage";
 import MembersPage from "./pages/MembersPage";
 import AffiliatesPage from "./pages/AffiliatesPage";
 import SettingsPage from "./pages/SettingsPage";
-import AffiliateSelfDashboard from "./pages/AffiliateSelfDashboard";
+import OnboardingPage from "./pages/OnboardingPage";
 
 function PrivateRoute({ element, roles }: { element: React.ReactElement; roles?: string[] }) {
   if (!getToken()) return <Navigate to="/login" replace />;
   const user = getStoredUser();
-  if (user?.role === "affiliate") return <Navigate to="/portal" replace />;
+  // Affiliates who haven't finished onboarding go to the wizard first
+  if (user?.role === "affiliate" && !user.onboarding_complete) {
+    return <Navigate to="/onboarding" replace />;
+  }
   if (roles && !roles.includes(user?.role || "")) return <Navigate to="/" replace />;
   return element;
 }
 
-function AffiliateRoute({ element }: { element: React.ReactElement }) {
+function OnboardingRoute({ element }: { element: React.ReactElement }) {
   if (!getToken()) return <Navigate to="/login" replace />;
   const user = getStoredUser();
-  if (user?.role !== "affiliate") return <Navigate to="/" replace />;
+  // Already done — send them to the app
+  if (user?.onboarding_complete) return <Navigate to="/" replace />;
   return element;
 }
 
@@ -28,13 +32,15 @@ const App = () => (
   <BrowserRouter>
     <Routes>
       <Route path="/login" element={<Login />} />
-      <Route path="/portal" element={<AffiliateRoute element={<AffiliateSelfDashboard />} />} />
+      <Route path="/onboarding" element={<OnboardingRoute element={<OnboardingPage />} />} />
       <Route path="/" element={<PrivateRoute element={<Dashboard />} />} />
-      <Route path="/leads" element={<PrivateRoute element={<LeadsPage />} roles={["developer", "admin", "operator"]} />} />
-      <Route path="/analytics" element={<PrivateRoute element={<AnalyticsPage />} roles={["developer", "admin", "operator"]} />} />
+      <Route path="/leads" element={<PrivateRoute element={<LeadsPage />} roles={["developer", "admin", "operator", "affiliate"]} />} />
+      <Route path="/analytics" element={<PrivateRoute element={<AnalyticsPage />} roles={["developer", "admin", "operator", "affiliate"]} />} />
       <Route path="/members" element={<PrivateRoute element={<MembersPage />} roles={["developer", "admin", "vip_manager"]} />} />
       <Route path="/affiliates" element={<PrivateRoute element={<AffiliatesPage />} roles={["developer", "admin"]} />} />
       <Route path="/settings" element={<PrivateRoute element={<SettingsPage />} />} />
+      {/* Legacy portal redirect — affiliates now use the full CRM */}
+      <Route path="/portal" element={<Navigate to="/" replace />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   </BrowserRouter>

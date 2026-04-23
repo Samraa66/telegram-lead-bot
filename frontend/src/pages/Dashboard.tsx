@@ -8,8 +8,18 @@ import DepositsChart from "@/components/DepositsChart";
 import { fetchOverview, Overview } from "@/api/analytics";
 import { fetchAffiliatePerformance } from "@/api/affiliates";
 import { fetchMembers } from "@/api/members";
+import { getStoredUser } from "@/api/auth";
+import AffiliateSelfDashboard from "./AffiliateSelfDashboard";
 
 const Dashboard = () => {
+  const user = getStoredUser();
+  if (user?.role === "affiliate") {
+    return (
+      <AppLayout>
+        <AffiliateSelfDashboard />
+      </AppLayout>
+    );
+  }
   const [overview, setOverview] = useState<Overview | null>(null);
   const [affiliateCount, setAffiliateCount] = useState<number | null>(null);
   const [memberCount, setMemberCount] = useState<number | null>(null);

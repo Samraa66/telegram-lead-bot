@@ -195,6 +195,8 @@ class Workspace(Base):
     webhook_secret = Column(String(255), nullable=True)
     # Telethon operator session — StringSession serialized string
     telethon_session = Column(Text, nullable=True)
+    # Affiliate onboarding — flipped to True once wizard is completed
+    onboarding_complete = Column(Boolean, default=False)
 
 
 class StageKeyword(Base):

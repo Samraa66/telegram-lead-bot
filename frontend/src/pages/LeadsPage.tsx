@@ -98,7 +98,7 @@ export default function LeadsPage() {
           {error}
         </div>
       )}
-      <div className="h-[calc(100dvh-8rem)] md:h-[calc(100dvh-4rem)] -mt-4 md:-mt-8 -mx-4 md:-mx-8">
+      <div className="h-[calc(100dvh-4.5rem)] md:h-[calc(100dvh-2rem)] -mt-4 md:-mt-8 -mx-4 md:-mx-8">
         <LeadList leads={leads} selectedLeadId={selectedLeadId} onSelectLead={handleSelectLead} />
       </div>
       <LeadDrawer

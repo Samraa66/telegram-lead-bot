@@ -1,11 +1,10 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import {
   Copy, Check, Users, TrendingUp, DollarSign, Trophy,
-  ChevronDown, ChevronUp, LogOut,
+  ChevronDown, ChevronUp,
 } from "lucide-react";
 import { fetchMyProfile, updateMyChecklist, AffiliateProfile } from "../api/affiliateMe";
 import { AffiliateChecklist } from "../api/affiliates";
-import { clearAuth } from "../api/auth";
 import { cn } from "../lib/utils";
 
 // ---------------------------------------------------------------------------
@@ -272,24 +271,15 @@ export default function AffiliateSelfDashboard() {
   const pct = Math.round((done / TOTAL) * 100);
 
   return (
-    <div className="flex flex-col h-full bg-[hsl(var(--ios-grouped-bg))] overflow-y-auto">
+    <div className="flex flex-col">
 
-      {/* Header */}
-      <div className="bg-card/80 backdrop-blur-xl sticky top-0 z-10 px-4 pt-3 pb-3 flex items-center justify-between border-b border-[hsl(var(--ios-separator))]">
-        <div>
-          <p className="text-[15px] font-bold text-foreground">{profile.name}</p>
-          <p className="text-[11px] text-muted-foreground">Affiliate Portal</p>
-        </div>
-        <button
-          onClick={() => { clearAuth(); window.location.href = "/login"; }}
-          className="p-2 text-muted-foreground"
-        >
-          <LogOut className="h-4 w-4" />
-        </button>
+      <div className="mb-6">
+        <h2 className="text-2xl font-bold text-foreground">{profile.name}</h2>
+        <p className="text-sm text-muted-foreground mt-1">Affiliate dashboard</p>
       </div>
 
       {/* Referral link */}
-      <div className="px-4 pt-4">
+      <div className="mb-4">
         <div className="ios-card p-4 space-y-2">
           <p className="text-[11px] text-muted-foreground font-semibold uppercase tracking-wider">Your Referral Link</p>
           {profile.referral_link ? (
@@ -305,7 +295,7 @@ export default function AffiliateSelfDashboard() {
       </div>
 
       {/* Stats */}
-      <div className="px-4 pt-3 grid grid-cols-4 gap-2">
+      <div className="grid grid-cols-4 gap-2 mb-4">
         {[
           { icon: <Users className="h-4 w-4 text-primary mx-auto mb-1" />, value: profile.leads, label: "Leads" },
           { icon: <TrendingUp className="h-4 w-4 text-stage-deposited mx-auto mb-1" />, value: profile.deposits, label: "Deposits" },
@@ -321,7 +311,7 @@ export default function AffiliateSelfDashboard() {
       </div>
 
       {/* Setup progress */}
-      <div className="px-4 pt-4">
+      <div className="mb-4">
         <div className="flex items-center justify-between mb-2">
           <p className="text-[11px] text-muted-foreground font-semibold uppercase tracking-wider">Setup Progress</p>
           <span className={cn(
@@ -340,7 +330,7 @@ export default function AffiliateSelfDashboard() {
       </div>
 
       {/* Checklist steps */}
-      <div className="px-4 pt-3 pb-8">
+      <div className="pb-8">
         <div className="ios-card overflow-hidden">
           {STEPS.map((step) => (
             <StepRow
