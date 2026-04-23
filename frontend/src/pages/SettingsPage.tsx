@@ -859,6 +859,62 @@ function BotTab() {
 
 type TelethonStep = "idle" | "phone" | "otp" | "connected";
 
+type ForwardingStatus = {
+  telethon_running: boolean;
+  source_configured: boolean;
+  destination_count: number;
+  active: boolean;
+} | null;
+
+function ForwardingStatusCard() {
+  const [status, setStatus] = useState<ForwardingStatus>(null);
+
+  useEffect(() => {
+    fetch(`${API_BASE}/settings/forwarding/status`, { headers: authHeaders() })
+      .then(r => r.json())
+      .then(setStatus)
+      .catch(() => {});
+  }, []);
+
+  if (!status) return null;
+
+  const checks = [
+    { label: "Operator account",      ok: status.telethon_running   },
+    { label: "Source channel",        ok: status.source_configured  },
+    { label: "Destination channels",  ok: status.destination_count > 0,
+      detail: status.destination_count > 0 ? `${status.destination_count} channel${status.destination_count !== 1 ? "s" : ""}` : "none" },
+  ];
+
+  return (
+    <div className={cn(
+      "rounded-lg border p-4 space-y-3",
+      status.active ? "bg-green-50 border-green-200" : "bg-amber-50 border-amber-200"
+    )}>
+      <div className="flex items-center gap-2">
+        <span className={cn(
+          "h-2.5 w-2.5 rounded-full shrink-0",
+          status.active ? "bg-green-500 animate-pulse" : "bg-amber-400"
+        )} />
+        <p className={cn(
+          "text-sm font-semibold",
+          status.active ? "text-green-800" : "text-amber-800"
+        )}>
+          Signal forwarding {status.active ? "active" : "inactive"}
+        </p>
+      </div>
+      <div className="space-y-1.5">
+        {checks.map(({ label, ok, detail }) => (
+          <div key={label} className="flex items-center gap-2 text-xs">
+            <span className={cn("h-1.5 w-1.5 rounded-full shrink-0", ok ? "bg-green-500" : "bg-gray-300")} />
+            <span className={cn(ok ? "text-green-700" : "text-muted-foreground")}>{label}</span>
+            {detail && <span className="text-muted-foreground">— {detail}</span>}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function TelegramTab() {
   const [connected, setConnected] = useState<boolean | null>(null);
   const [step, setStep] = useState<TelethonStep>("idle");
@@ -1021,6 +1077,8 @@ function TelegramTab() {
           {error && <p className="text-xs text-red-500">{error}</p>}
         </div>
       )}
+
+      <ForwardingStatusCard />
     </div>
   );
 }

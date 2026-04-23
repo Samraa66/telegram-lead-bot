@@ -683,6 +683,29 @@ def telethon_status(
     return {"connected": get_client(workspace_id) is not None}
 
 
+@app.get("/settings/forwarding/status")
+def forwarding_status(
+    workspace_id: int = Depends(get_workspace_id),
+    _=Depends(require_roles("developer", "admin")),
+):
+    """Return signal forwarding health: operator running, source set, destinations configured."""
+    from app.services.telethon_client import get_client
+    from app.services.forwarding import get_all_destination_channels
+    from app.config import SOURCE_CHANNEL_ID
+
+    telethon_running = get_client(workspace_id) is not None
+    source_configured = bool(SOURCE_CHANNEL_ID)
+    destinations = get_all_destination_channels()
+    destination_count = len(destinations)
+
+    return {
+        "telethon_running": telethon_running,
+        "source_configured": source_configured,
+        "destination_count": destination_count,
+        "active": telethon_running and source_configured and destination_count > 0,
+    }
+
+
 @app.post("/settings/telethon/connect")
 async def telethon_connect(
     req: TelethonConnectRequest,
