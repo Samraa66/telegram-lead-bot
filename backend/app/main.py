@@ -689,20 +689,23 @@ def forwarding_status(
     _=Depends(require_roles("developer", "admin")),
 ):
     """Return signal forwarding health: operator running, source set, destinations configured."""
-    from app.services.telethon_client import get_client
     from app.services.forwarding import get_all_destination_channels
-    from app.config import SOURCE_CHANNEL_ID
+    from app.config import SOURCE_CHANNEL_ID, BOT_TOKEN
+    from app.database.models import Workspace
 
-    telethon_running = get_client(workspace_id) is not None
+    ws = db.query(Workspace).filter(Workspace.id == workspace_id).first()
+    bot_token = (ws.bot_token if ws else None) or (BOT_TOKEN if workspace_id == 1 else None)
+
     source_configured = bool(SOURCE_CHANNEL_ID)
     destinations = get_all_destination_channels()
     destination_count = len(destinations)
+    bot_configured = bool(bot_token)
 
     return {
-        "telethon_running": telethon_running,
+        "bot_configured": bot_configured,
         "source_configured": source_configured,
         "destination_count": destination_count,
-        "active": telethon_running and source_configured and destination_count > 0,
+        "active": bot_configured and source_configured and destination_count > 0,
     }
 
 

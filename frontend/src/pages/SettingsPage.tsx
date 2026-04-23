@@ -851,6 +851,8 @@ function BotTab() {
           )}
         </div>
       </div>
+
+      <ForwardingStatusCard />
     </div>
   );
 }
@@ -860,7 +862,7 @@ function BotTab() {
 type TelethonStep = "idle" | "phone" | "otp" | "connected";
 
 type ForwardingStatus = {
-  telethon_running: boolean;
+  bot_configured: boolean;
   source_configured: boolean;
   destination_count: number;
   active: boolean;
@@ -879,9 +881,9 @@ function ForwardingStatusCard() {
   if (!status) return null;
 
   const checks = [
-    { label: "Operator account",      ok: status.telethon_running   },
-    { label: "Source channel",        ok: status.source_configured  },
-    { label: "Destination channels",  ok: status.destination_count > 0,
+    { label: "Bot token",            ok: status.bot_configured    },
+    { label: "Source channel",       ok: status.source_configured },
+    { label: "Destination channels", ok: status.destination_count > 0,
       detail: status.destination_count > 0 ? `${status.destination_count} channel${status.destination_count !== 1 ? "s" : ""}` : "none" },
   ];
 
@@ -1078,7 +1080,6 @@ function TelegramTab() {
         </div>
       )}
 
-      <ForwardingStatusCard />
     </div>
   );
 }
