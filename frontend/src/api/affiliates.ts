@@ -53,9 +53,16 @@ export interface AffiliatePerformance extends AffiliateChecklist {
   commission_earned: number;
   is_active: boolean;
   created_at: string;
-  // Returned once at creation only
+  // Returned once at creation — admin sends this URL to the affiliate
   login_username?: string;
-  login_password?: string;
+  invite_url?: string;
+  invite_expires_at?: string | null;
+}
+
+export interface InviteHandoff {
+  login_username: string;
+  invite_url: string;
+  invite_expires_at: string | null;
 }
 
 export interface CreateAffiliatePayload {
@@ -116,3 +123,41 @@ export const triggerChannelSync = (): Promise<void> =>
 
 export const deleteAffiliate = (affiliateId: number): Promise<void> =>
   apiFetch(`/affiliates/${affiliateId}`, { method: "DELETE" });
+
+export const resetAffiliateCredentials = (affiliateId: number): Promise<InviteHandoff> =>
+  apiFetch(`/affiliates/${affiliateId}/reset-credentials`, { method: "POST" });
+
+// Public invite endpoints — no auth required
+export interface InviteInfo {
+  name: string;
+  login_username: string;
+  expires_at: string | null;
+}
+
+export const lookupInvite = async (token: string): Promise<InviteInfo> => {
+  const res = await fetch(`${API_BASE}/invite/${encodeURIComponent(token)}`);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data?.detail || `Invite lookup failed (${res.status})`);
+  return data;
+};
+
+export interface InviteAcceptResponse {
+  access_token: string;
+  role: string;
+  username: string;
+  workspace_id: number;
+  org_id: number;
+  org_role: string;
+  onboarding_complete: boolean;
+}
+
+export const acceptInvite = async (token: string, password: string): Promise<InviteAcceptResponse> => {
+  const res = await fetch(`${API_BASE}/invite/${encodeURIComponent(token)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ password }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data?.detail || `Failed to accept invite (${res.status})`);
+  return data;
+};

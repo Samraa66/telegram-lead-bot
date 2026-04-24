@@ -6,6 +6,7 @@ import {
   deleteAffiliate,
   updateAffiliateLots,
   updateAffiliateChecklist,
+  resetAffiliateCredentials,
   fetchPendingChannels,
   linkChannel,
   dismissPendingChannel,
@@ -61,85 +62,16 @@ function AddAffiliateModal({ onClose, onCreated }: AddAffiliateModalProps) {
     } catch {}
   };
 
-  // --- Credentials screen (after create) ---
+  // --- Invite handoff screen (after create) ---
   if (created) {
-    const loginUrl = `${window.location.origin}/login`;
-    const handoff =
-`Hi ${created.name}, welcome to Telelytics 👋
-
-Your login:
-URL: ${loginUrl}
-Username: ${created.login_username}
-Password: ${created.login_password}
-
-What to do next:
-1. Log in with the credentials above.
-2. A 3-step wizard will walk you through the minimum setup:
-   • Connect your Telegram bot (create one via @BotFather, paste the token)
-   • Connect your operator Telegram account (phone + OTP)
-   • Link your VIP channel (paste the channel ID)
-3. After the wizard, you'll land on your dashboard with a full 9-step checklist
-   covering the rest (eSIM, free channel, tutorial channel, sales scripts,
-   PU Prime IB, Meta Pixel, ads).
-
-Once your bot + operator + VIP are live, leads from your ads will flow straight
-into your CRM and trade signals will forward to your VIP channel automatically.`;
-    const rows: { label: string; value: string; key: string; mono?: boolean }[] = [
-      { label: "Login URL", value: loginUrl, key: "url" },
-      { label: "Username",  value: created.login_username || "", key: "user", mono: true },
-      { label: "Password",  value: created.login_password || "", key: "pass", mono: true },
-    ];
     return (
-      <>
-        <div className="fixed inset-0 bg-black/50 z-40" onClick={onClose} />
-        <div className="fixed inset-x-4 top-1/2 -translate-y-1/2 z-50 bg-card rounded-2xl shadow-xl p-5 max-w-sm mx-auto space-y-4">
-          <div className="flex items-center justify-between">
-            <p className="text-sm font-bold text-foreground">Affiliate Created</p>
-            <button onClick={onClose} className="p-1.5 text-muted-foreground">
-              <X className="h-4 w-4" />
-            </button>
-          </div>
-
-          <div className="rounded-xl bg-amber-500/10 border border-amber-500/30 p-3 text-[12px] text-amber-700 dark:text-amber-400">
-            <p className="font-semibold mb-0.5">Copy these credentials now</p>
-            <p>The password is not stored in plaintext and will never be shown again. Send it to {created.name} through a secure channel.</p>
-          </div>
-
-          <div className="space-y-2">
-            {rows.map(r => (
-              <div key={r.key} className="flex items-center justify-between gap-2 bg-secondary rounded-xl px-3 py-2">
-                <div className="min-w-0 flex-1">
-                  <p className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider">{r.label}</p>
-                  <p className={cn("text-[13px] text-foreground truncate", r.mono && "font-mono")}>{r.value}</p>
-                </div>
-                <button
-                  onClick={() => copy(r.value, r.key)}
-                  className="shrink-0 text-primary p-1"
-                  title="Copy"
-                >
-                  {copied === r.key ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-                </button>
-              </div>
-            ))}
-          </div>
-
-          <button
-            onClick={() => copy(handoff, "all")}
-            className="w-full py-2.5 rounded-xl bg-primary text-primary-foreground text-sm font-semibold flex items-center justify-center gap-2"
-          >
-            {copied === "all"
-              ? <><Check className="h-4 w-4" /> Copied handoff message</>
-              : <><Copy className="h-4 w-4" /> Copy ready-to-send message</>}
-          </button>
-
-          <button
-            onClick={onClose}
-            className="w-full py-2 text-xs text-muted-foreground"
-          >
-            Done — I've saved the credentials
-          </button>
-        </div>
-      </>
+      <InviteHandoffModal
+        name={created.name}
+        inviteUrl={created.invite_url || ""}
+        loginUsername={created.login_username || ""}
+        expiresAt={created.invite_expires_at || null}
+        onClose={onClose}
+      />
     );
   }
 
@@ -476,69 +408,97 @@ function LotsEditor({ affiliate, onSaved }: LotsEditorProps) {
 }
 
 // ---------------------------------------------------------------------------
-// Credentials Modal (shown once after affiliate creation)
+// Invite handoff modal — shown after affiliate creation or credential reset.
+// Replaces the old "here's the password, copy it once" UX with a one-time
+// invite URL the admin shares; the affiliate sets their own password.
 // ---------------------------------------------------------------------------
 
-interface CredentialsModalProps {
+interface InviteHandoffModalProps {
   name: string;
-  username: string;
-  password: string;
+  inviteUrl: string;
+  loginUsername: string;
+  expiresAt: string | null;
+  /** "created" = brand-new affiliate, "reset" = existing affiliate's credentials were reset */
+  mode?: "created" | "reset";
   onClose: () => void;
 }
 
-function CredentialsModal({ name, username, password, onClose }: CredentialsModalProps) {
-  const [copiedAll, setCopiedAll] = useState(false);
-  const dashboardUrl = window.location.origin + "/portal";
-  const fullText = `Dashboard: ${dashboardUrl}\nUsername: ${username}\nPassword: ${password}`;
+function InviteHandoffModal({ name, inviteUrl, loginUsername, expiresAt, mode = "created", onClose }: InviteHandoffModalProps) {
+  const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
-  const copyAll = () => {
-    navigator.clipboard.writeText(fullText).catch(() => {});
-    setCopiedAll(true);
-    setTimeout(() => setCopiedAll(false), 2000);
+  const copy = (value: string, key: string) => {
+    navigator.clipboard.writeText(value).catch(() => {});
+    setCopiedKey(key);
+    setTimeout(() => setCopiedKey(null), 1800);
   };
+
+  const handoff =
+`Hi ${name}, welcome to Telelytics 👋
+
+Click the link below to set your password and activate your workspace:
+${inviteUrl}
+
+Your username will be: ${loginUsername}
+
+Once you're in, a short wizard will walk you through connecting your Telegram bot, operator account, and VIP channel. After that you're live — leads from your ads flow into your CRM and signals forward to your VIP channel automatically.`;
+
+  const expiresLabel = expiresAt
+    ? new Date(expiresAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })
+    : null;
+
+  const title = mode === "reset" ? "Credentials reset" : "Invite created";
+  const blurb = mode === "reset"
+    ? "Their old password is now invalid. Send them the link below to set a new one."
+    : "Send this link to the affiliate. They'll set their own password and be logged straight in.";
 
   return (
     <>
-      <div className="fixed inset-0 bg-black/60 z-40" />
-      <div className="fixed inset-x-4 top-1/2 -translate-y-1/2 z-50 bg-card rounded-2xl shadow-xl p-5 max-w-sm mx-auto space-y-4">
+      <div className="fixed inset-0 bg-black/60 z-40" onClick={onClose} />
+      <div className="fixed inset-x-4 top-1/2 -translate-y-1/2 z-50 surface-card shadow-2xl p-5 max-w-sm mx-auto space-y-4">
         <div className="flex items-center justify-between">
-          <p className="text-sm font-bold text-foreground">Login Created — {name}</p>
-          <button onClick={onClose} className="p-1.5 text-muted-foreground"><X className="h-4 w-4" /></button>
+          <p className="text-sm font-semibold text-foreground">{title} — {name}</p>
+          <button onClick={onClose} className="p-1.5 text-muted-foreground hover:text-foreground rounded-md" aria-label="Close">
+            <X className="h-4 w-4" />
+          </button>
         </div>
 
-        <p className="text-[12px] text-muted-foreground">
-          Share these credentials with the affiliate. The password is only shown once.
-        </p>
+        <p className="text-xs text-muted-foreground leading-relaxed">{blurb}</p>
 
-        <div className="bg-secondary rounded-xl p-3.5 space-y-2 font-mono text-[12px]">
-          <div className="flex items-center justify-between">
-            <span className="text-muted-foreground">Dashboard</span>
-            <span className="text-foreground truncate max-w-[150px]">{dashboardUrl}</span>
+        {/* Invite URL — primary piece */}
+        <div className="bg-secondary/60 border border-border rounded-lg px-3 py-2.5 space-y-1.5">
+          <p className="eyebrow">Invite link</p>
+          <div className="flex items-center gap-2">
+            <p className="flex-1 text-xs text-foreground font-mono truncate">{inviteUrl}</p>
+            <button
+              onClick={() => copy(inviteUrl, "url")}
+              className="shrink-0 text-primary hover:bg-primary/10 p-1.5 rounded-md transition-colors"
+              title="Copy link"
+            >
+              {copiedKey === "url" ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+            </button>
           </div>
-          <div className="flex items-center justify-between">
-            <span className="text-muted-foreground">Username</span>
-            <span className="text-foreground">{username}</span>
-          </div>
-          <div className="flex items-center justify-between">
-            <span className="text-muted-foreground">Password</span>
-            <span className="text-primary font-bold">{password}</span>
-          </div>
+          {expiresLabel && (
+            <p className="text-[11px] text-muted-foreground">Expires {expiresLabel}</p>
+          )}
+        </div>
+
+        {/* Username (informational) */}
+        <div className="flex items-center justify-between gap-2 text-xs">
+          <span className="text-muted-foreground">Their username will be</span>
+          <span className="font-mono text-foreground">{loginUsername}</span>
         </div>
 
         <button
-          onClick={copyAll}
-          className={cn(
-            "w-full py-2.5 rounded-xl text-sm font-semibold flex items-center justify-center gap-2 transition-colors",
-            copiedAll
-              ? "bg-stage-deposited/15 text-stage-deposited"
-              : "bg-primary text-primary-foreground"
-          )}
+          onClick={() => copy(handoff, "all")}
+          className="w-full h-10 rounded-lg bg-primary text-primary-foreground font-semibold text-sm flex items-center justify-center gap-2 hover:bg-primary/90 transition-colors"
         >
-          {copiedAll ? <><Check className="h-4 w-4" /> Copied!</> : <><Copy className="h-4 w-4" /> Copy All to Share</>}
+          {copiedKey === "all"
+            ? <><Check className="h-4 w-4" /> Copied ready-to-send message</>
+            : <><Copy className="h-4 w-4" /> Copy ready-to-send message</>}
         </button>
 
-        <button onClick={onClose} className="w-full text-center text-[12px] text-muted-foreground py-1">
-          I've saved the credentials
+        <button onClick={onClose} className="w-full text-center text-xs text-muted-foreground hover:text-foreground py-1 transition-colors">
+          Done
         </button>
       </div>
     </>
@@ -632,7 +592,9 @@ export default function AffiliatesDashboard() {
   const [showAddModal, setShowAddModal] = useState(false);
   const [copiedTag, setCopiedTag] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
-  const [newCredentials, setNewCredentials] = useState<{ username: string; password: string; name: string } | null>(null);
+  const [inviteHandoff, setInviteHandoff] = useState<
+    { name: string; invite_url: string; login_username: string; expires_at: string | null; mode: "created" | "reset" } | null
+  >(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -693,6 +655,22 @@ export default function AffiliatesDashboard() {
       setAffiliates((prev) => prev.filter((a) => a.id !== affiliateId));
     } catch {
       alert("Failed to delete affiliate.");
+    }
+  };
+
+  const handleResetCredentials = async (aff: AffiliatePerformance) => {
+    if (!window.confirm(`Reset credentials for ${aff.name}? Their existing password will stop working immediately.`)) return;
+    try {
+      const res = await resetAffiliateCredentials(aff.id);
+      setInviteHandoff({
+        name: aff.name,
+        invite_url: res.invite_url,
+        login_username: res.login_username,
+        expires_at: res.invite_expires_at,
+        mode: "reset",
+      });
+    } catch (e: any) {
+      alert(e?.message || "Failed to reset credentials");
     }
   };
 
@@ -879,6 +857,13 @@ export default function AffiliatesDashboard() {
                       </button>
                     )}
                     <button
+                      onClick={() => handleResetCredentials(aff)}
+                      className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-[11px] font-semibold text-muted-foreground bg-secondary hover:bg-secondary/70 hover:text-foreground transition-colors"
+                      title="Generate a new invite link and invalidate the current password"
+                    >
+                      <RefreshCw className="h-3 w-3" /> Reset login
+                    </button>
+                    <button
                       onClick={() => handleDelete(aff.id, aff.name)}
                       className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-[11px] font-semibold text-destructive bg-destructive/10 active:bg-destructive/20 transition-all"
                     >
@@ -905,20 +890,28 @@ export default function AffiliatesDashboard() {
           onClose={() => setShowAddModal(false)}
           onCreated={(affiliate) => {
             setAffiliates((prev) => [affiliate, ...prev]);
-            if (affiliate.login_username && affiliate.login_password) {
-              setNewCredentials({ username: affiliate.login_username, password: affiliate.login_password, name: affiliate.name });
+            if (affiliate.invite_url && affiliate.login_username) {
+              setInviteHandoff({
+                name: affiliate.name,
+                invite_url: affiliate.invite_url,
+                login_username: affiliate.login_username,
+                expires_at: affiliate.invite_expires_at ?? null,
+                mode: "created",
+              });
             }
           }}
         />
       )}
 
-      {/* Credentials reveal modal */}
-      {newCredentials && (
-        <CredentialsModal
-          name={newCredentials.name}
-          username={newCredentials.username}
-          password={newCredentials.password}
-          onClose={() => setNewCredentials(null)}
+      {/* Invite handoff modal — shown after create OR reset */}
+      {inviteHandoff && (
+        <InviteHandoffModal
+          name={inviteHandoff.name}
+          inviteUrl={inviteHandoff.invite_url}
+          loginUsername={inviteHandoff.login_username}
+          expiresAt={inviteHandoff.expires_at}
+          mode={inviteHandoff.mode}
+          onClose={() => setInviteHandoff(null)}
         />
       )}
     </div>

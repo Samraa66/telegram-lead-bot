@@ -8,6 +8,7 @@ import MembersPage from "./pages/MembersPage";
 import AffiliatesPage from "./pages/AffiliatesPage";
 import SettingsPage from "./pages/SettingsPage";
 import OnboardingPage from "./pages/OnboardingPage";
+import InvitePage from "./pages/InvitePage";
 
 function PrivateRoute({ element, roles }: { element: React.ReactElement; roles?: string[] }) {
   if (!getToken()) return <Navigate to="/login" replace />;
@@ -32,6 +33,7 @@ const App = () => (
   <BrowserRouter>
     <Routes>
       <Route path="/login" element={<Login />} />
+      <Route path="/invite/:token" element={<InvitePage />} />
       <Route path="/onboarding" element={<OnboardingRoute element={<OnboardingPage />} />} />
       <Route path="/" element={<PrivateRoute element={<Dashboard />} />} />
       <Route path="/leads" element={<PrivateRoute element={<LeadsPage />} roles={["developer", "admin", "operator", "affiliate"]} />} />

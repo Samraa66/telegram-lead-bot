@@ -27,6 +27,7 @@ from typing import Literal, Optional
 from fastapi import Depends, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
+from sqlalchemy import func
 
 from app.config import (
     ADMIN_PASSWORD, ADMIN_USERNAME,
@@ -94,35 +95,45 @@ def _user_map() -> dict:
 
 def authenticate_user(username: str, password: str, db=None) -> Optional[dict]:
     """
-    Check credentials against env-based users first, then DB affiliates.
-    Returns dict with username, role, and optionally affiliate_id.
+    Check credentials against env-based users first, then DB team members, then DB affiliates.
+    Username matching is case-insensitive and whitespace-trimmed so copy-paste
+    errors ("Jason.Rivera" vs "jason.rivera", trailing spaces) don't silently fail.
     """
-    # Static roles
-    user = _user_map().get(username)
-    if user:
-        if not secrets.compare_digest(password, user["password"]):
-            return None
-        return {"username": username, "role": user["role"]}
+    username = (username or "").strip()
+    password = (password or "").strip()
+    if not username or not password:
+        return None
+    username_lc = username.lower()
+
+    # Static roles — match env username case-insensitively too
+    for env_user, meta in _user_map().items():
+        if env_user.lower() == username_lc:
+            if not secrets.compare_digest(password, meta["password"] or ""):
+                return None
+            return {"username": env_user, "role": meta["role"]}
+
+    if db is None:
+        return None
 
     # Team member (DB-backed: operator / vip_manager / admin)
-    if db is not None:
-        from app.database.models import TeamMember
-        member = db.query(TeamMember).filter(
-            TeamMember.username == username,
-            TeamMember.is_active.is_(True),
-        ).first()
-        if member and verify_password(password, member.password_hash):
-            return {"username": username, "role": member.role, "team_member_id": member.id}
+    from app.database.models import TeamMember
+    member = (
+        db.query(TeamMember)
+        .filter(func.lower(TeamMember.username) == username_lc, TeamMember.is_active.is_(True))
+        .first()
+    )
+    if member and verify_password(password, member.password_hash or ""):
+        return {"username": member.username, "role": member.role, "team_member_id": member.id}
 
     # Affiliate (DB-backed)
-    if db is not None:
-        from app.database.models import Affiliate
-        aff = db.query(Affiliate).filter(
-            Affiliate.login_username == username,
-            Affiliate.is_active.is_(True),
-        ).first()
-        if aff and aff.login_password_hash and verify_password(password, aff.login_password_hash):
-            return {"username": username, "role": "affiliate", "affiliate_id": aff.id}
+    from app.database.models import Affiliate
+    aff = (
+        db.query(Affiliate)
+        .filter(func.lower(Affiliate.login_username) == username_lc, Affiliate.is_active.is_(True))
+        .first()
+    )
+    if aff and aff.login_password_hash and verify_password(password, aff.login_password_hash):
+        return {"username": aff.login_username, "role": "affiliate", "affiliate_id": aff.id}
 
     return None
 

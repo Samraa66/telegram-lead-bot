@@ -267,6 +267,9 @@ def _ensure_columns() -> None:
             ("login_password_hash", "TEXT"),
             ("workspace_id", "INTEGER DEFAULT 1"),
             ("affiliate_workspace_id", "INTEGER"),
+            # Invite-link flow: affiliate sets their own password on first use
+            ("invite_token", "VARCHAR(64)"),
+            ("invite_expires_at", "TIMESTAMP"),
         ]
         existing_affiliates = _existing_columns("affiliates")
         for col, ddl in affiliates_needed:

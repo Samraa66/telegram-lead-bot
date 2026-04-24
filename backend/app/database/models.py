@@ -334,9 +334,12 @@ class Affiliate(Base):
     is_active = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
 
-    # Login credentials (auto-generated on create)
+    # Login credentials — the affiliate sets their own password via an invite link
     login_username = Column(String(100), unique=True, nullable=True)
-    login_password_hash = Column(String(255), nullable=True)  # pbkdf2 salt$hash
+    login_password_hash = Column(String(255), nullable=True)  # pbkdf2 salt$hash, null until invite accepted
+    # One-time invite token — null once consumed (or never issued for legacy affiliates)
+    invite_token = Column(String(64), unique=True, nullable=True, index=True)
+    invite_expires_at = Column(DateTime, nullable=True)
     # Provisioned CRM workspace for this affiliate (null = not yet provisioned)
     affiliate_workspace_id = Column(Integer, nullable=True)
 

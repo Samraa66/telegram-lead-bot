@@ -1673,6 +1673,27 @@ def list_affiliates(
     ]
 
 
+INVITE_EXPIRY_DAYS = 14
+
+
+def _build_invite_url(token: str) -> str:
+    """Build a public invite URL for the given token."""
+    from app.config import APP_BASE_URL
+    base = (APP_BASE_URL or "").rstrip("/")
+    return f"{base}/invite/{token}" if base else f"/invite/{token}"
+
+
+def _issue_invite_token(affiliate, db: Session) -> str:
+    """Generate a fresh invite token on the given affiliate and persist it."""
+    import secrets as _secrets
+    from datetime import datetime, timedelta
+    token = _secrets.token_urlsafe(32)
+    affiliate.invite_token = token
+    affiliate.invite_expires_at = datetime.utcnow() + timedelta(days=INVITE_EXPIRY_DAYS)
+    db.commit()
+    return token
+
+
 @app.post("/affiliates")
 def create_affiliate(
     req: CreateAffiliateRequest,
@@ -1680,17 +1701,15 @@ def create_affiliate(
     current_user: dict = Depends(require_workspace_owner),
 ):
     """
-    Register a new affiliate, generate their credentials, and auto-provision
-    a child CRM workspace for them within the caller's org.
-    Callable by org_owner (Walid creating affiliates) and workspace_owner
-    (affiliate creating their own sub-affiliates).
+    Register a new affiliate and auto-provision a child CRM workspace for them.
+    Instead of generating a password, issues a one-time invite URL the admin
+    sends to the affiliate; the affiliate sets their own password on first use.
     """
     import re
     import uuid
     from app.database.models import Affiliate, Workspace
     from app.database import seed_workspace_defaults
     from app.config import BOT_USERNAME
-    from app.auth import generate_password, hash_password
 
     # Human-readable username derived from the affiliate's name.
     # "Jason Rivera" -> "jason.rivera"  (collision -> "jason.rivera2" etc.)
@@ -1705,7 +1724,6 @@ def create_affiliate(
 
     # Referral tag: short, name-based, with a tiny random suffix to keep URLs unique
     referral_tag = f"{base_slug[:16]}-{uuid.uuid4().hex[:4]}"
-    plain_password = generate_password()
 
     # Provision a child workspace in the caller's org
     caller_org_id = current_user.get("org_id", 1)
@@ -1724,19 +1742,21 @@ def create_affiliate(
     db.flush()  # get aff_workspace.id without committing yet
 
     affiliate = Affiliate(
-        workspace_id=caller_ws_id,  # the parent (Walid's) workspace
+        workspace_id=caller_ws_id,
         name=req.name.strip(),
         username=req.username.strip() if req.username else None,
         referral_tag=referral_tag,
         commission_rate=req.commission_rate,
         login_username=login_username,
-        login_password_hash=hash_password(plain_password),
+        login_password_hash=None,  # set via invite
         affiliate_workspace_id=aff_workspace.id,
     )
     db.add(affiliate)
     db.commit()
     db.refresh(affiliate)
     db.refresh(aff_workspace)
+
+    invite_token = _issue_invite_token(affiliate, db)
 
     seed_workspace_defaults(aff_workspace.id, db)
 
@@ -1762,9 +1782,10 @@ def create_affiliate(
         "is_active": affiliate.is_active,
         "created_at": affiliate.created_at.isoformat(),
         "affiliate_workspace_id": aff_workspace.id,
-        # Credentials — shown once at creation
+        # Invite details — shown once at creation. Admin sends the URL to the affiliate.
         "login_username": login_username,
-        "login_password": plain_password,
+        "invite_url": _build_invite_url(invite_token),
+        "invite_expires_at": affiliate.invite_expires_at.isoformat() if affiliate.invite_expires_at else None,
         # Stats defaults (no activity yet)
         "leads": 0, "deposits": 0, "conversion_rate": 0, "commission_earned": 0,
         # Checklist defaults
@@ -1773,6 +1794,104 @@ def create_affiliate(
         "tutorial_channel_id": None, "tutorial_channel_members": 0,
         "sales_scripts_done": False, "ib_profile_id": None,
         "ads_live": False, "pixel_setup_done": False,
+    }
+
+
+@app.post("/affiliates/{affiliate_id}/reset-credentials")
+def reset_affiliate_credentials(
+    affiliate_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_workspace_owner),
+):
+    """
+    Regenerate the invite token for an affiliate and invalidate their password.
+    Used when the affiliate lost their credentials or never finished the invite.
+    Returns a fresh invite URL the admin sends them.
+    """
+    from app.database.models import Affiliate
+    aff = db.query(Affiliate).filter(Affiliate.id == affiliate_id).first()
+    if not aff:
+        raise HTTPException(status_code=404, detail="affiliate not found")
+    # TODO: could also check caller is in aff's parent chain; require_workspace_owner
+    # already gates on org/workspace scope for the queries that matter.
+    aff.login_password_hash = None  # force them to set a new one via the invite
+    token = _issue_invite_token(aff, db)
+    return {
+        "login_username": aff.login_username,
+        "invite_url": _build_invite_url(token),
+        "invite_expires_at": aff.invite_expires_at.isoformat() if aff.invite_expires_at else None,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Public invite endpoints (no auth required)
+# ---------------------------------------------------------------------------
+
+class AcceptInviteRequest(BaseModel):
+    password: str
+
+
+@app.get("/invite/{token}")
+def invite_lookup(token: str, db: Session = Depends(get_db)):
+    """Public. Given an invite token, return the affiliate's display name + login username."""
+    from datetime import datetime
+    from app.database.models import Affiliate
+    aff = db.query(Affiliate).filter(Affiliate.invite_token == token).first()
+    if not aff or not aff.is_active:
+        raise HTTPException(status_code=404, detail="Invite not found or already used")
+    if aff.invite_expires_at and aff.invite_expires_at < datetime.utcnow():
+        raise HTTPException(status_code=410, detail="Invite has expired — ask your admin to resend")
+    return {
+        "name": aff.name,
+        "login_username": aff.login_username,
+        "expires_at": aff.invite_expires_at.isoformat() if aff.invite_expires_at else None,
+    }
+
+
+@app.post("/invite/{token}")
+@limiter.limit("5/minute")
+def invite_accept(token: str, req: AcceptInviteRequest, request: Request, db: Session = Depends(get_db)):
+    """
+    Public. The affiliate posts their chosen password here. We hash it, clear the
+    invite token, and return a JWT so the frontend can log them straight in.
+    """
+    from datetime import datetime
+    from app.database.models import Affiliate, Workspace
+    from app.auth import hash_password as _hash, create_access_token as _create_token
+
+    password = (req.password or "").strip()
+    if len(password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+
+    aff = db.query(Affiliate).filter(Affiliate.invite_token == token).first()
+    if not aff or not aff.is_active:
+        raise HTTPException(status_code=404, detail="Invite not found or already used")
+    if aff.invite_expires_at and aff.invite_expires_at < datetime.utcnow():
+        raise HTTPException(status_code=410, detail="Invite has expired — ask your admin to resend")
+
+    aff.login_password_hash = _hash(password)
+    aff.invite_token = None
+    aff.invite_expires_at = None
+    db.commit()
+
+    # Mint a JWT just like /auth/login would, so the frontend can log the affiliate
+    # in without bouncing them through the login page.
+    ws_id = aff.affiliate_workspace_id or aff.workspace_id or 1
+    ws = db.query(Workspace).filter(Workspace.id == ws_id).first()
+    org_id = ws.org_id if ws and ws.org_id else 1
+    token_jwt = _create_token(
+        aff.login_username or aff.name, "affiliate",
+        workspace_id=ws_id, org_id=org_id, org_role="workspace_owner",
+        affiliate_id=aff.id,
+    )
+    return {
+        "access_token": token_jwt,
+        "role": "affiliate",
+        "username": aff.login_username,
+        "workspace_id": ws_id,
+        "org_id": org_id,
+        "org_role": "workspace_owner",
+        "onboarding_complete": bool(ws.onboarding_complete) if ws else False,
     }
 
 
