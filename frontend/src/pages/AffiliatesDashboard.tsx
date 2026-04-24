@@ -32,8 +32,6 @@ function AddAffiliateModal({ onClose, onCreated }: AddAffiliateModalProps) {
   const [commissionRate, setCommissionRate] = useState("15");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [created, setCreated] = useState<AffiliatePerformance | null>(null);
-  const [copied, setCopied] = useState<string | null>(null);
 
   const handleSubmit = async () => {
     if (!name.trim()) { setError("Name is required"); return; }
@@ -46,34 +44,13 @@ function AddAffiliateModal({ onClose, onCreated }: AddAffiliateModalProps) {
         commission_rate: parseFloat(commissionRate) || 15,
       });
       onCreated(affiliate);
-      setCreated(affiliate); // show credentials screen
+      onClose();
     } catch (e: any) {
       setError(e?.message || "Failed to create affiliate");
     } finally {
       setLoading(false);
     }
   };
-
-  const copy = async (value: string, key: string) => {
-    try {
-      await navigator.clipboard.writeText(value);
-      setCopied(key);
-      setTimeout(() => setCopied(null), 1500);
-    } catch {}
-  };
-
-  // --- Invite handoff screen (after create) ---
-  if (created) {
-    return (
-      <InviteHandoffModal
-        name={created.name}
-        inviteUrl={created.invite_url || ""}
-        loginUsername={created.login_username || ""}
-        expiresAt={created.invite_expires_at || null}
-        onClose={onClose}
-      />
-    );
-  }
 
   // --- Create form ---
   return (
