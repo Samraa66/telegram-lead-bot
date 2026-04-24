@@ -684,7 +684,7 @@ class TelethonVerifyRequest(BaseModel):
 @app.get("/settings/telethon/status")
 def telethon_status(
     workspace_id: int = Depends(get_workspace_id),
-    _=Depends(require_roles("developer", "admin")),
+    _=Depends(require_workspace_owner),
 ):
     from app.services.telethon_client import get_client
     return {"connected": get_client(workspace_id) is not None}
@@ -693,7 +693,7 @@ def telethon_status(
 @app.get("/settings/forwarding/status")
 def forwarding_status(
     workspace_id: int = Depends(get_workspace_id),
-    _=Depends(require_roles("developer", "admin")),
+    _=Depends(require_workspace_owner),
     db: Session = Depends(get_db),
 ):
     """Return signal forwarding health: bot token set, source set, destinations configured."""
@@ -721,7 +721,7 @@ def forwarding_status(
 @app.get("/settings/forwarding/config")
 def get_forwarding_config(
     workspace_id: int = Depends(get_workspace_id),
-    _=Depends(require_roles("developer", "admin")),
+    _=Depends(require_workspace_owner),
     db: Session = Depends(get_db),
 ):
     """Return source + destination channel config for the workspace, plus env fallbacks."""
@@ -760,7 +760,7 @@ class ForwardingConfigRequest(BaseModel):
 def set_forwarding_config(
     req: ForwardingConfigRequest,
     workspace_id: int = Depends(get_workspace_id),
-    _=Depends(require_roles("developer", "admin")),
+    _=Depends(require_workspace_owner),
     db: Session = Depends(get_db),
 ):
     """Save source + destination channel IDs to the workspace."""
@@ -783,7 +783,7 @@ def set_forwarding_config(
 async def telethon_connect(
     req: TelethonConnectRequest,
     workspace_id: int = Depends(get_workspace_id),
-    _=Depends(require_roles("developer", "admin")),
+    _=Depends(require_workspace_owner),
 ):
     """Send OTP to the operator's phone to begin Telethon session setup."""
     from telethon import TelegramClient
@@ -813,7 +813,7 @@ async def telethon_verify(
     req: TelethonVerifyRequest,
     db: Session = Depends(get_db),
     workspace_id: int = Depends(get_workspace_id),
-    _=Depends(require_roles("developer", "admin")),
+    _=Depends(require_workspace_owner),
 ):
     """Submit OTP code, save StringSession to DB, and start the client."""
     from telethon.errors import SessionPasswordNeededError
@@ -848,7 +848,7 @@ async def telethon_verify(
 async def telethon_disconnect(
     db: Session = Depends(get_db),
     workspace_id: int = Depends(get_workspace_id),
-    _=Depends(require_roles("developer", "admin")),
+    _=Depends(require_workspace_owner),
 ):
     """Stop the Telethon client and clear the saved session."""
     from app.database.models import Workspace
@@ -875,7 +875,7 @@ class BotCredentialsRequest(BaseModel):
 def bot_status(
     db: Session = Depends(get_db),
     workspace_id: int = Depends(get_workspace_id),
-    _=Depends(require_roles("developer", "admin")),
+    _=Depends(require_workspace_owner),
 ):
     """Return current bot token status and Telegram webhook info."""
     from app.database.models import Workspace
@@ -912,7 +912,7 @@ def bot_save_credentials(
     req: BotCredentialsRequest,
     db: Session = Depends(get_db),
     workspace_id: int = Depends(get_workspace_id),
-    _=Depends(require_roles("developer", "admin")),
+    _=Depends(require_workspace_owner),
 ):
     """Save bot token (and optional webhook secret) to the workspace."""
     from app.database.models import Workspace
@@ -930,7 +930,7 @@ def bot_save_credentials(
 def bot_register_webhook(
     db: Session = Depends(get_db),
     workspace_id: int = Depends(get_workspace_id),
-    _=Depends(require_roles("developer", "admin")),
+    _=Depends(require_workspace_owner),
 ):
     """Call Telegram's setWebhook to point at /webhook/{workspace_id}."""
     from app.database.models import Workspace
