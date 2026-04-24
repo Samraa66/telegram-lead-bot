@@ -696,18 +696,19 @@ def forwarding_status(
     _=Depends(require_roles("developer", "admin")),
     db: Session = Depends(get_db),
 ):
-    """Return signal forwarding health: operator running, source set, destinations configured."""
-    from app.services.forwarding import get_all_destination_channels
-    from app.config import SOURCE_CHANNEL_ID, BOT_TOKEN
+    """Return signal forwarding health: bot token set, source set, destinations configured."""
+    from app.services.forwarding import get_all_destination_channels, get_effective_source_channel_id
+    from app.config import BOT_TOKEN
     from app.database.models import Workspace
 
     ws = db.query(Workspace).filter(Workspace.id == workspace_id).first()
     bot_token = (ws.bot_token if ws else None) or (BOT_TOKEN if workspace_id == 1 else None)
 
-    source_configured = bool(SOURCE_CHANNEL_ID)
+    source_id = get_effective_source_channel_id(workspace_id)
     destinations = get_all_destination_channels()
     destination_count = len(destinations)
     bot_configured = bool(bot_token)
+    source_configured = bool(source_id)
 
     return {
         "bot_configured": bot_configured,
@@ -715,6 +716,67 @@ def forwarding_status(
         "destination_count": destination_count,
         "active": bot_configured and source_configured and destination_count > 0,
     }
+
+
+@app.get("/settings/forwarding/config")
+def get_forwarding_config(
+    workspace_id: int = Depends(get_workspace_id),
+    _=Depends(require_roles("developer", "admin")),
+    db: Session = Depends(get_db),
+):
+    """Return source + destination channel config for the workspace, plus env fallbacks."""
+    from app.services.forwarding import get_static_destination_channels, get_effective_source_channel_id
+    from app.config import SOURCE_CHANNEL_ID, DESTINATION_CHANNEL_IDS
+    from app.database.models import Workspace, Affiliate
+
+    ws = db.query(Workspace).filter(Workspace.id == workspace_id).first()
+
+    affiliate_channels = (
+        db.query(Affiliate.id, Affiliate.name, Affiliate.vip_channel_id)
+        .filter(Affiliate.is_active.is_(True), Affiliate.vip_channel_id.isnot(None))
+        .all()
+    )
+
+    return {
+        "source_channel_id": ws.source_channel_id if ws else None,
+        "destination_channel_ids": ws.destination_channel_ids if ws else None,
+        "effective_source_channel_id": get_effective_source_channel_id(workspace_id),
+        "effective_static_destinations": get_static_destination_channels(workspace_id),
+        "env_source_channel_id": SOURCE_CHANNEL_ID if workspace_id == 1 else "",
+        "env_destination_channel_ids": list(DESTINATION_CHANNEL_IDS) if workspace_id == 1 else [],
+        "affiliate_destinations": [
+            {"id": a.id, "name": a.name, "vip_channel_id": a.vip_channel_id}
+            for a in affiliate_channels
+        ],
+    }
+
+
+class ForwardingConfigRequest(BaseModel):
+    source_channel_id: Optional[str] = None
+    destination_channel_ids: Optional[str] = None  # CSV
+
+
+@app.patch("/settings/forwarding/config")
+def set_forwarding_config(
+    req: ForwardingConfigRequest,
+    workspace_id: int = Depends(get_workspace_id),
+    _=Depends(require_roles("developer", "admin")),
+    db: Session = Depends(get_db),
+):
+    """Save source + destination channel IDs to the workspace."""
+    from app.database.models import Workspace
+
+    ws = db.query(Workspace).filter(Workspace.id == workspace_id).first()
+    if not ws:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+
+    if req.source_channel_id is not None:
+        ws.source_channel_id = req.source_channel_id.strip() or None
+    if req.destination_channel_ids is not None:
+        cleaned = ",".join(x.strip() for x in req.destination_channel_ids.split(",") if x.strip())
+        ws.destination_channel_ids = cleaned or None
+    db.commit()
+    return {"ok": True}
 
 
 @app.post("/settings/telethon/connect")

@@ -191,6 +191,9 @@ class Workspace(Base):
     meta_ad_account_id = Column(String(100), nullable=True)
     meta_pixel_id = Column(String(100), nullable=True)
     landing_page_url = Column(Text, nullable=True)
+    # Signal forwarding config — override .env values when set
+    source_channel_id = Column(String(64), nullable=True)
+    destination_channel_ids = Column(Text, nullable=True)  # comma-separated static destinations
     # Telegram bot credentials per workspace
     bot_token = Column(Text, nullable=True)
     webhook_secret = Column(String(255), nullable=True)

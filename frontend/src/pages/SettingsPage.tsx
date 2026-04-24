@@ -851,8 +851,6 @@ function BotTab() {
           )}
         </div>
       </div>
-
-      <ForwardingStatusCard />
     </div>
   );
 }
@@ -919,6 +917,165 @@ function ForwardingStatusCard() {
             {detail && <span className="text-muted-foreground">— {detail}</span>}
           </div>
         ))}
+      </div>
+    </div>
+  );
+}
+
+// ---- Signal Forwarding tab ----
+
+type ForwardingConfig = {
+  source_channel_id: string | null;
+  destination_channel_ids: string | null;
+  effective_source_channel_id: string;
+  effective_static_destinations: string[];
+  env_source_channel_id: string;
+  env_destination_channel_ids: string[];
+  affiliate_destinations: { id: number; name: string; vip_channel_id: string }[];
+};
+
+function SignalForwardingTab() {
+  const [config, setConfig] = useState<ForwardingConfig | null>(null);
+  const [form, setForm] = useState({ source: "", destinations: "" });
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch(`${API_BASE}/settings/forwarding/config`, { headers: authHeaders() })
+      .then(r => { if (!r.ok) throw new Error("Failed to load forwarding config"); return r.json(); })
+      .then((c: ForwardingConfig) => {
+        setConfig(c);
+        setForm({
+          source: c.source_channel_id || "",
+          destinations: c.destination_channel_ids || "",
+        });
+      })
+      .catch(e => setError(e.message));
+  }, []);
+
+  async function handleSave() {
+    setSaving(true);
+    setError(null);
+    setSaved(false);
+    try {
+      const res = await fetch(`${API_BASE}/settings/forwarding/config`, {
+        method: "PATCH",
+        headers: authHeaders(),
+        body: JSON.stringify({
+          source_channel_id: form.source.trim(),
+          destination_channel_ids: form.destinations.trim(),
+        }),
+      });
+      if (!res.ok) throw new Error((await res.json()).detail || "Failed to save");
+      setSaved(true);
+      // Reload config
+      const fresh = await fetch(`${API_BASE}/settings/forwarding/config`, { headers: authHeaders() }).then(r => r.json());
+      setConfig(fresh);
+      setTimeout(() => setSaved(false), 2500);
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (!config) {
+    return (
+      <div className="text-xs text-muted-foreground">{error || "Loading forwarding config…"}</div>
+    );
+  }
+
+  const envSourceInUse = !config.source_channel_id && config.env_source_channel_id;
+  const envDestsInUse = !config.destination_channel_ids && config.env_destination_channel_ids.length > 0;
+
+  return (
+    <div className="space-y-6">
+      <ForwardingStatusCard />
+
+      {/* Source channel */}
+      <div className="rounded-lg border p-4 space-y-3">
+        <div>
+          <h4 className="text-sm font-semibold">Source Channel</h4>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            The channel your operator account listens to for trade signals. Every new post here gets copied to the destinations below.
+          </p>
+        </div>
+        <div>
+          <label className="text-xs text-muted-foreground mb-1 block">Channel ID</label>
+          <input
+            className="w-full text-sm border rounded-md px-3 py-1.5 bg-background font-mono"
+            placeholder="-1001234567890"
+            value={form.source}
+            onChange={e => setForm(f => ({ ...f, source: e.target.value }))}
+          />
+          <p className="text-xs text-muted-foreground/70 mt-1">
+            The channel ID starts with <code className="font-mono">-100</code>. Your operator account must be a member.
+          </p>
+          {envSourceInUse && (
+            <p className="text-xs text-amber-600 mt-1">
+              Currently using env value: <code className="font-mono">{config.env_source_channel_id}</code>. Save to override.
+            </p>
+          )}
+        </div>
+      </div>
+
+      {/* Destination channels */}
+      <div className="rounded-lg border p-4 space-y-3">
+        <div>
+          <h4 className="text-sm font-semibold">Destination Channels</h4>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Your own VIP channels that should receive every signal. Comma-separated. Affiliate VIP channels are added automatically (see below).
+          </p>
+        </div>
+        <div>
+          <label className="text-xs text-muted-foreground mb-1 block">Channel IDs (comma-separated)</label>
+          <textarea
+            className="w-full text-sm border rounded-md px-3 py-1.5 bg-background font-mono min-h-[60px]"
+            placeholder="-1001234567890, -1009876543210"
+            value={form.destinations}
+            onChange={e => setForm(f => ({ ...f, destinations: e.target.value }))}
+          />
+          {envDestsInUse && (
+            <p className="text-xs text-amber-600 mt-1">
+              Currently using env values: <code className="font-mono">{config.env_destination_channel_ids.join(", ")}</code>. Save to override.
+            </p>
+          )}
+        </div>
+
+        <div className="flex items-center gap-2 pt-1">
+          <button
+            onClick={handleSave}
+            disabled={saving}
+            className="px-3 py-1.5 text-sm rounded-md bg-[hsl(199,86%,55%)] text-white hover:bg-[hsl(199,86%,45%)] disabled:opacity-50 transition-colors"
+          >
+            {saving ? "Saving…" : "Save Forwarding Config"}
+          </button>
+          {saved && <span className="text-xs text-green-600">Saved.</span>}
+          {error && <span className="text-xs text-red-500">{error}</span>}
+        </div>
+      </div>
+
+      {/* Affiliate destinations (read-only, auto-synced) */}
+      <div className="rounded-lg border p-4 space-y-3">
+        <div>
+          <h4 className="text-sm font-semibold">Affiliate VIP Channels</h4>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Auto-synced from your affiliates' dashboards. Every active affiliate's linked VIP channel receives signals automatically — no action needed.
+          </p>
+        </div>
+        {config.affiliate_destinations.length === 0 ? (
+          <p className="text-xs text-muted-foreground">No affiliate VIP channels linked yet.</p>
+        ) : (
+          <div className="space-y-1.5">
+            {config.affiliate_destinations.map(a => (
+              <div key={a.id} className="flex items-center justify-between gap-2 text-xs">
+                <span className="font-medium">{a.name}</span>
+                <span className="font-mono text-muted-foreground">{a.vip_channel_id}</span>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -1375,13 +1532,12 @@ function MetaTab() {
 
 // ---- Main page ----
 
-type Section = "pipeline" | "team" | "bot" | "telegram" | "meta";
+type Section = "pipeline" | "team" | "telegram" | "meta";
 type PipelineTab = "keywords" | "followups" | "quickreplies" | "stagelabels";
 
 const SECTIONS: { id: Section; label: string }[] = [
   { id: "pipeline", label: "Pipeline"  },
   { id: "team",     label: "Team"      },
-  { id: "bot",      label: "Bot"       },
   { id: "telegram", label: "Telegram"  },
   { id: "meta",     label: "Meta Ads"  },
 ];
@@ -1460,19 +1616,60 @@ export default function SettingsPage() {
             </>
           )}
 
-          {section === "bot" && (
-            <>
-              <h2 className="text-lg font-semibold mb-0.5">Telegram Bot</h2>
-              <p className="text-sm text-muted-foreground mb-6">Connect your Telegram bot for lead intake and automated messaging.</p>
-              <BotTab />
-            </>
-          )}
-
           {section === "telegram" && (
             <>
-              <h2 className="text-lg font-semibold mb-0.5">Telegram Operator Account</h2>
-              <p className="text-sm text-muted-foreground mb-6">Connect the operator's personal account so the CRM can send and read messages on their behalf.</p>
-              <TelegramTab />
+              <h2 className="text-lg font-semibold mb-0.5">Telegram</h2>
+              <p className="text-sm text-muted-foreground mb-6">
+                Everything Telegram-related: the bot that receives leads, your operator account, and signal forwarding.
+              </p>
+
+              {/* 1. Telegram Bot */}
+              <section className="mb-10">
+                <div className="flex items-start gap-3 mb-4 pb-3 border-b">
+                  <div className="h-8 w-8 rounded-lg bg-[hsl(199,86%,55%)]/10 flex items-center justify-center shrink-0">
+                    <span className="text-[hsl(199,86%,45%)] text-sm font-bold">1</span>
+                  </div>
+                  <div>
+                    <h3 className="text-base font-semibold">Telegram Bot</h3>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      The bot users land in after clicking your ad CTA — receives inbound leads and forwards trade signals to VIP channels.
+                    </p>
+                  </div>
+                </div>
+                <BotTab />
+              </section>
+
+              {/* 2. Operator Account */}
+              <section className="mb-10">
+                <div className="flex items-start gap-3 mb-4 pb-3 border-b">
+                  <div className="h-8 w-8 rounded-lg bg-[hsl(199,86%,55%)]/10 flex items-center justify-center shrink-0">
+                    <span className="text-[hsl(199,86%,45%)] text-sm font-bold">2</span>
+                  </div>
+                  <div>
+                    <h3 className="text-base font-semibold">Operator Account</h3>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      Your personal Telegram account — the human persona that DMs leads to qualify and close them.
+                    </p>
+                  </div>
+                </div>
+                <TelegramTab />
+              </section>
+
+              {/* 3. Signal Forwarding */}
+              <section>
+                <div className="flex items-start gap-3 mb-4 pb-3 border-b">
+                  <div className="h-8 w-8 rounded-lg bg-[hsl(199,86%,55%)]/10 flex items-center justify-center shrink-0">
+                    <span className="text-[hsl(199,86%,45%)] text-sm font-bold">3</span>
+                  </div>
+                  <div>
+                    <h3 className="text-base font-semibold">Signal Forwarding</h3>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      Mirror trade signals from your source channel to VIP and affiliate channels automatically.
+                    </p>
+                  </div>
+                </div>
+                <SignalForwardingTab />
+              </section>
             </>
           )}
 
