@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Check, Bot, Smartphone, Radio, ArrowRight, Loader2, Eye, EyeOff } from "lucide-react";
+import { Check, Bot, Smartphone, Radio, ArrowRight, Loader2, Eye, EyeOff, ListChecks, Rocket, MessageSquare, Sparkles } from "lucide-react";
 import { markOnboardingComplete, getToken, clearAuth } from "../api/auth";
 import { cn } from "../lib/utils";
 
@@ -317,17 +317,122 @@ function StepChannel({ onDone, onSkip }: { onDone: () => void; onSkip: () => voi
 // Main onboarding page
 // ---------------------------------------------------------------------------
 
+type Phase = "intro" | "setup" | "done";
+
+function IntroScreen({ onStart }: { onStart: () => void }) {
+  const items = [
+    { icon: Bot,        title: "Telegram Bot",       body: "The bot users DM after clicking your ad. You'll create one with @BotFather and paste the token." },
+    { icon: Smartphone, title: "Operator Account",   body: "Your personal Telegram number — this is how you reply to leads as a human." },
+    { icon: Radio,      title: "VIP Channel",        body: "The private channel your paying members join. Trade signals forward here automatically." },
+  ];
+  return (
+    <div className="space-y-5">
+      <div className="text-center">
+        <div className="h-10 w-10 rounded-xl bg-primary/15 flex items-center justify-center mx-auto mb-2">
+          <Rocket className="h-5 w-5 text-primary" />
+        </div>
+        <h2 className="text-[18px] font-bold text-foreground">Let's get you live</h2>
+        <p className="text-[13px] text-muted-foreground mt-1">3 quick steps to connect your workspace. Takes about 5 minutes.</p>
+      </div>
+
+      <div className="space-y-3">
+        {items.map(({ icon: Icon, title, body }, i) => (
+          <div key={title} className="flex gap-3">
+            <div className="h-7 w-7 rounded-lg bg-secondary flex items-center justify-center shrink-0">
+              <Icon className="h-3.5 w-3.5 text-muted-foreground" />
+            </div>
+            <div className="flex-1">
+              <p className="text-[13px] font-semibold text-foreground">Step {i + 1} — {title}</p>
+              <p className="text-[12px] text-muted-foreground leading-relaxed">{body}</p>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="rounded-xl bg-secondary/60 p-3 space-y-1">
+        <div className="flex items-center gap-1.5">
+          <Sparkles className="h-3.5 w-3.5 text-primary" />
+          <p className="text-[12px] font-semibold text-foreground">Once you're done</p>
+        </div>
+        <p className="text-[11px] text-muted-foreground leading-relaxed">
+          Your dashboard shows a full 9-step checklist for the rest: eSIM, free/tutorial channels,
+          sales scripts, PU Prime IB, Meta Pixel, ads. You can tackle those at your own pace —
+          they don't block the CRM.
+        </p>
+      </div>
+
+      <button
+        onClick={onStart}
+        className="w-full py-3 rounded-xl bg-primary text-primary-foreground text-[14px] font-semibold flex items-center justify-center gap-2"
+      >
+        <span>Start setup</span><ArrowRight className="h-4 w-4" />
+      </button>
+    </div>
+  );
+}
+
+function DoneScreen({ completing }: { completing: boolean }) {
+  const nextUp = [
+    { icon: Smartphone, title: "Get an eSIM or second phone",  body: "Keeps your operator account separate from your personal number." },
+    { icon: Radio,      title: "Launch your free channel",    body: "Post daily content + link to your bot CTA. Drive the top of your funnel." },
+    { icon: MessageSquare, title: "Load sales scripts",        body: "Save them as Telegram quick replies so you can reply to leads fast." },
+    { icon: ListChecks, title: "Finish the dashboard checklist", body: "9 items total — tutorial channel, PU Prime IB, Meta Pixel, ads." },
+  ];
+  return (
+    <div className="space-y-5">
+      <div className="text-center">
+        <div className="h-12 w-12 rounded-full bg-stage-deposited/15 flex items-center justify-center mx-auto mb-2">
+          <Check className="h-6 w-6 text-stage-deposited" strokeWidth={3} />
+        </div>
+        <h2 className="text-[18px] font-bold text-foreground">You're live</h2>
+        <p className="text-[13px] text-muted-foreground mt-1">
+          Leads from your ads now flow into your CRM and signals will forward to your VIP channel automatically.
+        </p>
+      </div>
+
+      <div>
+        <p className="text-[11px] text-muted-foreground font-semibold uppercase tracking-wider mb-2">What's next</p>
+        <div className="ios-card divide-y divide-[hsl(var(--ios-separator))]">
+          {nextUp.map(({ icon: Icon, title, body }) => (
+            <div key={title} className="flex gap-3 p-3">
+              <div className="h-7 w-7 rounded-lg bg-secondary flex items-center justify-center shrink-0">
+                <Icon className="h-3.5 w-3.5 text-muted-foreground" />
+              </div>
+              <div className="flex-1">
+                <p className="text-[12px] font-semibold text-foreground">{title}</p>
+                <p className="text-[11px] text-muted-foreground leading-relaxed">{body}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {completing ? (
+        <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground py-2">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          Taking you to your dashboard…
+        </div>
+      ) : (
+        <p className="text-[11px] text-muted-foreground text-center">Redirecting to your dashboard…</p>
+      )}
+    </div>
+  );
+}
+
 export default function OnboardingPage() {
+  const [phase, setPhase] = useState<Phase>("intro");
   const [step, setStep] = useState(0);
   const [completing, setCompleting] = useState(false);
 
   async function finish() {
+    setPhase("done");
     setCompleting(true);
     try {
       await api("POST", "/settings/onboarding/complete");
     } catch { /* non-fatal */ }
     markOnboardingComplete();
-    window.location.href = "/";
+    // Give the user a beat to read the "what's next" screen
+    setTimeout(() => { window.location.href = "/"; }, 3500);
   }
 
   return (
@@ -342,23 +447,20 @@ export default function OnboardingPage() {
             </svg>
           </div>
           <h1 className="text-[22px] font-bold text-foreground">Welcome to Telelytics</h1>
-          <p className="text-sm text-muted-foreground mt-1">Let's get your workspace live in 3 steps.</p>
+          {phase === "intro" && <p className="text-sm text-muted-foreground mt-1">Let's get your workspace live.</p>}
+          {phase === "setup" && <p className="text-sm text-muted-foreground mt-1">Step {step + 1} of 3</p>}
+          {phase === "done"  && <p className="text-sm text-muted-foreground mt-1">Setup complete 🎉</p>}
         </div>
 
-        <StepDots current={step} />
+        {phase === "setup" && <StepDots current={step} />}
 
         <div className="ios-card p-5">
-          {step === 0 && <StepBot onDone={() => setStep(1)} onSkip={() => setStep(1)} />}
-          {step === 1 && <StepTelethon onDone={() => setStep(2)} onSkip={() => setStep(2)} />}
-          {step === 2 && <StepChannel onDone={finish} onSkip={finish} />}
+          {phase === "intro" && <IntroScreen onStart={() => setPhase("setup")} />}
+          {phase === "setup" && step === 0 && <StepBot onDone={() => setStep(1)} onSkip={() => setStep(1)} />}
+          {phase === "setup" && step === 1 && <StepTelethon onDone={() => setStep(2)} onSkip={() => setStep(2)} />}
+          {phase === "setup" && step === 2 && <StepChannel onDone={finish} onSkip={finish} />}
+          {phase === "done"  && <DoneScreen completing={completing} />}
         </div>
-
-        {completing && (
-          <div className="mt-4 flex items-center justify-center gap-2 text-sm text-muted-foreground">
-            <Loader2 className="h-4 w-4 animate-spin" />
-            Setting up your workspace…
-          </div>
-        )}
 
         <button
           onClick={() => { clearAuth(); window.location.href = "/login"; }}

@@ -31,6 +31,8 @@ function AddAffiliateModal({ onClose, onCreated }: AddAffiliateModalProps) {
   const [commissionRate, setCommissionRate] = useState("15");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [created, setCreated] = useState<AffiliatePerformance | null>(null);
+  const [copied, setCopied] = useState<string | null>(null);
 
   const handleSubmit = async () => {
     if (!name.trim()) { setError("Name is required"); return; }
@@ -43,7 +45,7 @@ function AddAffiliateModal({ onClose, onCreated }: AddAffiliateModalProps) {
         commission_rate: parseFloat(commissionRate) || 15,
       });
       onCreated(affiliate);
-      onClose();
+      setCreated(affiliate); // show credentials screen
     } catch (e: any) {
       setError(e?.message || "Failed to create affiliate");
     } finally {
@@ -51,6 +53,97 @@ function AddAffiliateModal({ onClose, onCreated }: AddAffiliateModalProps) {
     }
   };
 
+  const copy = async (value: string, key: string) => {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(key);
+      setTimeout(() => setCopied(null), 1500);
+    } catch {}
+  };
+
+  // --- Credentials screen (after create) ---
+  if (created) {
+    const loginUrl = `${window.location.origin}/login`;
+    const handoff =
+`Hi ${created.name}, welcome to Telelytics 👋
+
+Your login:
+URL: ${loginUrl}
+Username: ${created.login_username}
+Password: ${created.login_password}
+
+What to do next:
+1. Log in with the credentials above.
+2. A 3-step wizard will walk you through the minimum setup:
+   • Connect your Telegram bot (create one via @BotFather, paste the token)
+   • Connect your operator Telegram account (phone + OTP)
+   • Link your VIP channel (paste the channel ID)
+3. After the wizard, you'll land on your dashboard with a full 9-step checklist
+   covering the rest (eSIM, free channel, tutorial channel, sales scripts,
+   PU Prime IB, Meta Pixel, ads).
+
+Once your bot + operator + VIP are live, leads from your ads will flow straight
+into your CRM and trade signals will forward to your VIP channel automatically.`;
+    const rows: { label: string; value: string; key: string; mono?: boolean }[] = [
+      { label: "Login URL", value: loginUrl, key: "url" },
+      { label: "Username",  value: created.login_username || "", key: "user", mono: true },
+      { label: "Password",  value: created.login_password || "", key: "pass", mono: true },
+    ];
+    return (
+      <>
+        <div className="fixed inset-0 bg-black/50 z-40" onClick={onClose} />
+        <div className="fixed inset-x-4 top-1/2 -translate-y-1/2 z-50 bg-card rounded-2xl shadow-xl p-5 max-w-sm mx-auto space-y-4">
+          <div className="flex items-center justify-between">
+            <p className="text-sm font-bold text-foreground">Affiliate Created</p>
+            <button onClick={onClose} className="p-1.5 text-muted-foreground">
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+
+          <div className="rounded-xl bg-amber-500/10 border border-amber-500/30 p-3 text-[12px] text-amber-700 dark:text-amber-400">
+            <p className="font-semibold mb-0.5">Copy these credentials now</p>
+            <p>The password is not stored in plaintext and will never be shown again. Send it to {created.name} through a secure channel.</p>
+          </div>
+
+          <div className="space-y-2">
+            {rows.map(r => (
+              <div key={r.key} className="flex items-center justify-between gap-2 bg-secondary rounded-xl px-3 py-2">
+                <div className="min-w-0 flex-1">
+                  <p className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider">{r.label}</p>
+                  <p className={cn("text-[13px] text-foreground truncate", r.mono && "font-mono")}>{r.value}</p>
+                </div>
+                <button
+                  onClick={() => copy(r.value, r.key)}
+                  className="shrink-0 text-primary p-1"
+                  title="Copy"
+                >
+                  {copied === r.key ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                </button>
+              </div>
+            ))}
+          </div>
+
+          <button
+            onClick={() => copy(handoff, "all")}
+            className="w-full py-2.5 rounded-xl bg-primary text-primary-foreground text-sm font-semibold flex items-center justify-center gap-2"
+          >
+            {copied === "all"
+              ? <><Check className="h-4 w-4" /> Copied handoff message</>
+              : <><Copy className="h-4 w-4" /> Copy ready-to-send message</>}
+          </button>
+
+          <button
+            onClick={onClose}
+            className="w-full py-2 text-xs text-muted-foreground"
+          >
+            Done — I've saved the credentials
+          </button>
+        </div>
+      </>
+    );
+  }
+
+  // --- Create form ---
   return (
     <>
       <div className="fixed inset-0 bg-black/50 z-40" onClick={onClose} />
