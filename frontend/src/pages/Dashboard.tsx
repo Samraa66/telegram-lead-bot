@@ -16,7 +16,7 @@ const Dashboard = () => {
   const user = getStoredUser();
   if (user?.role === "affiliate") {
     return (
-      <AppLayout>
+      <AppLayout title="Your workspace" subtitle="Setup progress, referrals, and performance">
         <AffiliateSelfDashboard />
       </AppLayout>
     );
@@ -39,48 +39,43 @@ const Dashboard = () => {
 
   return (
     <AppLayout>
-      <div className="mb-8">
-        <h2 className="text-2xl font-bold text-foreground">Dashboard</h2>
-        <p className="text-sm text-muted-foreground mt-1">Welcome back — here's your overview</p>
-      </div>
-
-      <div className="mb-6">
+      <div className="space-y-6">
         <WorkspaceHealthCard />
-      </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-        <KpiCard
-          title="Total Leads"
-          value={fmt(overview?.total_leads)}
-          change={overview ? `+${overview.new_this_week} this week` : undefined}
-          changeType={overview && overview.new_this_week > 0 ? "positive" : "neutral"}
-          icon={Users}
-        />
-        <KpiCard
-          title="Total Deposited"
-          value={fmtUSD(overview?.total_deposited)}
-          change={overview ? `${overview.overall_conversion.toFixed(1)}% conversion rate` : undefined}
-          changeType="neutral"
-          icon={DollarSign}
-        />
-        <KpiCard
-          title="Active Affiliates"
-          value={affiliateCount != null ? String(affiliateCount) : "—"}
-          icon={UserPlus}
-        />
-        <KpiCard
-          title="VIP Members"
-          value={memberCount != null ? String(memberCount) : "—"}
-          icon={Star}
-        />
-      </div>
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          <KpiCard
+            title="Total Leads"
+            value={fmt(overview?.total_leads)}
+            change={overview ? `+${overview.new_this_week} this week` : undefined}
+            changeType={overview && overview.new_this_week > 0 ? "positive" : "neutral"}
+            icon={Users}
+          />
+          <KpiCard
+            title="Total Deposited"
+            value={fmtUSD(overview?.total_deposited)}
+            change={overview ? `${overview.overall_conversion.toFixed(1)}% conversion` : undefined}
+            changeType="neutral"
+            icon={DollarSign}
+          />
+          <KpiCard
+            title="Active Affiliates"
+            value={affiliateCount != null ? String(affiliateCount) : "—"}
+            icon={UserPlus}
+          />
+          <KpiCard
+            title="VIP Members"
+            value={memberCount != null ? String(memberCount) : "—"}
+            icon={Star}
+          />
+        </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-        <DepositsChart />
-        <PipelinePreview />
-      </div>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+          <DepositsChart />
+          <PipelinePreview />
+        </div>
 
-      <RecentLeads />
+        <RecentLeads />
+      </div>
     </AppLayout>
   );
 };

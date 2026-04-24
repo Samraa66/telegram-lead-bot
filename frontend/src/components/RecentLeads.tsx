@@ -26,37 +26,41 @@ const RecentLeads = () => {
   }
 
   return (
-    <div className="glass-card rounded-xl p-6">
-      <div className="flex items-center justify-between mb-5">
-        <h3 className="text-sm font-semibold text-foreground">Recent Leads</h3>
-        <button onClick={() => navigate("/leads")} className="text-xs text-primary hover:underline">
-          View all
+    <div className="surface-card p-5 md:p-6">
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="text-sm font-semibold text-foreground">Recent leads</h3>
+        <button onClick={() => navigate("/leads")} className="text-xs text-primary hover:text-primary/80 transition-colors">
+          View all →
         </button>
       </div>
       {leads.length === 0 ? (
-        <p className="text-xs text-muted-foreground text-center py-6">No leads yet</p>
+        <p className="text-xs text-muted-foreground text-center py-8">No leads yet</p>
       ) : (
-        <div className="space-y-1">
+        <div className="-mx-2">
           {leads.map((lead) => {
             const textColor = STAGE_TEXT_COLORS[lead.stage as Stage] || "text-muted-foreground";
             const initials = (lead.name || lead.username || "?")
               .split(" ").map((n) => n[0]).join("").slice(0, 2).toUpperCase();
             return (
-              <div key={lead.id} className="flex items-center justify-between py-2.5 border-b border-border/50 last:border-0">
-                <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-xs font-semibold text-primary shrink-0">
+              <button
+                key={lead.id}
+                onClick={() => navigate("/leads")}
+                className="w-full flex items-center justify-between gap-3 px-2 py-2.5 rounded-lg hover:bg-secondary/50 transition-colors text-left"
+              >
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-[11px] font-semibold text-primary shrink-0">
                     {initials}
                   </div>
-                  <div>
-                    <p className="text-sm font-medium text-foreground">{lead.name || lead.username || "Unknown"}</p>
-                    <p className="text-xs text-muted-foreground">@{lead.username}</p>
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-foreground truncate">{lead.name || lead.username || "Unknown"}</p>
+                    <p className="text-xs text-muted-foreground truncate">@{lead.username}</p>
                   </div>
                 </div>
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-3 shrink-0">
                   <span className={`text-xs font-medium ${textColor}`}>{lead.stage}</span>
-                  <span className="text-xs text-muted-foreground w-14 text-right">{timeAgo(lead.lastMessageAt)}</span>
+                  <span className="text-xs text-muted-foreground w-12 text-right tabular-nums">{timeAgo(lead.lastMessageAt)}</span>
                 </div>
-              </div>
+              </button>
             );
           })}
         </div>

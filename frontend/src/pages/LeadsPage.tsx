@@ -85,20 +85,20 @@ export default function LeadsPage() {
 
   if (loading && leads.length === 0) {
     return (
-      <AppLayout>
-        <div className="flex items-center justify-center h-64 text-muted-foreground">Loading leads...</div>
+      <AppLayout bare>
+        <div className="flex-1 flex items-center justify-center text-sm text-muted-foreground">Loading leads…</div>
       </AppLayout>
     );
   }
 
   return (
-    <AppLayout>
+    <AppLayout bare>
       {error && (
-        <div className="mb-4 px-4 py-2 text-xs text-destructive bg-destructive/10 border border-destructive/20 rounded-lg text-center">
+        <div className="px-4 py-2 text-xs text-destructive bg-destructive/10 border-b border-destructive/20 text-center">
           {error}
         </div>
       )}
-      <div className="h-[calc(100dvh-4.5rem)] md:h-[calc(100dvh-2rem)] -mt-4 md:-mt-8 -mx-4 md:-mx-8">
+      <div className="flex-1 min-h-0 flex flex-col">
         <LeadList leads={leads} selectedLeadId={selectedLeadId} onSelectLead={handleSelectLead} />
       </div>
       <LeadDrawer

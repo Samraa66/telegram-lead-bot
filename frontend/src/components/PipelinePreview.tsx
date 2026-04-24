@@ -23,23 +23,23 @@ const PipelinePreview = () => {
   const max = Math.max(...stages.map((s) => s.count), 1);
 
   return (
-    <div className="glass-card rounded-xl p-6">
-      <h3 className="text-sm font-semibold text-foreground mb-5">Pipeline Overview</h3>
+    <div className="surface-card p-5 md:p-6">
+      <h3 className="text-sm font-semibold text-foreground mb-4">Pipeline overview</h3>
       {stages.length === 0 ? (
-        <p className="text-xs text-muted-foreground text-center py-6">No data yet</p>
+        <p className="text-xs text-muted-foreground text-center py-10">No data yet</p>
       ) : (
-        <div className="space-y-3">
+        <div className="space-y-2.5">
           {stages.map((stage) => {
             const color = STAGE_COLOR[stage.label] || "bg-muted";
             return (
               <div key={stage.stage} className="flex items-center gap-3">
                 <span className="text-xs text-muted-foreground w-28 shrink-0 truncate">{stage.label}</span>
-                <div className="flex-1 h-7 bg-muted/50 rounded-md overflow-hidden">
+                <div className="flex-1 h-6 bg-secondary/60 rounded-md overflow-hidden">
                   <div
                     className={`h-full ${color} rounded-md flex items-center px-2 transition-all duration-500`}
                     style={{ width: `${Math.max((stage.count / max) * 100, stage.count > 0 ? 8 : 0)}%` }}
                   >
-                    <span className="text-xs font-semibold text-white">{stage.count}</span>
+                    <span className="text-[11px] font-semibold text-white tabular-nums">{stage.count}</span>
                   </div>
                 </div>
               </div>

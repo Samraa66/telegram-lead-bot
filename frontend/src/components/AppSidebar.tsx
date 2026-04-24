@@ -170,13 +170,13 @@ const AppSidebar = ({ onNavigate }: { onNavigate?: () => void } = {}) => {
   return (
     <aside className="fixed left-0 top-0 h-screen w-64 bg-sidebar border-r border-sidebar-border flex flex-col z-50">
       {/* Logo */}
-      <div className="p-6 flex items-center gap-3">
-        <div className="w-10 h-10 rounded-xl gradient-primary flex items-center justify-center shrink-0">
-          <Send className="w-5 h-5 text-primary-foreground" />
+      <div className="px-5 pt-5 pb-4 flex items-center gap-2.5">
+        <div className="w-9 h-9 rounded-xl bg-primary/15 border border-primary/20 flex items-center justify-center shrink-0">
+          <Send className="w-4 h-4 text-primary" />
         </div>
-        <div>
-          <h1 className="text-base font-bold text-foreground tracking-tight">Telelytics</h1>
-          <p className="text-xs text-muted-foreground">CRM Platform</p>
+        <div className="min-w-0">
+          <h1 className="text-sm font-semibold text-foreground tracking-tight leading-none">Telelytics</h1>
+          <p className="text-[11px] text-muted-foreground mt-1">CRM Platform</p>
         </div>
       </div>
 
@@ -189,7 +189,7 @@ const AppSidebar = ({ onNavigate }: { onNavigate?: () => void } = {}) => {
       )}
 
       {/* Nav */}
-      <nav className="flex-1 px-3 py-2 space-y-0.5 overflow-y-auto">
+      <nav className="flex-1 px-3 pt-3 pb-2 space-y-0.5 overflow-y-auto">
         {navItems.map((item) => {
           const isActive = item.path === "/"
             ? location.pathname === "/"
@@ -199,13 +199,17 @@ const AppSidebar = ({ onNavigate }: { onNavigate?: () => void } = {}) => {
               key={item.path}
               to={item.path}
               onClick={onNavigate}
-              className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 ${
+              className={cn(
+                "relative flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors",
                 isActive
-                  ? "bg-primary/10 text-primary glow-primary"
-                  : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-              }`}
+                  ? "bg-sidebar-accent text-foreground"
+                  : "text-sidebar-foreground hover:bg-sidebar-accent/60 hover:text-foreground"
+              )}
             >
-              <item.icon className="w-4 h-4 shrink-0" />
+              {isActive && (
+                <span className="absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-full bg-primary" />
+              )}
+              <item.icon className={cn("w-4 h-4 shrink-0", isActive ? "text-primary" : "text-muted-foreground")} />
               {item.label}
             </Link>
           );

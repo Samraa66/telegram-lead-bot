@@ -26,7 +26,7 @@ function authHeaders() {
 
 function stageBadge(n: number) {
   return (
-    <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-[hsl(199,86%,55%)] text-white text-xs font-semibold">
+    <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-primary text-primary-foreground text-xs font-semibold">
       {n}
     </span>
   );
@@ -48,7 +48,7 @@ function SaveButton({ saving, onClick }: { saving: boolean; onClick: () => void 
     <button
       onClick={onClick}
       disabled={saving}
-      className="px-3 py-1 text-xs rounded-md bg-[hsl(199,86%,55%)] text-white hover:bg-[hsl(199,86%,45%)] disabled:opacity-50 transition-colors"
+      className="px-3 py-1 text-xs rounded-md bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors"
     >
       {saving ? "Saving…" : "Save"}
     </button>
@@ -59,7 +59,7 @@ function DeleteButton({ onClick }: { onClick: () => void }) {
   return (
     <button
       onClick={onClick}
-      className="px-2 py-1 text-xs rounded-md text-red-500 hover:bg-red-50 transition-colors"
+      className="px-2 py-1 text-xs rounded-md text-destructive hover:bg-destructive/10 transition-colors"
     >
       Remove
     </button>
@@ -74,19 +74,19 @@ function SetupGuide({ steps, defaultOpen = true }: {
 }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
-    <div className="rounded-lg border border-[hsl(199,86%,55%)]/20 bg-[hsl(199,86%,55%)]/5">
+    <div className="rounded-lg border border-primary/20 bg-primary/5">
       <button
         onClick={() => setOpen(v => !v)}
         className="w-full flex items-center justify-between px-4 py-3 text-left gap-2"
       >
-        <span className="text-xs font-semibold text-[hsl(199,86%,40%)]">Setup guide</span>
-        <ChevronDown className={cn("w-3.5 h-3.5 text-[hsl(199,86%,55%)] transition-transform shrink-0", open && "rotate-180")} />
+        <span className="text-xs font-semibold text-primary">Setup guide</span>
+        <ChevronDown className={cn("w-3.5 h-3.5 text-primary transition-transform shrink-0", open && "rotate-180")} />
       </button>
       {open && (
         <ol className="px-4 pb-4 space-y-2.5">
           {steps.map((step, i) => (
             <li key={i} className="flex gap-3 text-sm">
-              <span className="flex-shrink-0 w-5 h-5 rounded-full bg-[hsl(199,86%,55%)]/20 text-[hsl(199,86%,40%)] text-xs font-semibold flex items-center justify-center mt-0.5">
+              <span className="flex-shrink-0 w-5 h-5 rounded-full bg-primary/20 text-primary text-xs font-semibold flex items-center justify-center mt-0.5">
                 {i + 1}
               </span>
               <span className="leading-relaxed text-foreground/80">{step}</span>
@@ -173,7 +173,7 @@ function KeywordsTab() {
               {dirty && <SaveButton saving={saving === kw.id} onClick={() => handleSave(kw)} />}
               <button
                 onClick={() => handleToggle(kw)}
-                className={cn("text-xs px-2 py-1 rounded-md transition-colors", kw.is_active ? "text-muted-foreground hover:bg-muted" : "text-[hsl(199,86%,55%)] hover:bg-blue-50")}
+                className={cn("text-xs px-2 py-1 rounded-md transition-colors", kw.is_active ? "text-muted-foreground hover:bg-muted" : "text-primary hover:bg-primary/10")}
               >
                 {kw.is_active ? "Disable" : "Enable"}
               </button>
@@ -201,7 +201,7 @@ function KeywordsTab() {
         <button
           onClick={handleAdd}
           disabled={adding || !newKw.trim()}
-          className="px-3 py-1.5 text-sm rounded-md bg-[hsl(199,86%,55%)] text-white hover:bg-[hsl(199,86%,45%)] disabled:opacity-50 transition-colors shrink-0"
+          className="px-3 py-1.5 text-sm rounded-md bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors shrink-0"
         >
           {adding ? "Adding…" : "Add"}
         </button>
@@ -430,7 +430,7 @@ function QuickRepliesTab() {
         <button
           onClick={handleAdd}
           disabled={adding || !newForm.label.trim() || !newForm.text.trim()}
-          className="px-3 py-1.5 text-sm rounded-md bg-[hsl(199,86%,55%)] text-white hover:bg-[hsl(199,86%,45%)] disabled:opacity-50 transition-colors"
+          className="px-3 py-1.5 text-sm rounded-md bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors"
         >
           {adding ? "Adding…" : "Add Quick Reply"}
         </button>
@@ -651,11 +651,11 @@ function TeamTab() {
             <option value="admin">Admin</option>
           </select>
         </div>
-        {error && <p className="text-xs text-red-500 mb-2">{error}</p>}
+        {error && <p className="text-xs text-destructive mb-2">{error}</p>}
         <button
           onClick={handleCreate}
           disabled={adding || !form.display_name.trim() || !form.username.trim()}
-          className="px-3 py-1.5 text-sm rounded-md bg-[hsl(199,86%,55%)] text-white hover:bg-[hsl(199,86%,45%)] disabled:opacity-50 transition-colors"
+          className="px-3 py-1.5 text-sm rounded-md bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors"
         >
           {adding ? "Creating…" : "Add Member"}
         </button>
@@ -795,7 +795,7 @@ function BotTab() {
             <button
               onClick={handleRegisterWebhook}
               disabled={registering}
-              className="text-xs px-3 py-1.5 rounded-md bg-[hsl(199,86%,55%)] text-white hover:bg-[hsl(199,86%,45%)] disabled:opacity-50 transition-colors shrink-0"
+              className="text-xs px-3 py-1.5 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors shrink-0"
             >
               {registering ? "Registering…" : "Register Webhook"}
             </button>
@@ -830,13 +830,13 @@ function BotTab() {
             onChange={e => setForm(f => ({ ...f, webhook_secret: e.target.value }))}
           />
         </div>
-        {error && <p className="text-xs text-red-500">{error}</p>}
+        {error && <p className="text-xs text-destructive">{error}</p>}
         {success && <p className="text-xs text-green-600">{success}</p>}
         <div className="flex items-center gap-2">
           <button
             onClick={handleSave}
             disabled={saving || !form.bot_token.trim()}
-            className="px-3 py-1.5 text-sm rounded-md bg-[hsl(199,86%,55%)] text-white hover:bg-[hsl(199,86%,45%)] disabled:opacity-50 transition-colors"
+            className="px-3 py-1.5 text-sm rounded-md bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors"
           >
             {saving ? "Saving…" : "Save Token"}
           </button>
@@ -1047,12 +1047,12 @@ function SignalForwardingTab() {
           <button
             onClick={handleSave}
             disabled={saving}
-            className="px-3 py-1.5 text-sm rounded-md bg-[hsl(199,86%,55%)] text-white hover:bg-[hsl(199,86%,45%)] disabled:opacity-50 transition-colors"
+            className="px-3 py-1.5 text-sm rounded-md bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors"
           >
             {saving ? "Saving…" : "Save Forwarding Config"}
           </button>
           {saved && <span className="text-xs text-green-600">Saved.</span>}
-          {error && <span className="text-xs text-red-500">{error}</span>}
+          {error && <span className="text-xs text-destructive">{error}</span>}
         </div>
       </div>
 
@@ -1186,7 +1186,7 @@ function TelegramTab() {
           <button
             onClick={handleDisconnect}
             disabled={disconnecting}
-            className="text-xs px-3 py-1.5 rounded-md text-red-600 hover:bg-red-50 border border-red-200 transition-colors shrink-0"
+            className="text-xs px-3 py-1.5 rounded-md text-red-600 hover:bg-destructive/10 border border-red-200 transition-colors shrink-0"
           >
             {disconnecting ? "Disconnecting…" : "Disconnect"}
           </button>
@@ -1205,12 +1205,12 @@ function TelegramTab() {
             <button
               onClick={handleSendCode}
               disabled={busy || !phone.trim()}
-              className="px-3 py-1.5 text-sm rounded-md bg-[hsl(199,86%,55%)] text-white hover:bg-[hsl(199,86%,45%)] disabled:opacity-50 transition-colors shrink-0"
+              className="px-3 py-1.5 text-sm rounded-md bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors shrink-0"
             >
               {busy ? "Sending…" : "Send Code"}
             </button>
           </div>
-          {error && <p className="text-xs text-red-500">{error}</p>}
+          {error && <p className="text-xs text-destructive">{error}</p>}
         </div>
       ) : (
         <div className="rounded-lg border border-dashed bg-muted/30 p-4 space-y-3">
@@ -1229,7 +1229,7 @@ function TelegramTab() {
             <button
               onClick={handleVerify}
               disabled={busy || !code.trim()}
-              className="px-3 py-1.5 text-sm rounded-md bg-[hsl(199,86%,55%)] text-white hover:bg-[hsl(199,86%,45%)] disabled:opacity-50 transition-colors shrink-0"
+              className="px-3 py-1.5 text-sm rounded-md bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors shrink-0"
             >
               {busy ? "Verifying…" : "Verify"}
             </button>
@@ -1240,7 +1240,7 @@ function TelegramTab() {
           >
             Use a different number
           </button>
-          {error && <p className="text-xs text-red-500">{error}</p>}
+          {error && <p className="text-xs text-destructive">{error}</p>}
         </div>
       )}
 
@@ -1359,7 +1359,7 @@ function MetaTab() {
           <>
             <span className="font-semibold text-foreground">Access Token —</span>{" "}
             Go to{" "}
-            <a href="https://business.facebook.com" target="_blank" rel="noopener noreferrer" className="text-[hsl(199,86%,45%)] hover:underline inline-flex items-center gap-0.5">
+            <a href="https://business.facebook.com" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline inline-flex items-center gap-0.5">
               business.facebook.com <ExternalLink className="w-3 h-3" />
             </a>
             {" "}→ <strong>Settings</strong> → <strong>Users</strong> → <strong>System Users</strong>.
@@ -1369,7 +1369,7 @@ function MetaTab() {
           <>
             <span className="font-semibold text-foreground">Ad Account ID —</span>{" "}
             Open{" "}
-            <a href="https://adsmanager.facebook.com" target="_blank" rel="noopener noreferrer" className="text-[hsl(199,86%,45%)] hover:underline inline-flex items-center gap-0.5">
+            <a href="https://adsmanager.facebook.com" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline inline-flex items-center gap-0.5">
               Ads Manager <ExternalLink className="w-3 h-3" />
             </a>. Your account ID appears at the top-left as <code className="font-mono bg-muted px-1 rounded text-xs">Act #1234567890</code>. Copy the number only — we add <code className="font-mono bg-muted px-1 rounded text-xs">act_</code> automatically.
           </>,
@@ -1377,7 +1377,7 @@ function MetaTab() {
           <>
             <span className="font-semibold text-foreground">Pixel ID —</span>{" "}
             Go to{" "}
-            <a href="https://business.facebook.com/events_manager" target="_blank" rel="noopener noreferrer" className="text-[hsl(199,86%,45%)] hover:underline inline-flex items-center gap-0.5">
+            <a href="https://business.facebook.com/events_manager" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline inline-flex items-center gap-0.5">
               Events Manager <ExternalLink className="w-3 h-3" />
             </a>
             {" "}→ <strong>Data Sources</strong> → select your pixel. The Pixel ID is the number shown at the top of the settings panel.
@@ -1450,12 +1450,12 @@ function MetaTab() {
           </div>
         </div>
 
-        {error && <p className="text-xs text-red-500">{error}</p>}
+        {error && <p className="text-xs text-destructive">{error}</p>}
         {success && <p className="text-xs text-green-600">Credentials saved successfully.</p>}
         <button
           onClick={handleSave}
           disabled={saving || !form.access_token.trim() || !form.ad_account_id.trim() || !form.pixel_id.trim()}
-          className="px-3 py-1.5 text-sm rounded-md bg-[hsl(199,86%,55%)] text-white hover:bg-[hsl(199,86%,45%)] disabled:opacity-50 transition-colors"
+          className="px-3 py-1.5 text-sm rounded-md bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors"
         >
           {saving ? "Saving…" : "Save Credentials"}
         </button>
@@ -1567,7 +1567,7 @@ export default function SettingsPage() {
                 className={cn(
                   "w-full text-left px-3 py-2 rounded-md text-sm transition-colors",
                   section === s.id
-                    ? "bg-[hsl(199,86%,55%)]/10 text-[hsl(199,86%,45%)] font-medium"
+                    ? "bg-primary/10 text-primary font-medium"
                     : "text-muted-foreground hover:text-foreground hover:bg-muted"
                 )}
               >
@@ -1600,7 +1600,7 @@ export default function SettingsPage() {
                     className={cn(
                       "px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors",
                       pipelineTab === t.id
-                        ? "border-[hsl(199,86%,55%)] text-[hsl(199,86%,45%)]"
+                        ? "border-primary text-primary"
                         : "border-transparent text-muted-foreground hover:text-foreground"
                     )}
                   >
@@ -1626,8 +1626,8 @@ export default function SettingsPage() {
               {/* 1. Telegram Bot */}
               <section className="mb-10">
                 <div className="flex items-start gap-3 mb-4 pb-3 border-b">
-                  <div className="h-8 w-8 rounded-lg bg-[hsl(199,86%,55%)]/10 flex items-center justify-center shrink-0">
-                    <span className="text-[hsl(199,86%,45%)] text-sm font-bold">1</span>
+                  <div className="h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
+                    <span className="text-primary text-sm font-bold">1</span>
                   </div>
                   <div>
                     <h3 className="text-base font-semibold">Telegram Bot</h3>
@@ -1642,8 +1642,8 @@ export default function SettingsPage() {
               {/* 2. Operator Account */}
               <section className="mb-10">
                 <div className="flex items-start gap-3 mb-4 pb-3 border-b">
-                  <div className="h-8 w-8 rounded-lg bg-[hsl(199,86%,55%)]/10 flex items-center justify-center shrink-0">
-                    <span className="text-[hsl(199,86%,45%)] text-sm font-bold">2</span>
+                  <div className="h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
+                    <span className="text-primary text-sm font-bold">2</span>
                   </div>
                   <div>
                     <h3 className="text-base font-semibold">Operator Account</h3>
@@ -1658,8 +1658,8 @@ export default function SettingsPage() {
               {/* 3. Signal Forwarding */}
               <section>
                 <div className="flex items-start gap-3 mb-4 pb-3 border-b">
-                  <div className="h-8 w-8 rounded-lg bg-[hsl(199,86%,55%)]/10 flex items-center justify-center shrink-0">
-                    <span className="text-[hsl(199,86%,45%)] text-sm font-bold">3</span>
+                  <div className="h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
+                    <span className="text-primary text-sm font-bold">3</span>
                   </div>
                   <div>
                     <h3 className="text-base font-semibold">Signal Forwarding</h3>

@@ -90,8 +90,8 @@ function CopyButton({ text, label }: { text: string; label?: string }) {
     <button
       onClick={copy}
       className={cn(
-        "flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-all",
-        copied ? "bg-stage-deposited/15 text-stage-deposited" : "bg-secondary text-muted-foreground"
+        "flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold transition-colors",
+        copied ? "bg-success/15 text-success" : "bg-secondary text-muted-foreground hover:bg-secondary/70 hover:text-foreground"
       )}
     >
       {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
@@ -127,51 +127,49 @@ function StepRow({
   })();
 
   return (
-    <div className="border-b border-[hsl(var(--ios-separator))] last:border-0">
+    <div className="border-b border-border last:border-0">
       {/* Step header */}
       <button
         onClick={() => setOpen((o) => !o)}
-        className="w-full flex items-center gap-3 px-4 py-3.5 text-left"
+        className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-secondary/30 transition-colors"
       >
         <span className={cn(
           "h-5 w-5 rounded-full border-2 flex items-center justify-center shrink-0 transition-colors",
-          isDone ? "bg-stage-deposited border-stage-deposited" : "border-muted-foreground/30"
+          isDone ? "bg-success border-success" : "border-muted-foreground/30"
         )}>
-          {isDone && <Check className="h-2.5 w-2.5 text-white" strokeWidth={3} />}
+          {isDone && <Check className="h-2.5 w-2.5 text-success-foreground" strokeWidth={3} />}
         </span>
         <span className={cn(
-          "flex-1 text-[13px] font-medium",
+          "flex-1 text-sm font-medium",
           isDone ? "text-muted-foreground line-through" : "text-foreground"
         )}>
           {step.label}
         </span>
         {step.kind === "channel" && (
-          <span className="text-[11px] text-muted-foreground tabular-nums shrink-0">
+          <span className="text-xs text-muted-foreground tabular-nums shrink-0">
             {(profile[step.membersKey] as number) || 0}/{step.target.toLocaleString()}
           </span>
         )}
         <span className="text-muted-foreground shrink-0">
-          {open ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+          {open ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
         </span>
       </button>
 
       {/* Expanded */}
       {open && (
-        <div className="px-4 pb-4 space-y-3">
-          {/* Guide */}
-          <p className="text-[12px] text-muted-foreground whitespace-pre-line leading-relaxed">
+        <div className="px-4 pb-4 pt-1 space-y-3">
+          <p className="text-xs text-muted-foreground whitespace-pre-line leading-relaxed">
             {step.guide}
           </p>
 
-          {/* Input */}
           {step.kind === "bool" && (
             <button
               onClick={() => debouncedSave({ [step.key]: !profile[step.key] } as Partial<AffiliateChecklist>)}
               className={cn(
-                "px-4 py-2 rounded-xl text-[12px] font-semibold transition-colors",
+                "px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-colors",
                 isDone
-                  ? "bg-stage-deposited/15 text-stage-deposited"
-                  : "bg-primary/15 text-primary"
+                  ? "bg-success/15 text-success hover:bg-success/20"
+                  : "bg-primary/15 text-primary hover:bg-primary/20"
               )}
             >
               {isDone ? "Mark as not done" : "Mark as done"}
@@ -179,46 +177,40 @@ function StepRow({
           )}
 
           {step.kind === "channel" && (
-            <div className="space-y-2">
-              <div>
-                <label className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider">
-                  Channel ID
-                </label>
+            <div className="space-y-3">
+              <div className="space-y-1.5">
+                <label className="eyebrow">Channel ID</label>
                 <input
                   defaultValue={(profile[step.idKey] as string | null) || ""}
                   onBlur={(e) => debouncedSave({ [step.idKey]: e.target.value || null } as Partial<AffiliateChecklist>)}
-                  placeholder="e.g. -1001234567890"
-                  className="mt-1 w-full px-3 py-2 rounded-xl bg-secondary text-[12px] text-foreground outline-none placeholder:text-muted-foreground/40 font-mono"
+                  placeholder="-1001234567890"
+                  className="w-full h-9 px-3 rounded-lg bg-secondary/60 border border-border text-xs text-foreground outline-none placeholder:text-muted-foreground/50 font-mono focus:border-primary focus:ring-2 focus:ring-primary/20 transition-colors"
                 />
               </div>
-              <div>
-                <label className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider">
-                  Members (auto-synced hourly)
-                </label>
-                <div className="mt-1 flex items-center gap-2">
-                  <div className="flex-1 h-1.5 rounded-full bg-secondary overflow-hidden">
-                    <div
-                      className="h-full bg-primary rounded-full"
-                      style={{ width: `${Math.min(100, ((profile[step.membersKey] as number || 0) / step.target) * 100)}%` }}
-                    />
-                  </div>
-                  <span className="text-[11px] text-muted-foreground tabular-nums">
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="eyebrow">Members (auto-synced)</label>
+                  <span className="text-xs text-muted-foreground tabular-nums">
                     {(profile[step.membersKey] as number || 0).toLocaleString()} / {step.target.toLocaleString()}
                   </span>
+                </div>
+                <div className="h-1.5 rounded-full bg-secondary overflow-hidden">
+                  <div
+                    className="h-full bg-primary rounded-full transition-all duration-500"
+                    style={{ width: `${Math.min(100, ((profile[step.membersKey] as number || 0) / step.target) * 100)}%` }}
+                  />
                 </div>
               </div>
             </div>
           )}
 
           {step.kind === "text" && (
-            <div>
-              <input
-                defaultValue={(profile[step.key] as string | null) || ""}
-                onBlur={(e) => debouncedSave({ [step.key]: e.target.value || null } as Partial<AffiliateChecklist>)}
-                placeholder={step.placeholder}
-                className="w-full px-3 py-2 rounded-xl bg-secondary text-[12px] text-foreground outline-none placeholder:text-muted-foreground/40"
-              />
-            </div>
+            <input
+              defaultValue={(profile[step.key] as string | null) || ""}
+              onBlur={(e) => debouncedSave({ [step.key]: e.target.value || null } as Partial<AffiliateChecklist>)}
+              placeholder={step.placeholder}
+              className="w-full h-9 px-3 rounded-lg bg-secondary/60 border border-border text-xs text-foreground outline-none placeholder:text-muted-foreground/50 focus:border-primary focus:ring-2 focus:ring-primary/20 transition-colors"
+            />
           )}
         </div>
       )}
@@ -272,83 +264,71 @@ export default function AffiliateSelfDashboard() {
   const pct = Math.round((done / TOTAL) * 100);
 
   return (
-    <div className="flex flex-col">
-
-      <div className="mb-6">
-        <h2 className="text-2xl font-bold text-foreground">{profile.name}</h2>
-        <p className="text-sm text-muted-foreground mt-1">Affiliate dashboard</p>
-      </div>
-
-      {/* System health */}
-      <div className="mb-4">
-        <WorkspaceHealthCard />
-      </div>
+    <div className="space-y-6">
+      <WorkspaceHealthCard />
 
       {/* Referral link */}
-      <div className="mb-4">
-        <div className="ios-card p-4 space-y-2">
-          <p className="text-[11px] text-muted-foreground font-semibold uppercase tracking-wider">Your Referral Link</p>
-          {profile.referral_link ? (
-            <div className="flex items-center gap-2">
-              <p className="flex-1 text-[12px] text-foreground font-mono truncate">{profile.referral_link}</p>
-              <CopyButton text={profile.referral_link} label="Copy Link" />
-            </div>
-          ) : (
-            <p className="text-[12px] text-muted-foreground">Referral tag: {profile.referral_tag}</p>
-          )}
-          <p className="text-[11px] text-muted-foreground">Share this everywhere. Every lead who clicks it is automatically attributed to you.</p>
-        </div>
+      <div className="surface-card p-5 space-y-2.5">
+        <p className="eyebrow">Your referral link</p>
+        {profile.referral_link ? (
+          <div className="flex items-center gap-2">
+            <p className="flex-1 text-xs text-foreground font-mono truncate">{profile.referral_link}</p>
+            <CopyButton text={profile.referral_link} label="Copy" />
+          </div>
+        ) : (
+          <p className="text-xs text-muted-foreground">Referral tag: <span className="font-mono text-foreground">{profile.referral_tag}</span></p>
+        )}
+        <p className="text-xs text-muted-foreground">Share this everywhere. Every lead who clicks it is attributed to you automatically.</p>
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-4 gap-2 mb-4">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {[
-          { icon: <Users className="h-4 w-4 text-primary mx-auto mb-1" />, value: profile.leads, label: "Leads" },
-          { icon: <TrendingUp className="h-4 w-4 text-stage-deposited mx-auto mb-1" />, value: profile.deposits, label: "Deposits" },
-          { icon: <Trophy className="h-4 w-4 text-stage-qualified mx-auto mb-1" />, value: `${profile.conversion_rate}%`, label: "Conv." },
-          { icon: <DollarSign className="h-4 w-4 text-stage-hesitant mx-auto mb-1" />, value: `$${profile.commission_earned.toLocaleString()}`, label: "Commission" },
+          { icon: <Users className="h-4 w-4 text-primary" />, value: profile.leads, label: "Leads" },
+          { icon: <TrendingUp className="h-4 w-4 text-success" />, value: profile.deposits, label: "Deposits" },
+          { icon: <Trophy className="h-4 w-4 text-stage-qualified" />, value: `${profile.conversion_rate}%`, label: "Conversion" },
+          { icon: <DollarSign className="h-4 w-4 text-warning" />, value: `$${profile.commission_earned.toLocaleString()}`, label: "Commission" },
         ].map(({ icon, value, label }) => (
-          <div key={label} className="ios-card p-2.5 text-center">
-            {icon}
-            <p className="text-[13px] font-bold text-foreground leading-none tabular-nums">{value}</p>
-            <p className="text-[10px] text-muted-foreground mt-0.5">{label}</p>
+          <div key={label} className="surface-card p-4">
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-xs text-muted-foreground font-medium">{label}</span>
+              <div className="w-7 h-7 rounded-md bg-secondary/80 flex items-center justify-center">{icon}</div>
+            </div>
+            <p className="text-xl font-semibold text-foreground tabular-nums tracking-tight">{value}</p>
           </div>
         ))}
       </div>
 
       {/* Setup progress */}
-      <div className="mb-4">
-        <div className="flex items-center justify-between mb-2">
-          <p className="text-[11px] text-muted-foreground font-semibold uppercase tracking-wider">Setup Progress</p>
+      <div className="surface-card p-5 space-y-3">
+        <div className="flex items-center justify-between">
+          <p className="eyebrow">Setup progress</p>
           <span className={cn(
-            "text-[12px] font-bold tabular-nums",
-            done === TOTAL ? "text-stage-deposited" : "text-muted-foreground"
+            "text-xs font-semibold tabular-nums",
+            done === TOTAL ? "text-success" : "text-muted-foreground"
           )}>
-            {done}/{TOTAL} {done === TOTAL ? "— Complete!" : ""}
+            {done}/{TOTAL} {done === TOTAL && "— complete"}
           </span>
         </div>
-        <div className="h-2 rounded-full bg-secondary overflow-hidden">
+        <div className="h-1.5 rounded-full bg-secondary overflow-hidden">
           <div
-            className={cn("h-full rounded-full transition-all duration-500", done === TOTAL ? "bg-stage-deposited" : "bg-primary")}
+            className={cn("h-full rounded-full transition-all duration-500", done === TOTAL ? "bg-success" : "bg-primary")}
             style={{ width: `${pct}%` }}
           />
         </div>
       </div>
 
       {/* Checklist steps */}
-      <div className="pb-8">
-        <div className="ios-card overflow-hidden">
-          {STEPS.map((step) => (
-            <StepRow
-              key={step.kind === "bool" || step.kind === "text" ? step.key : step.idKey}
-              step={step}
-              profile={profile}
-              onSave={handlePatch}
-            />
-          ))}
-        </div>
+      <div className="surface-card overflow-hidden">
+        {STEPS.map((step) => (
+          <StepRow
+            key={step.kind === "bool" || step.kind === "text" ? step.key : step.idKey}
+            step={step}
+            profile={profile}
+            onSave={handlePatch}
+          />
+        ))}
       </div>
-
     </div>
   );
 }

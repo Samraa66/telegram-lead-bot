@@ -17,8 +17,8 @@ const DepositsChart = () => {
   }, []);
 
   return (
-    <div className="glass-card rounded-xl p-6">
-      <h3 className="text-sm font-semibold text-foreground mb-5">New Leads This Week</h3>
+    <div className="surface-card p-5 md:p-6">
+      <h3 className="text-sm font-semibold text-foreground mb-4">New leads this week</h3>
       {data.length === 0 ? (
         <div className="flex items-center justify-center h-[220px] text-muted-foreground text-xs">No data yet</div>
       ) : (

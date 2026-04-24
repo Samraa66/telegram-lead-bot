@@ -1685,14 +1685,26 @@ def create_affiliate(
     Callable by org_owner (Walid creating affiliates) and workspace_owner
     (affiliate creating their own sub-affiliates).
     """
+    import re
     import uuid
     from app.database.models import Affiliate, Workspace
     from app.database import seed_workspace_defaults
     from app.config import BOT_USERNAME
     from app.auth import generate_password, hash_password
 
-    referral_tag = "ref_" + uuid.uuid4().hex[:8]
-    login_username = "aff_" + uuid.uuid4().hex[:8]
+    # Human-readable username derived from the affiliate's name.
+    # "Jason Rivera" -> "jason.rivera"  (collision -> "jason.rivera2" etc.)
+    base_slug = re.sub(r"[^a-z0-9]+", ".", req.name.strip().lower()).strip(".")
+    if not base_slug:
+        base_slug = "affiliate"
+    login_username = base_slug
+    suffix = 2
+    while db.query(Affiliate).filter(Affiliate.login_username == login_username).first():
+        login_username = f"{base_slug}{suffix}"
+        suffix += 1
+
+    # Referral tag: short, name-based, with a tiny random suffix to keep URLs unique
+    referral_tag = f"{base_slug[:16]}-{uuid.uuid4().hex[:4]}"
     plain_password = generate_password()
 
     # Provision a child workspace in the caller's org

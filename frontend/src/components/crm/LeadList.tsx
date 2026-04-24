@@ -129,9 +129,9 @@ export function LeadList({
   ).length;
 
   return (
-    <div className="flex flex-col h-full bg-[hsl(var(--ios-grouped-bg))]">
+    <div className="bg-background">
       {/* Sticky search + filter header */}
-      <div className="bg-card/80 backdrop-blur-xl sticky top-0 z-10">
+      <div className="bg-background/95 backdrop-blur sticky top-0 z-10 border-b border-border">
         <div className="px-4 pt-2 pb-1 flex items-center justify-between">
           <p className="text-xs text-muted-foreground">
             {totalLeads} total
@@ -263,9 +263,9 @@ export function LeadList({
         </div>
       </div>
 
-      {/* Leads list - iOS grouped table style */}
-      <div className="flex-1 overflow-y-auto px-4 pb-8 md:pb-4">
-        <div className="ios-card overflow-hidden divide-y divide-[hsl(var(--ios-separator))]">
+      {/* Leads list */}
+      <div className="px-4 pb-8 md:pb-4 pt-3">
+        <div className="surface-card overflow-hidden divide-y divide-border">
           {filtered.map((lead) => {
             const urgency = getUrgencyLevel(lead.stageEnteredAt);
             return (

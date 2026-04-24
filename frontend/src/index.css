@@ -6,49 +6,50 @@
 
 @layer base {
   :root {
-    --background: 220 20% 7%;
-    --foreground: 210 20% 92%;
+    /* Surfaces — tuned so elevated surfaces read as lifted, not as random shades */
+    --background: 220 22% 6%;
+    --foreground: 210 20% 94%;
 
-    --card: 220 18% 10%;
-    --card-foreground: 210 20% 92%;
+    --card: 220 18% 9%;
+    --card-foreground: 210 20% 94%;
 
-    --popover: 220 18% 10%;
-    --popover-foreground: 210 20% 92%;
+    --popover: 220 20% 8%;
+    --popover-foreground: 210 20% 94%;
 
     --primary: 199 86% 55%;
-    --primary-foreground: 220 20% 7%;
+    --primary-foreground: 220 22% 6%;
 
-    --secondary: 220 16% 14%;
+    --secondary: 220 16% 13%;
     --secondary-foreground: 210 20% 85%;
 
-    --muted: 220 14% 16%;
-    --muted-foreground: 215 12% 55%;
+    --muted: 220 14% 14%;
+    --muted-foreground: 215 12% 58%;
 
-    --accent: 199 86% 55%;
-    --accent-foreground: 220 20% 7%;
+    --accent: 220 16% 14%;
+    --accent-foreground: 210 20% 94%;
 
     --destructive: 0 72% 55%;
     --destructive-foreground: 210 40% 98%;
 
     --success: 142 60% 45%;
-    --success-foreground: 220 20% 7%;
+    --success-foreground: 220 22% 6%;
 
     --warning: 38 92% 55%;
-    --warning-foreground: 220 20% 7%;
+    --warning-foreground: 220 22% 6%;
 
-    --border: 220 14% 16%;
-    --input: 220 14% 16%;
+    --border: 220 14% 15%;
+    --input: 220 14% 15%;
     --ring: 199 86% 55%;
 
     --radius: 0.75rem;
 
-    --sidebar-background: 220 20% 5%;
-    --sidebar-foreground: 210 20% 75%;
+    --sidebar-background: 220 22% 4.5%;
+    --sidebar-foreground: 210 18% 72%;
     --sidebar-primary: 199 86% 55%;
-    --sidebar-primary-foreground: 220 20% 7%;
-    --sidebar-accent: 220 16% 12%;
-    --sidebar-accent-foreground: 210 20% 92%;
-    --sidebar-border: 220 14% 12%;
+    --sidebar-primary-foreground: 220 22% 6%;
+    --sidebar-accent: 220 16% 11%;
+    --sidebar-accent-foreground: 210 20% 94%;
+    --sidebar-border: 220 16% 10%;
     --sidebar-ring: 199 86% 55%;
 
     /* CRM stage colors */
@@ -63,9 +64,9 @@
     --signal-sell: 0 72% 56%;
     --signal-pending: 38 92% 50%;
 
-    /* Legacy layout tokens (used by AnalyticsDashboard) */
-    --ios-separator: 220 14% 13%;
-    --ios-grouped-bg: 220 20% 5%;
+    /* Legacy aliases — map onto the unified scale so old callsites keep working */
+    --ios-separator: 220 14% 15%;
+    --ios-grouped-bg: 220 22% 6%;
 
     /* Chart colors */
     --chart-1: 199 86% 55%;
@@ -89,17 +90,41 @@
   }
 }
 
-@layer utilities {
-  .glass-card {
-    @apply bg-card/80 backdrop-blur-xl border border-border/50 shadow-lg;
+@layer components {
+  /* One card primitive. Both .glass-card and .ios-card resolve to this so
+     existing callsites keep working but everything reads consistently. */
+  .surface-card,
+  .glass-card,
+  .ios-card {
+    @apply bg-card border border-border/70 rounded-2xl;
   }
 
+  /* Subtle lift — for KPI tiles and hoverable cards */
+  .surface-card-interactive {
+    @apply bg-card border border-border/70 rounded-2xl transition-colors hover:border-border;
+  }
+
+  /* Section heading used at the top of every page (desktop) */
+  .page-heading {
+    @apply text-xl font-semibold text-foreground tracking-tight;
+  }
+  .page-subheading {
+    @apply text-sm text-muted-foreground mt-1;
+  }
+
+  /* Subtle eyebrow label */
+  .eyebrow {
+    @apply text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground;
+  }
+}
+
+@layer utilities {
   .glow-primary {
-    box-shadow: 0 0 20px hsl(199 86% 55% / 0.15);
+    box-shadow: 0 0 0 1px hsl(199 86% 55% / 0.15);
   }
 
   .gradient-primary {
-    background: linear-gradient(135deg, hsl(199 86% 55%), hsl(199 86% 40%));
+    background: linear-gradient(135deg, hsl(199 86% 55%), hsl(199 86% 42%));
   }
 
   .gradient-success {
@@ -108,10 +133,6 @@
 
   .gradient-warning {
     background: linear-gradient(135deg, hsl(38 92% 55%), hsl(38 92% 45%));
-  }
-
-  .ios-card {
-    @apply bg-card/80 backdrop-blur-xl border border-border/50 shadow-lg rounded-2xl;
   }
 
   .scrollbar-hide {
@@ -123,10 +144,25 @@
   }
 }
 
+/* Smoother page transitions — apply a soft fade to the main content area */
+@keyframes page-fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: none; }
+}
+.page-enter {
+  animation: page-fade-in 0.22s ease-out;
+}
+
 /* Scrollbar styling */
 @media (min-width: 768px) {
-  ::-webkit-scrollbar { width: 6px; }
-  ::-webkit-scrollbar-track { background: hsl(var(--background)); }
-  ::-webkit-scrollbar-thumb { background: hsl(var(--muted)); border-radius: 3px; }
-  ::-webkit-scrollbar-thumb:hover { background: hsl(var(--muted-foreground)); }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: hsl(var(--muted)); border-radius: 4px; border: 2px solid hsl(var(--background)); }
+  ::-webkit-scrollbar-thumb:hover { background: hsl(var(--muted-foreground) / 0.5); }
+}
+
+/* Selection color */
+::selection {
+  background: hsl(var(--primary) / 0.25);
+  color: hsl(var(--foreground));
 }

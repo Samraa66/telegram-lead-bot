@@ -436,25 +436,25 @@ export default function OnboardingPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[hsl(var(--ios-grouped-bg))] flex flex-col items-center justify-center px-4 py-12">
+    <div className="min-h-screen bg-background text-foreground flex flex-col items-center justify-center px-4 py-12 page-enter">
       <div className="w-full max-w-sm">
 
         {/* Logo / brand */}
         <div className="text-center mb-8">
-          <div className="h-12 w-12 rounded-2xl bg-primary flex items-center justify-center mx-auto mb-3">
-            <svg viewBox="0 0 24 24" className="h-6 w-6 text-primary-foreground" fill="currentColor">
-              <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
+          <div className="h-11 w-11 rounded-xl bg-primary/15 border border-primary/20 flex items-center justify-center mx-auto mb-3">
+            <svg viewBox="0 0 24 24" className="h-5 w-5 text-primary" fill="none">
+              <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
             </svg>
           </div>
-          <h1 className="text-[22px] font-bold text-foreground">Welcome to Telelytics</h1>
+          <h1 className="text-xl font-semibold text-foreground tracking-tight">Welcome to Telelytics</h1>
           {phase === "intro" && <p className="text-sm text-muted-foreground mt-1">Let's get your workspace live.</p>}
           {phase === "setup" && <p className="text-sm text-muted-foreground mt-1">Step {step + 1} of 3</p>}
-          {phase === "done"  && <p className="text-sm text-muted-foreground mt-1">Setup complete 🎉</p>}
+          {phase === "done"  && <p className="text-sm text-muted-foreground mt-1">Setup complete</p>}
         </div>
 
         {phase === "setup" && <StepDots current={step} />}
 
-        <div className="ios-card p-5">
+        <div className="surface-card p-6">
           {phase === "intro" && <IntroScreen onStart={() => setPhase("setup")} />}
           {phase === "setup" && step === 0 && <StepBot onDone={() => setStep(1)} onSkip={() => setStep(1)} />}
           {phase === "setup" && step === 1 && <StepTelethon onDone={() => setStep(2)} onSkip={() => setStep(2)} />}
@@ -464,7 +464,7 @@ export default function OnboardingPage() {
 
         <button
           onClick={() => { clearAuth(); window.location.href = "/login"; }}
-          className="mt-6 w-full text-[12px] text-muted-foreground text-center"
+          className="mt-6 w-full text-xs text-muted-foreground hover:text-foreground text-center transition-colors"
         >
           Sign out
         </button>
