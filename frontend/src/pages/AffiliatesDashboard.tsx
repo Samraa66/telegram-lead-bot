@@ -7,6 +7,8 @@ import {
   updateAffiliateLots,
   updateAffiliateChecklist,
   resetAffiliateCredentials,
+  listOrphanedWorkspaces,
+  purgeOrphanedWorkspaces,
   fetchPendingChannels,
   linkChannel,
   dismissPendingChannel,
@@ -14,6 +16,7 @@ import {
   AffiliatePerformance,
   AffiliateChecklist,
   PendingChannel,
+  OrphanedWorkspace,
 } from "../api/affiliates";
 import { cn } from "../lib/utils";
 
@@ -595,6 +598,8 @@ export default function AffiliatesDashboard() {
   const [showAddModal, setShowAddModal] = useState(false);
   const [copiedTag, setCopiedTag] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
+  const [orphans, setOrphans] = useState<OrphanedWorkspace[]>([]);
+  const [purging, setPurging] = useState(false);
   const [inviteHandoff, setInviteHandoff] = useState<
     { name: string; invite_url: string; login_username: string; expires_at: string | null; mode: "created" | "reset" } | null
   >(null);
@@ -617,6 +622,30 @@ export default function AffiliatesDashboard() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  // Check for orphaned workspaces (left behind by pre-cascade deletes)
+  const loadOrphans = useCallback(() => {
+    listOrphanedWorkspaces().then(setOrphans).catch(() => {});
+  }, []);
+  useEffect(() => { loadOrphans(); }, [loadOrphans]);
+
+  const handlePurgeOrphans = async () => {
+    const totalLeads = orphans.reduce((s, o) => s + o.lead_count, 0);
+    const msg = totalLeads > 0
+      ? `Purge ${orphans.length} orphaned workspace(s)? This will delete ${totalLeads} lead(s) stuck in those workspaces. Cannot be undone.`
+      : `Purge ${orphans.length} orphaned workspace(s)? They're empty. Cannot be undone.`;
+    if (!window.confirm(msg)) return;
+    setPurging(true);
+    try {
+      const { deleted } = await purgeOrphanedWorkspaces();
+      setOrphans([]);
+      alert(`Cleaned up ${deleted} orphaned workspace(s).`);
+    } catch (e: any) {
+      alert(e?.message || "Purge failed");
+    } finally {
+      setPurging(false);
+    }
+  };
 
   const handleSyncChannels = async () => {
     setSyncing(true);
@@ -652,12 +681,15 @@ export default function AffiliatesDashboard() {
   };
 
   const handleDelete = async (affiliateId: number, name: string) => {
-    if (!window.confirm(`Remove ${name}? This cannot be undone.`)) return;
+    const confirmed = window.confirm(
+      `Delete ${name}?\n\nThis permanently removes their workspace and EVERYTHING inside it: their leads, conversations, channels, templates, and any sub-affiliates' parent scope. Cannot be undone.`
+    );
+    if (!confirmed) return;
     try {
       await deleteAffiliate(affiliateId);
       setAffiliates((prev) => prev.filter((a) => a.id !== affiliateId));
-    } catch {
-      alert("Failed to delete affiliate.");
+    } catch (e: any) {
+      alert(e?.message || "Failed to delete affiliate.");
     }
   };
 
@@ -700,10 +732,37 @@ export default function AffiliatesDashboard() {
   }
 
   return (
-    <div className="flex flex-col h-full bg-[hsl(var(--ios-grouped-bg))] overflow-y-auto">
+    <div className="flex flex-col h-full bg-background overflow-y-auto">
+
+      {/* Orphaned workspace cleanup banner — only shows when there's something to clean */}
+      {orphans.length > 0 && (
+        <div className="mx-4 mt-3 rounded-xl border border-warning/30 bg-warning/5 p-4 flex items-start gap-3">
+          <div className="h-8 w-8 rounded-lg bg-warning/15 flex items-center justify-center shrink-0">
+            <RefreshCw className="h-4 w-4 text-warning" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold text-foreground">
+              {orphans.length} orphaned workspace{orphans.length !== 1 ? "s" : ""}
+            </p>
+            <p className="text-xs text-muted-foreground leading-relaxed mt-0.5">
+              Left behind by older affiliate deletes.{" "}
+              {orphans.reduce((s, o) => s + o.lead_count, 0) > 0
+                ? `Contains ${orphans.reduce((s, o) => s + o.lead_count, 0)} unreachable lead(s).`
+                : "Empty — safe to purge."}
+            </p>
+          </div>
+          <button
+            onClick={handlePurgeOrphans}
+            disabled={purging}
+            className="shrink-0 px-3 py-1.5 rounded-lg bg-warning/15 text-warning text-xs font-semibold hover:bg-warning/25 disabled:opacity-50 transition-colors"
+          >
+            {purging ? "Purging…" : "Clean up"}
+          </button>
+        </div>
+      )}
 
       {/* Header */}
-      <div className="bg-card/80 backdrop-blur-xl sticky top-0 z-10 px-4 pt-2 pb-3 flex items-center justify-between border-b border-[hsl(var(--ios-separator))]">
+      <div className="bg-card/80 backdrop-blur-xl sticky top-0 z-10 px-4 pt-2 pb-3 flex items-center justify-between border-b border-border">
         <p className="text-xs text-muted-foreground">{affiliates.length} affiliate{affiliates.length !== 1 ? "s" : ""}</p>
         <div className="flex items-center gap-2">
           <button

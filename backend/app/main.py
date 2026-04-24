@@ -1941,20 +1941,139 @@ def update_affiliate_lots(
     return {"ok": True, "lots_traded": affiliate.lots_traded, "commission_earned": round(affiliate.lots_traded * affiliate.commission_rate, 2)}
 
 
+def _cascade_delete_workspace(ws_id: int, db: Session) -> None:
+    """
+    Delete every row scoped to an affiliate workspace, in FK-safe order, and
+    the workspace row itself. Also stops its Telethon client if running.
+    Does NOT commit — caller must.
+    """
+    from app.database.models import (
+        Workspace, Contact, Message, StageHistory, FollowUpQueue,
+        FollowUpTemplate, StageKeyword, StageLabel, QuickReply, TeamMember,
+        Campaign, PendingChannel,
+    )
+
+    # Stop Telethon client if running (fire-and-forget)
+    try:
+        import asyncio
+        from app.services.telethon_client import stop_workspace_client
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            asyncio.ensure_future(stop_workspace_client(ws_id))
+        else:
+            loop.run_until_complete(stop_workspace_client(ws_id))
+    except Exception:
+        pass  # non-critical — session bytes die with the workspace row
+
+    # Child rows first (via contact_id), then workspace-scoped rows, then the workspace
+    contact_ids = [c.id for c in db.query(Contact.id).filter(Contact.workspace_id == ws_id).all()]
+    if contact_ids:
+        db.query(Message).filter(Message.contact_id.in_(contact_ids)).delete(synchronize_session=False)
+        db.query(StageHistory).filter(StageHistory.contact_id.in_(contact_ids)).delete(synchronize_session=False)
+        db.query(FollowUpQueue).filter(FollowUpQueue.contact_id.in_(contact_ids)).delete(synchronize_session=False)
+
+    for model in (Contact, FollowUpTemplate, StageKeyword, StageLabel, QuickReply, TeamMember, Campaign, PendingChannel):
+        db.query(model).filter(model.workspace_id == ws_id).delete(synchronize_session=False)
+
+    db.query(Workspace).filter(Workspace.id == ws_id).delete(synchronize_session=False)
+
+
 @app.delete("/affiliates/{affiliate_id}")
 def delete_affiliate(
     affiliate_id: int,
     db: Session = Depends(get_db),
     _=Depends(require_roles("developer", "admin")),
 ):
-    """Permanently delete an affiliate and their login credentials."""
-    from app.database.models import Affiliate
+    """
+    Permanently delete an affiliate AND their provisioned workspace with every
+    piece of data scoped to it (contacts, messages, channels, templates, etc.).
+
+    Refuses if the affiliate has sub-affiliates — those must be deleted first
+    so we never silently orphan a deeper workspace tree.
+    """
+    from app.database.models import Affiliate, Workspace
+
     affiliate = db.query(Affiliate).filter(Affiliate.id == affiliate_id).first()
     if not affiliate:
         raise HTTPException(status_code=404, detail="affiliate not found")
+
+    ws_id = affiliate.affiliate_workspace_id
+
+    # Guard: don't nuke a subtree — require sub-affiliates be deleted first
+    if ws_id:
+        sub_count = db.query(Workspace).filter(Workspace.parent_workspace_id == ws_id).count()
+        if sub_count > 0:
+            raise HTTPException(
+                status_code=400,
+                detail=f"This affiliate has {sub_count} sub-affiliate(s). Delete them first.",
+            )
+
+    if ws_id:
+        _cascade_delete_workspace(ws_id, db)
+
     db.delete(affiliate)
     db.commit()
     return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Orphaned workspace cleanup (admin)
+# ---------------------------------------------------------------------------
+
+def _find_orphaned_affiliate_workspaces(db: Session) -> list:
+    """
+    Return Workspace rows with workspace_role='affiliate' that no longer have
+    a matching Affiliate row. These are left behind by pre-cascade deletes.
+    """
+    from app.database.models import Workspace, Affiliate
+
+    # Set of workspace IDs still referenced by an affiliate
+    referenced = {
+        wid for (wid,) in db.query(Affiliate.affiliate_workspace_id)
+        .filter(Affiliate.affiliate_workspace_id.isnot(None))
+        .all()
+    }
+    candidates = (
+        db.query(Workspace)
+        .filter(Workspace.workspace_role == "affiliate")
+        .all()
+    )
+    return [w for w in candidates if w.id not in referenced]
+
+
+@app.get("/admin/orphaned-workspaces")
+def list_orphaned_workspaces(
+    db: Session = Depends(get_db),
+    _=Depends(require_roles("developer", "admin")),
+):
+    """List affiliate workspaces that no longer have an affiliate record (preview before purge)."""
+    from app.database.models import Contact
+
+    orphans = _find_orphaned_affiliate_workspaces(db)
+    result = []
+    for w in orphans:
+        lead_count = db.query(Contact).filter(Contact.workspace_id == w.id).count()
+        result.append({
+            "id": w.id,
+            "name": w.name,
+            "parent_workspace_id": w.parent_workspace_id,
+            "created_at": w.created_at.isoformat() if w.created_at else None,
+            "lead_count": lead_count,
+        })
+    return result
+
+
+@app.post("/admin/orphaned-workspaces/purge")
+def purge_orphaned_workspaces(
+    db: Session = Depends(get_db),
+    _=Depends(require_roles("developer", "admin")),
+):
+    """Cascade-delete every orphaned affiliate workspace. Returns {deleted: N}."""
+    orphans = _find_orphaned_affiliate_workspaces(db)
+    for w in orphans:
+        _cascade_delete_workspace(w.id, db)
+    db.commit()
+    return {"deleted": len(orphans)}
 
 
 @app.patch("/affiliates/{affiliate_id}/checklist")

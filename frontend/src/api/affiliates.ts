@@ -131,6 +131,21 @@ export const deleteAffiliate = (affiliateId: number): Promise<void> =>
 export const resetAffiliateCredentials = (affiliateId: number): Promise<InviteHandoff> =>
   apiFetch(`/affiliates/${affiliateId}/reset-credentials`, { method: "POST" });
 
+// Orphaned workspaces (left behind by older deletes — pre-cascade)
+export interface OrphanedWorkspace {
+  id: number;
+  name: string;
+  parent_workspace_id: number | null;
+  created_at: string | null;
+  lead_count: number;
+}
+
+export const listOrphanedWorkspaces = (): Promise<OrphanedWorkspace[]> =>
+  apiFetch("/admin/orphaned-workspaces");
+
+export const purgeOrphanedWorkspaces = (): Promise<{ deleted: number }> =>
+  apiFetch("/admin/orphaned-workspaces/purge", { method: "POST" });
+
 // Public invite endpoints — no auth required
 export interface InviteInfo {
   name: string;
