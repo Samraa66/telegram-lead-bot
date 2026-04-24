@@ -592,9 +592,10 @@ def meta_oauth_callback(code: str = "", state: str = "", error: str = ""):
 
 
 class MetaCredentialsRequest(BaseModel):
-    access_token: str
-    ad_account_id: str
-    pixel_id: str
+    access_token: Optional[str] = None
+    ad_account_id: Optional[str] = None
+    pixel_id: Optional[str] = None
+    landing_page_url: Optional[str] = None
 
 
 @app.patch("/settings/meta/credentials")
@@ -609,12 +610,17 @@ def meta_save_credentials(
     ws = db.query(Workspace).filter(Workspace.id == workspace_id).first()
     if not ws:
         raise HTTPException(status_code=404, detail="Workspace not found")
-    account_id = req.ad_account_id.strip()
-    if not account_id.startswith("act_"):
-        account_id = f"act_{account_id}"
-    ws.meta_access_token = req.access_token.strip()
-    ws.meta_ad_account_id = account_id
-    ws.meta_pixel_id = req.pixel_id.strip()
+    if req.access_token and req.access_token.strip():
+        ws.meta_access_token = req.access_token.strip()
+    if req.ad_account_id and req.ad_account_id.strip():
+        account_id = req.ad_account_id.strip()
+        if not account_id.startswith("act_"):
+            account_id = f"act_{account_id}"
+        ws.meta_ad_account_id = account_id
+    if req.pixel_id and req.pixel_id.strip():
+        ws.meta_pixel_id = req.pixel_id.strip()
+    if req.landing_page_url is not None:
+        ws.landing_page_url = req.landing_page_url.strip() or None
     db.commit()
     return {"ok": True}
 
@@ -653,6 +659,7 @@ def meta_connection_status(
         "connected": bool(ws and ws.meta_access_token),
         "ad_account_id": ws.meta_ad_account_id if ws else None,
         "pixel_id": ws.meta_pixel_id if ws else None,
+        "landing_page_url": ws.landing_page_url if ws else None,
     }
 
 
@@ -1117,11 +1124,12 @@ class CreateCampaignRequest(BaseModel):
 def create_campaign(
     req: CreateCampaignRequest,
     db: Session = Depends(get_db),
+    workspace_id: int = Depends(get_workspace_id),
     _=Depends(require_roles("developer", "admin")),
 ):
     """Create a tracked campaign and return the Telegram deep link."""
     import uuid
-    from app.database.models import Campaign
+    from app.database.models import Campaign, Workspace
     from app.config import BOT_USERNAME
 
     source_tag = "cmp_" + uuid.uuid4().hex[:8]
@@ -1134,13 +1142,20 @@ def create_campaign(
     db.commit()
     db.refresh(campaign)
 
+    ws = db.query(Workspace).filter(Workspace.id == workspace_id).first()
+    landing_base = (ws.landing_page_url or "").strip().rstrip("/") if ws else ""
+
     link = f"https://t.me/{BOT_USERNAME}?start={source_tag}" if BOT_USERNAME else None
+    landing_url = f"{landing_base}?src={source_tag}" if landing_base else None
     return {
         "id": campaign.id,
         "source_tag": source_tag,
         "name": campaign.name,
         "meta_campaign_id": campaign.meta_campaign_id,
         "link": link,
+        "landing_url": landing_url,
+        "leads": 0,
+        "deposits": 0,
         "created_at": campaign.created_at.isoformat(),
     }
 
@@ -1148,11 +1163,15 @@ def create_campaign(
 @app.get("/campaigns")
 def list_campaigns(
     db: Session = Depends(get_db),
+    workspace_id: int = Depends(get_workspace_id),
     _=Depends(require_roles("developer", "admin")),
 ):
     """List all tracked campaigns with their attribution stats."""
-    from app.database.models import Campaign, Contact, StageHistory
+    from app.database.models import Campaign, Contact, StageHistory, Workspace
     from app.config import BOT_USERNAME
+
+    ws = db.query(Workspace).filter(Workspace.id == workspace_id).first()
+    landing_base = (ws.landing_page_url or "").strip().rstrip("/") if ws else ""
 
     campaigns = db.query(Campaign).order_by(Campaign.created_at.desc()).all()
     result = []
@@ -1165,12 +1184,14 @@ def list_campaigns(
             .count()
         )
         link = f"https://t.me/{BOT_USERNAME}?start={c.source_tag}" if BOT_USERNAME else None
+        landing_url = f"{landing_base}?src={c.source_tag}" if landing_base else None
         result.append({
             "id": c.id,
             "source_tag": c.source_tag,
             "name": c.name,
             "meta_campaign_id": c.meta_campaign_id,
             "link": link,
+            "landing_url": landing_url,
             "leads": leads,
             "deposits": deposits,
             "is_active": c.is_active,

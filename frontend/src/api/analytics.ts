@@ -113,9 +113,10 @@ export type TrackedCampaign = {
   name: string;
   meta_campaign_id: string | null;
   link: string | null;
+  landing_url: string | null;
   leads: number;
   deposits: number;
-  is_active: boolean;
+  is_active?: boolean;
   created_at: string;
 };
 

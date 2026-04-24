@@ -190,6 +190,7 @@ class Workspace(Base):
     meta_access_token = Column(Text, nullable=True)
     meta_ad_account_id = Column(String(100), nullable=True)
     meta_pixel_id = Column(String(100), nullable=True)
+    landing_page_url = Column(Text, nullable=True)
     # Telegram bot credentials per workspace
     bot_token = Column(Text, nullable=True)
     webhook_secret = Column(String(255), nullable=True)

@@ -695,23 +695,49 @@ export default function AnalyticsDashboard() {
         {trackedCampaigns.length > 0 && (
           <div className="divide-y divide-[hsl(var(--ios-separator))]">
             {trackedCampaigns.map((c) => (
-              <div key={c.source_tag} className="py-2.5">
-                <div className="flex items-center justify-between gap-2 mb-1">
+              <div key={c.source_tag} className="py-2.5 space-y-1.5">
+                <div className="flex items-center justify-between gap-2">
                   <p className="text-[12px] font-semibold text-foreground truncate">{c.name}</p>
                   <span className="text-[10px] text-muted-foreground shrink-0">{c.leads}L · {c.deposits}D</span>
                 </div>
+
+                {/* Landing page URL — paste this into the Meta ad */}
+                {c.landing_url ? (
+                  <div>
+                    <p className="text-[9px] uppercase tracking-wider text-muted-foreground font-semibold mb-0.5">Landing URL — paste into Meta ad</p>
+                    <div className="flex items-center gap-2 bg-secondary rounded-lg px-2.5 py-1.5">
+                      <p className="flex-1 text-[10px] text-muted-foreground truncate font-mono">{c.landing_url}</p>
+                      <button
+                        onClick={() => handleCopyLink(c.landing_url!, c.source_tag + "_landing")}
+                        className="shrink-0 text-primary"
+                      >
+                        {copiedTag === c.source_tag + "_landing"
+                          ? <Check className="h-3.5 w-3.5" />
+                          : <Copy className="h-3.5 w-3.5" />
+                        }
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-[10px] text-muted-foreground italic">Set your Landing Page URL in Settings → Meta Ads to generate tracked landing links.</p>
+                )}
+
+                {/* Direct bot link — use if skipping landing page */}
                 {c.link && (
-                  <div className="flex items-center gap-2 bg-secondary rounded-lg px-2.5 py-1.5">
-                    <p className="flex-1 text-[10px] text-muted-foreground truncate font-mono">{c.link}</p>
-                    <button
-                      onClick={() => handleCopyLink(c.link!, c.source_tag)}
-                      className="shrink-0 text-primary"
-                    >
-                      {copiedTag === c.source_tag
-                        ? <Check className="h-3.5 w-3.5" />
-                        : <Copy className="h-3.5 w-3.5" />
-                      }
-                    </button>
+                  <div>
+                    <p className="text-[9px] uppercase tracking-wider text-muted-foreground font-semibold mb-0.5">Direct bot link</p>
+                    <div className="flex items-center gap-2 bg-secondary rounded-lg px-2.5 py-1.5">
+                      <p className="flex-1 text-[10px] text-muted-foreground truncate font-mono">{c.link}</p>
+                      <button
+                        onClick={() => handleCopyLink(c.link!, c.source_tag)}
+                        className="shrink-0 text-primary"
+                      >
+                        {copiedTag === c.source_tag
+                          ? <Check className="h-3.5 w-3.5" />
+                          : <Copy className="h-3.5 w-3.5" />
+                        }
+                      </button>
+                    </div>
                   </div>
                 )}
               </div>

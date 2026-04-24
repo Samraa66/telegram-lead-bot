@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ChevronDown, ExternalLink } from "lucide-react";
+import { ChevronDown, ExternalLink, Copy, Check } from "lucide-react";
 import AppLayout from "@/components/AppLayout";
 import {
   Keyword, FollowUpTemplate, QuickReply, StageLabel, TeamMember,
@@ -1094,16 +1094,24 @@ function TelegramTab() {
 // ---- Meta Integration tab ----
 
 function MetaTab() {
-  const [status, setStatus] = useState<{ connected: boolean; ad_account_id: string | null; pixel_id: string | null } | null>(null);
-  const [form, setForm] = useState({ access_token: "", ad_account_id: "", pixel_id: "" });
+  const [status, setStatus] = useState<{ connected: boolean; ad_account_id: string | null; pixel_id: string | null; landing_page_url: string | null } | null>(null);
+  const [form, setForm] = useState({ access_token: "", ad_account_id: "", pixel_id: "", landing_page_url: "" });
   const [saving, setSaving] = useState(false);
+  const [savingLanding, setSavingLanding] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
+  const [landingSaved, setLandingSaved] = useState(false);
+  const [snippetCopied, setSnippetCopied] = useState(false);
 
   useEffect(() => {
     fetch(`${API_BASE}/settings/meta/status`, { headers: authHeaders() })
       .then(r => r.json())
-      .then(setStatus)
+      .then((s) => {
+        setStatus(s);
+        if (s?.landing_page_url) {
+          setForm((f) => ({ ...f, landing_page_url: s.landing_page_url }));
+        }
+      })
       .catch(() => {});
   }, []);
 
@@ -1120,13 +1128,64 @@ function MetaTab() {
       });
       if (!res.ok) throw new Error((await res.json()).detail || "Failed to save");
       setSuccess(true);
-      setStatus({ connected: true, ad_account_id: form.ad_account_id.trim(), pixel_id: form.pixel_id.trim() });
-      setForm({ access_token: "", ad_account_id: "", pixel_id: "" });
+      setStatus({
+        connected: true,
+        ad_account_id: form.ad_account_id.trim(),
+        pixel_id: form.pixel_id.trim(),
+        landing_page_url: form.landing_page_url.trim() || null,
+      });
+      setForm((f) => ({ ...f, access_token: "", ad_account_id: "", pixel_id: "" }));
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Unknown error");
     } finally {
       setSaving(false);
     }
+  }
+
+  async function handleSaveLanding() {
+    setSavingLanding(true);
+    setError(null);
+    setLandingSaved(false);
+    try {
+      const res = await fetch(`${API_BASE}/settings/meta/credentials`, {
+        method: "PATCH",
+        headers: authHeaders(),
+        body: JSON.stringify({ landing_page_url: form.landing_page_url.trim() }),
+      });
+      if (!res.ok) throw new Error((await res.json()).detail || "Failed to save");
+      setLandingSaved(true);
+      setStatus((s) => s ? { ...s, landing_page_url: form.landing_page_url.trim() || null } : s);
+      setTimeout(() => setLandingSaved(false), 2500);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Unknown error");
+    } finally {
+      setSavingLanding(false);
+    }
+  }
+
+  const snippet = `<!-- Telelytics attribution: forwards ?src= from ad URL to Telegram bot /start param -->
+<script>
+(function(){
+  var p = new URLSearchParams(window.location.search);
+  var src = p.get('src') || p.get('utm_campaign') || p.get('utm_content');
+  if (!src) return;
+  try { localStorage.setItem('tl_src', src); } catch(e) {}
+  document.querySelectorAll('a[href*="t.me/"]').forEach(function(a){
+    try {
+      var u = new URL(a.href);
+      u.searchParams.set('start', src);
+      a.href = u.toString();
+    } catch(e) {}
+  });
+})();
+</script>`;
+
+  async function copySnippet() {
+    try {
+      await navigator.clipboard.writeText(snippet);
+      setSnippetCopied(true);
+      setTimeout(() => setSnippetCopied(false), 2000);
+    } catch {}
   }
 
   return (
@@ -1243,6 +1302,72 @@ function MetaTab() {
         >
           {saving ? "Saving…" : "Save Credentials"}
         </button>
+      </div>
+
+      {/* Landing Page URL */}
+      <div className="rounded-lg border p-4 space-y-3">
+        <div>
+          <h3 className="text-sm font-semibold">Landing Page URL</h3>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            The public URL of your landing page. We'll use it to build per-campaign tracked links for your Meta ads.
+          </p>
+        </div>
+        <div>
+          <label className="text-xs text-muted-foreground mb-1 block">URL</label>
+          <input
+            type="url"
+            className="w-full text-sm border rounded-md px-3 py-1.5 bg-background font-mono"
+            placeholder="https://your-landing.com"
+            value={form.landing_page_url}
+            onChange={e => setForm(f => ({ ...f, landing_page_url: e.target.value }))}
+          />
+          <p className="text-xs text-muted-foreground/70 mt-1">
+            Example: <code className="font-mono text-xs">https://bullish-signals.com</code>
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleSaveLanding}
+            disabled={savingLanding}
+            className="px-3 py-1.5 text-sm rounded-md border hover:bg-muted transition-colors disabled:opacity-50"
+          >
+            {savingLanding ? "Saving…" : "Save URL"}
+          </button>
+          {landingSaved && <span className="text-xs text-green-600">Saved.</span>}
+        </div>
+      </div>
+
+      {/* Attribution snippet */}
+      <div className="rounded-lg border p-4 space-y-3">
+        <div>
+          <h3 className="text-sm font-semibold">Landing Page Attribution Snippet</h3>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Paste this into the <code className="font-mono text-xs">&lt;head&gt;</code> of your landing page.
+            It reads <code className="font-mono text-xs">?src=</code> from the URL and appends it to any Telegram bot link
+            (<code className="font-mono text-xs">t.me/...</code>) on the page as the <code className="font-mono text-xs">/start</code> parameter
+            so every lead is attributed to the campaign that sent them.
+          </p>
+        </div>
+        <div className="relative">
+          <pre className="text-[11px] bg-muted/50 rounded-md p-3 overflow-x-auto font-mono leading-relaxed border">
+{snippet}
+          </pre>
+          <button
+            onClick={copySnippet}
+            className="absolute top-2 right-2 px-2 py-1 text-[11px] rounded-md bg-background border hover:bg-muted transition-colors flex items-center gap-1"
+          >
+            {snippetCopied ? <><Check className="h-3 w-3" /> Copied</> : <><Copy className="h-3 w-3" /> Copy</>}
+          </button>
+        </div>
+        <div className="text-xs text-muted-foreground/80 space-y-1">
+          <p className="font-semibold text-foreground">How the full flow works:</p>
+          <ol className="list-decimal list-inside space-y-0.5 pl-1">
+            <li>Generate a tracked campaign link in the Analytics page — this gives you a per-campaign landing URL (<code className="font-mono text-[10px]">...?src=cmp_xxx</code>).</li>
+            <li>Use that landing URL as the destination URL in your Meta ad.</li>
+            <li>User clicks ad → lands on your page → clicks the Telegram CTA.</li>
+            <li>The snippet rewrites the CTA link to <code className="font-mono text-[10px]">t.me/YourBot?start=cmp_xxx</code> so the lead is auto-attributed.</li>
+          </ol>
+        </div>
       </div>
     </div>
   );
