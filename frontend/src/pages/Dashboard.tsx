@@ -5,6 +5,7 @@ import KpiCard from "@/components/KpiCard";
 import PipelinePreview from "@/components/PipelinePreview";
 import RecentLeads from "@/components/RecentLeads";
 import DepositsChart from "@/components/DepositsChart";
+import WorkspaceHealthCard from "@/components/WorkspaceHealthCard";
 import { fetchOverview, Overview } from "@/api/analytics";
 import { fetchAffiliatePerformance } from "@/api/affiliates";
 import { fetchMembers } from "@/api/members";
@@ -41,6 +42,10 @@ const Dashboard = () => {
       <div className="mb-8">
         <h2 className="text-2xl font-bold text-foreground">Dashboard</h2>
         <p className="text-sm text-muted-foreground mt-1">Welcome back — here's your overview</p>
+      </div>
+
+      <div className="mb-6">
+        <WorkspaceHealthCard />
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">

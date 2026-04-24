@@ -6,6 +6,7 @@ import {
 import { fetchMyProfile, updateMyChecklist, AffiliateProfile } from "../api/affiliateMe";
 import { AffiliateChecklist } from "../api/affiliates";
 import { cn } from "../lib/utils";
+import WorkspaceHealthCard from "../components/WorkspaceHealthCard";
 
 // ---------------------------------------------------------------------------
 // Checklist definition (same steps as admin view)
@@ -276,6 +277,11 @@ export default function AffiliateSelfDashboard() {
       <div className="mb-6">
         <h2 className="text-2xl font-bold text-foreground">{profile.name}</h2>
         <p className="text-sm text-muted-foreground mt-1">Affiliate dashboard</p>
+      </div>
+
+      {/* System health */}
+      <div className="mb-4">
+        <WorkspaceHealthCard />
       </div>
 
       {/* Referral link */}
