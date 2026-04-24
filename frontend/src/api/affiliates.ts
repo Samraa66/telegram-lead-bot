@@ -135,7 +135,11 @@ export interface InviteInfo {
 }
 
 export const lookupInvite = async (token: string): Promise<InviteInfo> => {
-  const res = await fetch(`${API_BASE}/invite/${encodeURIComponent(token)}`);
+  // Explicit Accept: application/json so the backend SPA-fallback middleware
+  // (which only intercepts text/html navigations) lets this reach the API route.
+  const res = await fetch(`${API_BASE}/invite/${encodeURIComponent(token)}`, {
+    headers: { "Accept": "application/json" },
+  });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data?.detail || `Invite lookup failed (${res.status})`);
   return data;
@@ -154,7 +158,7 @@ export interface InviteAcceptResponse {
 export const acceptInvite = async (token: string, password: string): Promise<InviteAcceptResponse> => {
   const res = await fetch(`${API_BASE}/invite/${encodeURIComponent(token)}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", "Accept": "application/json" },
     body: JSON.stringify({ password }),
   });
   const data = await res.json().catch(() => ({}));

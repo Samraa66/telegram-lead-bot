@@ -148,6 +148,7 @@ function StepTelethon({ onDone, onSkip }: { onDone: () => void; onSkip: () => vo
   const [phase, setPhase] = useState<TelethonStep>("phone");
   const [phone, setPhone] = useState("");
   const [code, setCode] = useState("");
+  const [phoneCodeHash, setPhoneCodeHash] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -155,7 +156,8 @@ function StepTelethon({ onDone, onSkip }: { onDone: () => void; onSkip: () => vo
     if (!phone.trim()) return;
     setLoading(true); setError(null);
     try {
-      await api("POST", "/settings/telethon/connect", { phone: phone.trim() });
+      const res = await api("POST", "/settings/telethon/connect", { phone: phone.trim() });
+      setPhoneCodeHash(res?.phone_code_hash || "");
       setPhase("otp");
     } catch (e: any) {
       setError(e.message);
@@ -168,7 +170,11 @@ function StepTelethon({ onDone, onSkip }: { onDone: () => void; onSkip: () => vo
     if (!code.trim()) return;
     setLoading(true); setError(null);
     try {
-      await api("POST", "/settings/telethon/verify", { phone: phone.trim(), code: code.trim() });
+      await api("POST", "/settings/telethon/verify", {
+        phone: phone.trim(),
+        code: code.trim(),
+        phone_code_hash: phoneCodeHash,
+      });
       onDone();
     } catch (e: any) {
       setError(e.message);
