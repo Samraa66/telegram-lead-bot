@@ -738,8 +738,8 @@ function BotTab() {
   return (
     <div className="space-y-6">
       <SectionHeader
-        title="Telegram Bot"
-        description="Your bot handles incoming leads from Telegram and sends automated messages. Create one via BotFather, then paste the token here."
+        title="Acquisition Bot"
+        description="Captures every lead from your ads. Create a bot via BotFather, paste the token here, and register the webhook so Telegram forwards incoming DMs to your CRM."
       />
 
       <SetupGuide
@@ -855,7 +855,7 @@ function BotTab() {
   );
 }
 
-// ---- Telegram Operator Account tab ----
+// ---- Conversion Desk (Telethon) tab ----
 
 type TelethonStep = "idle" | "phone" | "otp" | "connected";
 
@@ -998,7 +998,7 @@ function SignalForwardingTab() {
         <div>
           <h4 className="text-sm font-semibold">Source Channel</h4>
           <p className="text-xs text-muted-foreground mt-0.5">
-            The channel your operator account listens to for trade signals. Every new post here gets copied to the destinations below.
+            The channel your Conversion Desk listens to for trade signals. Every new post here gets copied to the destinations below.
           </p>
         </div>
         <div>
@@ -1010,7 +1010,7 @@ function SignalForwardingTab() {
             onChange={e => setForm(f => ({ ...f, source: e.target.value }))}
           />
           <p className="text-xs text-muted-foreground/70 mt-1">
-            The channel ID starts with <code className="font-mono">-100</code>. Your operator account must be a member.
+            The channel ID starts with <code className="font-mono">-100</code>. Your Conversion Desk must be a member.
           </p>
           {envSourceInUse && (
             <p className="text-xs text-amber-600 mt-1">
@@ -1025,7 +1025,7 @@ function SignalForwardingTab() {
         <div>
           <h4 className="text-sm font-semibold">Destination Channels</h4>
           <p className="text-xs text-muted-foreground mt-0.5">
-            Your own VIP channels that should receive every signal. Comma-separated. Affiliate VIP channels are added automatically (see below).
+            Your own Signals channels that should receive every signal. Comma-separated. Affiliate Signals channels are added automatically (see below).
           </p>
         </div>
         <div>
@@ -1059,13 +1059,13 @@ function SignalForwardingTab() {
       {/* Affiliate destinations (read-only, auto-synced) */}
       <div className="rounded-lg border p-4 space-y-3">
         <div>
-          <h4 className="text-sm font-semibold">Affiliate VIP Channels</h4>
+          <h4 className="text-sm font-semibold">Affiliate Signals Channels</h4>
           <p className="text-xs text-muted-foreground mt-0.5">
-            Auto-synced from your affiliates' dashboards. Every active affiliate's linked VIP channel receives signals automatically — no action needed.
+            Auto-synced from your affiliates' dashboards. Every active affiliate's linked Signals channel receives signals automatically — no action needed.
           </p>
         </div>
         {config.affiliate_destinations.length === 0 ? (
-          <p className="text-xs text-muted-foreground">No affiliate VIP channels linked yet.</p>
+          <p className="text-xs text-muted-foreground">No affiliate Signals channels linked yet.</p>
         ) : (
           <div className="space-y-1.5">
             {config.affiliate_destinations.map(a => (
@@ -1158,18 +1158,18 @@ function TelegramTab() {
   return (
     <div className="space-y-6">
       <SectionHeader
-        title="Telegram Operator Account"
-        description="Connects the operator's personal Telegram account so the CRM can read incoming messages and send replies on their behalf."
+        title="Conversion Desk"
+        description="Connects your personal Telegram account — the human who replies to leads and closes them. The CRM reads and sends on its behalf."
       />
 
       <SetupGuide
         defaultOpen={!connected}
         steps={[
-          <>This links a <strong>personal Telegram account</strong> (not a bot) — the operator's actual number that leads message in to.</>,
-          <>The CRM reads incoming messages from that account and automatically advances leads through your pipeline based on keywords.</>,
-          <>Enter the operator's phone number below in international format (e.g. <code className="font-mono bg-muted px-1 rounded text-xs">+971501234567</code>).</>,
-          <>Telegram will send a <strong>5-digit code</strong> to the Telegram app on that device — enter it to confirm the connection.</>,
-          <>The session is saved securely in the database. You only need to do this once — it survives server restarts automatically.</>,
+          <>This links a <strong>personal Telegram account</strong> (not a bot) — the number your leads actually chat with once they're captured.</>,
+          <>The CRM reads incoming messages from that account and auto-advances leads through the pipeline based on keywords.</>,
+          <>Enter the phone number below in international format (e.g. <code className="font-mono bg-muted px-1 rounded text-xs">+971501234567</code>).</>,
+          <>Telegram sends a <strong>5-digit code</strong> to that device — enter it to confirm.</>,
+          <>The session is saved securely. You only do this once — it survives server restarts.</>,
           <span className="text-amber-700">Note: if the account has 2-step verification enabled, contact support — 2FA via UI is not yet supported.</span>,
         ]}
       />
@@ -1620,35 +1620,35 @@ export default function SettingsPage() {
             <>
               <h2 className="text-lg font-semibold mb-0.5">Telegram</h2>
               <p className="text-sm text-muted-foreground mb-6">
-                Everything Telegram-related: the bot that receives leads, your operator account, and signal forwarding.
+                The three pieces that run your pipeline: the <strong>Acquisition Bot</strong> that captures leads, the <strong>Conversion Desk</strong> that closes them, and the <strong>Signal Forwarding</strong> that delivers trade signals to paid members.
               </p>
 
-              {/* 1. Telegram Bot */}
+              {/* 1. Acquisition Bot */}
               <section className="mb-10">
                 <div className="flex items-start gap-3 mb-4 pb-3 border-b">
                   <div className="h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
                     <span className="text-primary text-sm font-bold">1</span>
                   </div>
                   <div>
-                    <h3 className="text-base font-semibold">Telegram Bot</h3>
+                    <h3 className="text-base font-semibold">Acquisition Bot</h3>
                     <p className="text-xs text-muted-foreground mt-0.5">
-                      The bot users land in after clicking your ad CTA — receives inbound leads and forwards trade signals to VIP channels.
+                      Captures every lead who clicks your ads — the entry point of the funnel.
                     </p>
                   </div>
                 </div>
                 <BotTab />
               </section>
 
-              {/* 2. Operator Account */}
+              {/* 2. Conversion Desk */}
               <section className="mb-10">
                 <div className="flex items-start gap-3 mb-4 pb-3 border-b">
                   <div className="h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
                     <span className="text-primary text-sm font-bold">2</span>
                   </div>
                   <div>
-                    <h3 className="text-base font-semibold">Operator Account</h3>
+                    <h3 className="text-base font-semibold">Conversion Desk</h3>
                     <p className="text-xs text-muted-foreground mt-0.5">
-                      Your personal Telegram account — the human persona that DMs leads to qualify and close them.
+                      Your personal Telegram account — the human on the other side who qualifies and closes leads.
                     </p>
                   </div>
                 </div>
@@ -1664,7 +1664,7 @@ export default function SettingsPage() {
                   <div>
                     <h3 className="text-base font-semibold">Signal Forwarding</h3>
                     <p className="text-xs text-muted-foreground mt-0.5">
-                      Mirror trade signals from your source channel to VIP and affiliate channels automatically.
+                      Mirrors trade signals from your source channel to every linked Signals channel automatically.
                     </p>
                   </div>
                 </div>

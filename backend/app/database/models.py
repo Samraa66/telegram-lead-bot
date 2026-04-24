@@ -370,6 +370,8 @@ class PendingChannel(Base):
     chat_id = Column(String(50), unique=True, nullable=False)   # e.g. -1001234567890
     title = Column(String(500), nullable=True)
     detected_at = Column(DateTime, default=datetime.utcnow)
+    # Workspace whose bot the channel was added to (null = legacy/unknown)
+    workspace_id = Column(Integer, nullable=True)
 
 
 class AdCreative(Base):

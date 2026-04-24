@@ -117,35 +117,38 @@ function AddAffiliateModal({ onClose, onCreated }: AddAffiliateModalProps) {
 type ChecklistStep =
   | { kind: "bool"; key: keyof AffiliateChecklist; label: string }
   | { kind: "channel"; idKey: keyof AffiliateChecklist; membersKey: keyof AffiliateChecklist; label: string; target: number }
-  | { kind: "text"; key: keyof AffiliateChecklist; label: string; placeholder: string };
+  | { kind: "text"; key: keyof AffiliateChecklist; label: string; placeholder: string }
+  // Read-only — derived from the affiliate's workspace state (bot_token / telethon_session)
+  | { kind: "derived"; key: keyof AffiliateChecklist; label: string };
 
 const CHECKLIST_STEPS: ChecklistStep[] = [
+  // Core connections (derived from real workspace state)
+  { kind: "derived", key: "has_bot_token",       label: "Acquisition Bot connected" },
+  { kind: "derived", key: "has_conversion_desk", label: "Conversion Desk connected" },
+  { kind: "channel", idKey: "vip_channel_id",   membersKey: "vip_channel_members",     label: "Signals channel linked", target: 60 },
+  // Audience
   { kind: "bool",    key: "esim_done",          label: "Secondary phone / eSIM" },
   { kind: "channel", idKey: "free_channel_id",  membersKey: "free_channel_members",    label: "Free channel",    target: 2000 },
-  { kind: "bool",    key: "bot_setup_done",      label: "Bot configured (welcome + auto-approve)" },
-  { kind: "channel", idKey: "vip_channel_id",   membersKey: "vip_channel_members",     label: "VIP channel",     target: 60 },
+  { kind: "bool",    key: "bot_setup_done",      label: "Acquisition Bot pinned in free channel" },
   { kind: "channel", idKey: "tutorial_channel_id", membersKey: "tutorial_channel_members", label: "Tutorial channel", target: 50 },
-  { kind: "bool",    key: "sales_scripts_done",  label: "Sales scripts in quick replies" },
+  // Sales
+  { kind: "bool",    key: "sales_scripts_done",  label: "Sales scripts in Conversion Desk" },
   { kind: "text",    key: "ib_profile_id",       label: "PU Prime IB profile ID", placeholder: "e.g. IB-12345" },
-  { kind: "bool",    key: "pixel_setup_done",    label: "Pixel setup" },
+  // Traffic
+  { kind: "bool",    key: "pixel_setup_done",    label: "Meta Pixel installed" },
   { kind: "bool",    key: "ads_live",            label: "Ads running" },
 ];
 
-function checklistProgress(aff: AffiliateChecklist): number {
-  let done = 0;
-  if (aff.esim_done) done++;
-  if (aff.free_channel_id) done++;
-  if (aff.bot_setup_done) done++;
-  if (aff.vip_channel_id) done++;
-  if (aff.tutorial_channel_id) done++;
-  if (aff.sales_scripts_done) done++;
-  if (aff.ib_profile_id) done++;
-  if (aff.pixel_setup_done) done++;
-  if (aff.ads_live) done++;
-  return done;
+function checklistStepDone(step: ChecklistStep, aff: AffiliateChecklist): boolean {
+  if (step.kind === "channel") return Boolean(aff[step.idKey]);
+  return Boolean(aff[step.key]);
 }
 
-const CHECKLIST_TOTAL = 9;
+function checklistProgress(aff: AffiliateChecklist): number {
+  return CHECKLIST_STEPS.reduce((n, s) => n + (checklistStepDone(s, aff) ? 1 : 0), 0);
+}
+
+const CHECKLIST_TOTAL = CHECKLIST_STEPS.length;
 
 interface SetupChecklistProps {
   affiliate: AffiliatePerformance;
@@ -220,6 +223,29 @@ function SetupChecklist({ affiliate, onUpdated }: SetupChecklistProps) {
       {open && (
         <div className="mt-3 space-y-2.5">
           {CHECKLIST_STEPS.map((step) => {
+            if (step.kind === "derived") {
+              const checked = Boolean(affiliate[step.key]);
+              return (
+                <div key={step.key} className="w-full flex items-center gap-2.5">
+                  <span className={cn(
+                    "h-5 w-5 rounded-full border-2 flex items-center justify-center shrink-0",
+                    checked ? "bg-success border-success" : "border-muted-foreground/30"
+                  )}>
+                    {checked && <Check className="h-2.5 w-2.5 text-success-foreground" strokeWidth={3} />}
+                  </span>
+                  <span className={cn(
+                    "text-[12px]",
+                    checked ? "text-muted-foreground" : "text-foreground"
+                  )}>
+                    {step.label}
+                  </span>
+                  <span className="ml-auto text-[10px] font-mono uppercase tracking-wider text-muted-foreground">
+                    {checked ? "auto" : "pending"}
+                  </span>
+                </div>
+              );
+            }
+
             if (step.kind === "bool") {
               const checked = Boolean(affiliate[step.key]);
               return (
@@ -232,10 +258,10 @@ function SetupChecklist({ affiliate, onUpdated }: SetupChecklistProps) {
                   <span className={cn(
                     "h-5 w-5 rounded-full border-2 flex items-center justify-center shrink-0 transition-colors",
                     checked
-                      ? "bg-stage-deposited border-stage-deposited"
+                      ? "bg-success border-success"
                       : "border-muted-foreground/30"
                   )}>
-                    {checked && <Check className="h-2.5 w-2.5 text-white" strokeWidth={3} />}
+                    {checked && <Check className="h-2.5 w-2.5 text-success-foreground" strokeWidth={3} />}
                   </span>
                   <span className={cn(
                     "text-[12px]",
@@ -256,9 +282,9 @@ function SetupChecklist({ affiliate, onUpdated }: SetupChecklistProps) {
                   <div className="flex items-center gap-2.5">
                     <span className={cn(
                       "h-5 w-5 rounded-full border-2 flex items-center justify-center shrink-0",
-                      isDone ? "bg-stage-deposited border-stage-deposited" : "border-muted-foreground/30"
+                      isDone ? "bg-success border-success" : "border-muted-foreground/30"
                     )}>
-                      {isDone && <Check className="h-2.5 w-2.5 text-white" strokeWidth={3} />}
+                      {isDone && <Check className="h-2.5 w-2.5 text-success-foreground" strokeWidth={3} />}
                     </span>
                     <span className={cn(
                       "text-[12px] font-medium",
@@ -297,9 +323,9 @@ function SetupChecklist({ affiliate, onUpdated }: SetupChecklistProps) {
                 <div className="flex items-center gap-2.5">
                   <span className={cn(
                     "h-5 w-5 rounded-full border-2 flex items-center justify-center shrink-0",
-                    isDone ? "bg-stage-deposited border-stage-deposited" : "border-muted-foreground/30"
+                    isDone ? "bg-success border-success" : "border-muted-foreground/30"
                   )}>
-                    {isDone && <Check className="h-2.5 w-2.5 text-white" strokeWidth={3} />}
+                    {isDone && <Check className="h-2.5 w-2.5 text-success-foreground" strokeWidth={3} />}
                   </span>
                   <span className={cn(
                     "text-[12px] font-medium",
@@ -417,7 +443,7 @@ ${inviteUrl}
 
 Your username will be: ${loginUsername}
 
-Once you're in, a short wizard will walk you through connecting your Telegram bot, operator account, and VIP channel. After that you're live — leads from your ads flow into your CRM and signals forward to your VIP channel automatically.`;
+Once you're in, a short wizard walks you through three things: your Acquisition Bot (captures ad traffic), your Conversion Desk (your sales Telegram), and your Signals Channel (paid members). After that you're live — leads flow into your CRM and signals forward to your Signals Channel automatically.`;
 
   const expiresLabel = expiresAt
     ? new Date(expiresAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })

@@ -484,6 +484,7 @@ def get_best_performing_creatives(
 
 def get_affiliate_performance(db: Session, workspace_id: int = 1) -> list:
     from app.config import BOT_USERNAME
+    from app.database.models import Workspace
 
     affiliates = (
         db.query(Affiliate)
@@ -491,8 +492,19 @@ def get_affiliate_performance(db: Session, workspace_id: int = 1) -> list:
         .order_by(Affiliate.created_at)
         .all()
     )
+
+    # Bulk-load each affiliate's own workspace so we can derive connection state
+    aff_ws_ids = [a.affiliate_workspace_id for a in affiliates if a.affiliate_workspace_id]
+    ws_by_id: dict = {}
+    if aff_ws_ids:
+        rows = db.query(Workspace).filter(Workspace.id.in_(aff_ws_ids)).all()
+        ws_by_id = {w.id: w for w in rows}
+
     result = []
     for aff in affiliates:
+        aff_ws = ws_by_id.get(aff.affiliate_workspace_id) if aff.affiliate_workspace_id else None
+        has_bot_token = bool(aff_ws and aff_ws.bot_token)
+        has_conversion_desk = bool(aff_ws and aff_ws.telethon_session)
         leads = (
             db.query(func.count(Contact.id))
             .filter(
@@ -543,6 +555,9 @@ def get_affiliate_performance(db: Session, workspace_id: int = 1) -> list:
             "ib_profile_id": aff.ib_profile_id,
             "ads_live": bool(aff.ads_live),
             "pixel_setup_done": bool(aff.pixel_setup_done),
+            # Derived — reflects real workspace state, always in sync with onboarding/settings
+            "has_bot_token": has_bot_token,
+            "has_conversion_desk": has_conversion_desk,
         })
 
     return sorted(result, key=lambda x: (x["deposits"], x["leads"]), reverse=True)

@@ -276,6 +276,14 @@ def _ensure_columns() -> None:
             if col not in existing_affiliates:
                 _add_column("affiliates", col, ddl)
 
+        # pending_channels — workspace scope for per-workspace detection
+        pending_needed = [("workspace_id", "INTEGER")]
+        existing_pending = _existing_columns("pending_channels")
+        if existing_pending:  # table may not exist on first boot; models.create_all handles that
+            for col, ddl in pending_needed:
+                if col not in existing_pending:
+                    _add_column("pending_channels", col, ddl)
+
 
 # ---------------------------------------------------------------------------
 # Template seeding

@@ -146,7 +146,7 @@ export default function MembersDashboard() {
       {/* Sticky header */}
       <div className="bg-card/80 backdrop-blur-xl sticky top-0 z-10">
         <div className="px-4 pt-2 pb-1">
-          <p className="text-xs text-muted-foreground">{members.length} VIP members</p>
+          <p className="text-xs text-muted-foreground">{members.length} paid members</p>
         </div>
 
         {/* Filter pills */}

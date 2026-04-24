@@ -194,9 +194,9 @@ async def _handle_webhook(request: Request, db: Session, workspace_id: int, secr
                         (Affiliate.tutorial_channel_id == chat_id)
                     ).first()
                     if not already_linked:
-                        db.add(PendingChannel(chat_id=chat_id, title=chat_title))
+                        db.add(PendingChannel(chat_id=chat_id, title=chat_title, workspace_id=workspace_id))
                         db.commit()
-                        logger.info("Bot added to channel %s (%s) — stored as pending", chat_title, chat_id)
+                        logger.info("Bot added to channel %s (%s) for ws=%s — stored as pending", chat_title, chat_id, workspace_id)
             elif new_status in ("left", "kicked") and chat_id:
                 db.query(PendingChannel).filter(PendingChannel.chat_id == chat_id).delete()
                 db.commit()
@@ -966,6 +966,35 @@ def bot_register_webhook(
         raise HTTPException(status_code=502, detail=result.get("description", "setWebhook failed"))
 
     return {"ok": True, "webhook_url": webhook_url}
+
+
+@app.get("/settings/my/pending-channels")
+def my_pending_channels(
+    db: Session = Depends(get_db),
+    workspace_id: int = Depends(get_workspace_id),
+    _=Depends(require_workspace_owner),
+):
+    """
+    Return channels/groups that THIS workspace's bot was recently added to as admin.
+    Used by the onboarding wizard ("Detect channel") so affiliates don't have to
+    manually copy a channel ID.
+    """
+    rows = (
+        db.query(PendingChannel)
+        .filter(PendingChannel.workspace_id == workspace_id)
+        .order_by(PendingChannel.detected_at.desc())
+        .limit(20)
+        .all()
+    )
+    return [
+        {
+            "id": r.id,
+            "chat_id": r.chat_id,
+            "title": r.title,
+            "detected_at": r.detected_at.isoformat() if r.detected_at else None,
+        }
+        for r in rows
+    ]
 
 
 @app.post("/settings/onboarding/complete")
@@ -1965,6 +1994,13 @@ def affiliate_me(
     if not aff:
         raise HTTPException(status_code=404, detail="affiliate not found")
 
+    # Derived connection state — reflects what onboarding actually configured.
+    # Workspace is the affiliate's own provisioned workspace (affiliate_workspace_id).
+    from app.database.models import Workspace as _Ws
+    ws = db.query(_Ws).filter(_Ws.id == (aff.affiliate_workspace_id or aff.workspace_id)).first()
+    has_bot_token = bool(ws and ws.bot_token)
+    has_conversion_desk = bool(ws and ws.telethon_session)
+
     leads = (
         db.query(func.count(Contact.id))
         .filter(Contact.source == aff.referral_tag, Contact.classification != "noise")
@@ -2007,6 +2043,9 @@ def affiliate_me(
         "ib_profile_id": aff.ib_profile_id,
         "ads_live": bool(aff.ads_live),
         "pixel_setup_done": bool(aff.pixel_setup_done),
+        # Derived — reflects real workspace state, always in sync with onboarding/settings
+        "has_bot_token": has_bot_token,
+        "has_conversion_desk": has_conversion_desk,
     }
 
 

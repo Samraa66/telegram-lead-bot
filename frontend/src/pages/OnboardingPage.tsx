@@ -27,9 +27,9 @@ async function api(method: string, path: string, body?: object) {
 // ---------------------------------------------------------------------------
 
 const STEPS = [
-  { icon: Bot,       label: "Bot"      },
-  { icon: Smartphone, label: "Operator" },
-  { icon: Radio,     label: "Channel"  },
+  { icon: Bot,        label: "Acquisition" },
+  { icon: Smartphone, label: "Conversion"  },
+  { icon: Radio,      label: "Signals"     },
 ];
 
 function StepDots({ current }: { current: number }) {
@@ -86,14 +86,14 @@ function StepBot({ onDone, onSkip }: { onDone: () => void; onSkip: () => void })
   return (
     <div className="space-y-5">
       <div>
-        <h2 className="text-[18px] font-bold text-foreground">Connect your Telegram bot</h2>
+        <h2 className="text-lg font-bold text-foreground">Connect your Acquisition Bot</h2>
         <p className="text-sm text-muted-foreground mt-1">
-          Your bot is the entry point for leads. Create one via BotFather if you haven't already.
+          This is the bot your ad traffic lands in. Every click from your ads DMs this bot first — we capture them into the CRM automatically. Create one via BotFather if you haven't already.
         </p>
       </div>
 
-      <div className="ios-card p-4 space-y-2 text-[13px] text-muted-foreground">
-        <p className="font-semibold text-foreground text-[12px] uppercase tracking-wider">How to get your token</p>
+      <div className="surface-card p-4 space-y-2 text-xs text-muted-foreground">
+        <p className="eyebrow text-foreground">How to get your token</p>
         <ol className="list-decimal list-inside space-y-1 leading-relaxed">
           <li>Open Telegram and search <span className="font-mono text-foreground">@BotFather</span></li>
           <li>Send <span className="font-mono text-foreground">/newbot</span> and follow the prompts</li>
@@ -139,7 +139,7 @@ function StepBot({ onDone, onSkip }: { onDone: () => void; onSkip: () => void })
 }
 
 // ---------------------------------------------------------------------------
-// Step 2 — Telethon operator account
+// Step 2 — Conversion Desk (Telethon)
 // ---------------------------------------------------------------------------
 
 type TelethonStep = "phone" | "otp";
@@ -186,9 +186,9 @@ function StepTelethon({ onDone, onSkip }: { onDone: () => void; onSkip: () => vo
   return (
     <div className="space-y-5">
       <div>
-        <h2 className="text-[18px] font-bold text-foreground">Connect operator account</h2>
+        <h2 className="text-lg font-bold text-foreground">Connect your Conversion Desk</h2>
         <p className="text-sm text-muted-foreground mt-1">
-          This is the Telegram account that will handle lead conversations. Use the number linked to your eSIM.
+          This is your personal Telegram account — the human on the other side that replies to leads and closes them. Use the number linked to your eSIM (separate from your personal account).
         </p>
       </div>
 
@@ -252,13 +252,35 @@ function StepTelethon({ onDone, onSkip }: { onDone: () => void; onSkip: () => vo
 }
 
 // ---------------------------------------------------------------------------
-// Step 3 — VIP channel
+// Step 3 — Signals channel
 // ---------------------------------------------------------------------------
+
+type DetectedChannel = { id: number; chat_id: string; title: string | null };
 
 function StepChannel({ onDone, onSkip }: { onDone: () => void; onSkip: () => void }) {
   const [channelId, setChannelId] = useState("");
+  const [detected, setDetected] = useState<DetectedChannel[]>([]);
+  const [detecting, setDetecting] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  async function handleDetect() {
+    setDetecting(true); setError(null);
+    try {
+      const rows: DetectedChannel[] = await api("GET", "/settings/my/pending-channels");
+      setDetected(rows);
+      if (rows.length === 0) {
+        setError("No channels detected yet. Make sure your bot is added as an ADMIN (not just a member) and try again in a few seconds.");
+      } else if (rows.length === 1) {
+        // Auto-fill if there's only one
+        setChannelId(rows[0].chat_id);
+      }
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setDetecting(false);
+    }
+  }
 
   async function handleSubmit() {
     if (!channelId.trim()) return;
@@ -276,43 +298,86 @@ function StepChannel({ onDone, onSkip }: { onDone: () => void; onSkip: () => voi
   return (
     <div className="space-y-5">
       <div>
-        <h2 className="text-[18px] font-bold text-foreground">Link your VIP channel</h2>
+        <h2 className="text-lg font-bold text-foreground">Link your Signals Channel</h2>
         <p className="text-sm text-muted-foreground mt-1">
-          Trade signals will be forwarded to this channel automatically once you paste the channel ID.
+          The private channel your paying members get. Trade signals forward here automatically — add your Acquisition Bot as admin and we'll detect it.
         </p>
       </div>
 
-      <div className="ios-card p-4 space-y-2 text-[13px] text-muted-foreground">
-        <p className="font-semibold text-foreground text-[12px] uppercase tracking-wider">How to get your channel ID</p>
+      <div className="surface-card p-4 space-y-2 text-xs text-muted-foreground">
+        <p className="eyebrow text-foreground">How it works</p>
         <ol className="list-decimal list-inside space-y-1 leading-relaxed">
-          <li>Add <span className="font-mono text-foreground">@userinfobot</span> to your VIP channel as an admin</li>
-          <li>It will reply with the channel ID (starts with <span className="font-mono text-foreground">-100</span>)</li>
-          <li>Paste it below and remove the bot</li>
+          <li>Open your private Signals channel (the one your paid members will join)</li>
+          <li>Go to <span className="text-foreground font-medium">Channel settings → Administrators → Add admin</span></li>
+          <li>Search for <span className="font-medium text-foreground">the bot you created in step 1</span> and add it as admin (with permission to post messages)</li>
+          <li>Come back here and click <span className="font-medium text-foreground">Detect channel</span> below</li>
         </ol>
       </div>
 
-      <div>
-        <label className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Channel ID</label>
-        <input
-          type="text"
-          value={channelId}
-          onChange={e => setChannelId(e.target.value)}
-          placeholder="-1001234567890"
-          className="mt-1.5 w-full px-3 py-2.5 rounded-xl bg-secondary text-[13px] text-foreground font-mono outline-none placeholder:text-muted-foreground/40"
-        />
-      </div>
+      {/* Detected channels picker */}
+      {detected.length > 0 && (
+        <div className="space-y-1.5">
+          <p className="eyebrow">Detected</p>
+          <div className="space-y-1.5">
+            {detected.map((c) => (
+              <button
+                key={c.id}
+                type="button"
+                onClick={() => setChannelId(c.chat_id)}
+                className={cn(
+                  "w-full flex items-center justify-between gap-3 px-3 py-2.5 rounded-lg border text-left transition-colors",
+                  channelId === c.chat_id
+                    ? "border-primary bg-primary/10"
+                    : "border-border bg-secondary/40 hover:bg-secondary/70"
+                )}
+              >
+                <div className="min-w-0">
+                  <p className="text-sm text-foreground truncate">{c.title || c.chat_id}</p>
+                  <p className="text-[11px] text-muted-foreground font-mono truncate">{c.chat_id}</p>
+                </div>
+                {channelId === c.chat_id && <Check className="h-4 w-4 text-primary shrink-0" />}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
-      {error && <p className="text-[12px] text-destructive">{error}</p>}
+      <button
+        onClick={handleDetect}
+        disabled={detecting}
+        className="w-full h-10 rounded-lg border border-border bg-secondary/40 hover:bg-secondary/70 text-sm font-semibold text-foreground transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+      >
+        {detecting ? <Loader2 className="h-4 w-4 animate-spin" /> : <>Detect channel</>}
+      </button>
+
+      {/* Manual fallback */}
+      <details className="text-xs text-muted-foreground">
+        <summary className="cursor-pointer hover:text-foreground transition-colors">Or enter the channel ID manually</summary>
+        <div className="mt-2 space-y-1.5">
+          <input
+            type="text"
+            value={channelId}
+            onChange={e => setChannelId(e.target.value)}
+            placeholder="-1001234567890"
+            className="w-full h-9 px-3 rounded-lg bg-secondary/60 border border-border text-xs text-foreground font-mono outline-none placeholder:text-muted-foreground/50 focus:border-primary focus:ring-2 focus:ring-primary/20 transition-colors"
+          />
+          <p className="text-[11px] leading-relaxed">
+            Forward any message from the channel to <span className="font-mono text-foreground">@getidsbot</span> in a DM — it replies with the ID.
+          </p>
+        </div>
+      </details>
+
+      {error && <p className="text-xs text-destructive leading-relaxed">{error}</p>}
 
       <button
         onClick={handleSubmit}
         disabled={!channelId.trim() || loading}
-        className="w-full py-3 rounded-xl bg-primary text-primary-foreground text-[14px] font-semibold disabled:opacity-50 flex items-center justify-center gap-2"
+        className="w-full h-10 rounded-lg bg-primary text-primary-foreground text-sm font-semibold disabled:opacity-50 flex items-center justify-center gap-2 hover:bg-primary/90 transition-colors"
       >
         {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <><span>Finish setup</span><Check className="h-4 w-4" strokeWidth={3} /></>}
       </button>
 
-      <button onClick={onSkip} className="w-full text-[12px] text-muted-foreground text-center py-1">
+      <button onClick={onSkip} className="w-full text-xs text-muted-foreground hover:text-foreground text-center py-1 transition-colors">
         Set up later
       </button>
     </div>
@@ -327,9 +392,9 @@ type Phase = "intro" | "setup" | "done";
 
 function IntroScreen({ onStart }: { onStart: () => void }) {
   const items = [
-    { icon: Bot,        title: "Telegram Bot",       body: "The bot users DM after clicking your ad. You'll create one with @BotFather and paste the token." },
-    { icon: Smartphone, title: "Operator Account",   body: "Your personal Telegram number — this is how you reply to leads as a human." },
-    { icon: Radio,      title: "VIP Channel",        body: "The private channel your paying members join. Trade signals forward here automatically." },
+    { icon: Bot,        title: "Acquisition Bot",  body: "Captures people who click your ads. You'll create a bot via @BotFather and paste the token." },
+    { icon: Smartphone, title: "Conversion Desk",  body: "Your personal Telegram account — the human who replies to leads and closes them." },
+    { icon: Radio,      title: "Signals Channel",  body: "The private channel your paying members get. Trade signals forward here automatically." },
   ];
   return (
     <div className="space-y-5">
@@ -379,8 +444,8 @@ function IntroScreen({ onStart }: { onStart: () => void }) {
 
 function DoneScreen({ completing }: { completing: boolean }) {
   const nextUp = [
-    { icon: Smartphone, title: "Get an eSIM or second phone",  body: "Keeps your operator account separate from your personal number." },
-    { icon: Radio,      title: "Launch your free channel",    body: "Post daily content + link to your bot CTA. Drive the top of your funnel." },
+    { icon: Smartphone, title: "Get an eSIM or second phone",  body: "Keeps your Conversion Desk separate from your personal number." },
+    { icon: Radio,      title: "Launch your free channel",    body: "Post daily content + a link to your Acquisition Bot. Drives the top of your funnel." },
     { icon: MessageSquare, title: "Load sales scripts",        body: "Save them as Telegram quick replies so you can reply to leads fast." },
     { icon: ListChecks, title: "Finish the dashboard checklist", body: "9 items total — tutorial channel, PU Prime IB, Meta Pixel, ads." },
   ];
@@ -392,7 +457,7 @@ function DoneScreen({ completing }: { completing: boolean }) {
         </div>
         <h2 className="text-[18px] font-bold text-foreground">You're live</h2>
         <p className="text-[13px] text-muted-foreground mt-1">
-          Leads from your ads now flow into your CRM and signals will forward to your VIP channel automatically.
+          Leads from your ads now flow into your CRM and signals will forward to your Signals Channel automatically.
         </p>
       </div>
 

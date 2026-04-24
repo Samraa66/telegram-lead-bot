@@ -1,7 +1,8 @@
 import { useEffect, useState, useCallback, useRef } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   Copy, Check, Users, TrendingUp, DollarSign, Trophy,
-  ChevronDown, ChevronUp,
+  ChevronDown, ChevronUp, ExternalLink,
 } from "lucide-react";
 import { fetchMyProfile, updateMyChecklist, AffiliateProfile } from "../api/affiliateMe";
 import { AffiliateChecklist } from "../api/affiliates";
@@ -9,70 +10,111 @@ import { cn } from "../lib/utils";
 import WorkspaceHealthCard from "../components/WorkspaceHealthCard";
 
 // ---------------------------------------------------------------------------
-// Checklist definition (same steps as admin view)
+// Checklist definition — grouped into the 4-stage mental model
+//   1. Core connections (auto-derived from workspace state)
+//   2. Build your audience
+//   3. Sales process
+//   4. Turn on traffic
 // ---------------------------------------------------------------------------
 
 type ChecklistStep =
   | { kind: "bool"; key: keyof AffiliateChecklist; label: string; guide: string }
   | { kind: "channel"; idKey: keyof AffiliateChecklist; membersKey: keyof AffiliateChecklist; label: string; target: number; guide: string }
-  | { kind: "text"; key: keyof AffiliateChecklist; label: string; placeholder: string; guide: string };
+  | { kind: "text"; key: keyof AffiliateChecklist; label: string; placeholder: string; guide: string }
+  // "derived" rows reflect real workspace state — not toggleable. Their value is
+  // read from profile[key] (a server-derived boolean) and the CTA links the user
+  // to the correct place to configure it.
+  | { kind: "derived"; key: keyof AffiliateChecklist; label: string; guide: string; ctaLabel: string; ctaPath: string };
 
-const STEPS: ChecklistStep[] = [
+type ChecklistGroup = { title: string; eyebrow: string; steps: ChecklistStep[] };
+
+const GROUPS: ChecklistGroup[] = [
   {
-    kind: "bool", key: "esim_done", label: "Secondary phone / eSIM",
-    guide: "Get a second phone number or eSIM to keep this Telegram account separate from your personal one.",
+    eyebrow: "01",
+    title: "Core connections",
+    steps: [
+      {
+        kind: "derived", key: "has_bot_token", label: "Acquisition Bot connected",
+        guide: "The Telegram bot that captures leads clicking your ads. Configured in onboarding — go back there or to Settings → Telegram to change it.",
+        ctaLabel: "Open Settings → Acquisition Bot", ctaPath: "/settings",
+      },
+      {
+        kind: "derived", key: "has_conversion_desk", label: "Conversion Desk connected",
+        guide: "Your personal Telegram — the human that replies to leads and closes them. If this shows red, reconnect from Settings → Telegram.",
+        ctaLabel: "Open Settings → Conversion Desk", ctaPath: "/settings",
+      },
+      {
+        kind: "channel", idKey: "vip_channel_id", membersKey: "vip_channel_members",
+        label: "Signals channel linked", target: 60,
+        guide: "Your private paid channel. Once the ID is linked, trade signals forward here automatically — no ongoing work needed.",
+      },
+    ],
   },
   {
-    kind: "channel", idKey: "free_channel_id", membersKey: "free_channel_members",
-    label: "Free Channel (public)", target: 2000,
-    guide: "Create a PUBLIC Telegram channel. Daily content: 9am good morning, VIP profit screenshots, lifestyle, welcome new VIP members by name. Goal: drive people to your CTA button.",
+    eyebrow: "02",
+    title: "Build your audience",
+    steps: [
+      {
+        kind: "bool", key: "esim_done", label: "Secondary phone / eSIM",
+        guide: "Get a second phone number or eSIM so your Conversion Desk is separate from your personal Telegram.",
+      },
+      {
+        kind: "channel", idKey: "free_channel_id", membersKey: "free_channel_members",
+        label: "Free channel (public)", target: 2000,
+        guide: "Public Telegram channel — the top of your funnel. Post daily: morning updates, member profit screenshots, lifestyle content. Every post should drive people toward your Acquisition Bot.",
+      },
+      {
+        kind: "bool", key: "bot_setup_done", label: "Acquisition Bot pinned in free channel",
+        guide: "Pin a CTA post in your free channel that links to your Acquisition Bot. Requires Telegram Business (~€8/mo):\n1. Create a personal chat link in Telegram Business\n2. Add your bot + @ChannelHelperBot as admins in your free channel\n3. @ChannelHelperBot → Menu → Create Post → add button 'Click here' linking to your chat link\n4. Pin the post at the top",
+      },
+      {
+        kind: "channel", idKey: "tutorial_channel_id", membersKey: "tutorial_channel_members",
+        label: "Tutorial channel (public)", target: 50,
+        guide: "Mid-funnel: a public channel with beginner trading lessons. Disable content saving. Copy our tutorial lessons (we'll give you access). End each lesson with a link to request access to your Signals channel.",
+      },
+    ],
   },
   {
-    kind: "bool", key: "bot_setup_done", label: "CTA Button configured",
-    guide: "Requires Telegram Business (~€8/mo):\n1. Create a personal chat link in Telegram Business\n2. @BotFather → /newbot (must end in 'bot')\n3. Add your bot + @ChannelHelperBot as admins in your free channel\n4. @ChannelHelperBot → Menu → Create Post → add button 'Click here' linking to your chat link\n5. Pin the post at the top",
+    eyebrow: "03",
+    title: "Sales process",
+    steps: [
+      {
+        kind: "bool", key: "sales_scripts_done", label: "Sales scripts loaded",
+        guide: "Load the sales scripts into your Conversion Desk's quick replies so you can respond to leads fast.",
+      },
+      {
+        kind: "text", key: "ib_profile_id", label: "PU Prime IB Profile ID", placeholder: "e.g. IB-12345",
+        guide: "Create your Introducing Broker account on PU Prime and paste your IB ID here. This is how your commissions are tracked.",
+      },
+    ],
   },
   {
-    kind: "channel", idKey: "vip_channel_id", membersKey: "vip_channel_members",
-    label: "VIP Channel (private)", target: 60,
-    guide: "Create a PRIVATE Telegram channel. Once you enter the channel ID below, signals are forwarded automatically — you don't need to do anything else.",
-  },
-  {
-    kind: "channel", idKey: "tutorial_channel_id", membersKey: "tutorial_channel_members",
-    label: "Tutorial Channel (public)", target: 50,
-    guide: "Create a PUBLIC channel with trading tutorial content for beginners. Disable content saving. Copy our tutorial lessons (we'll give you access). End with a link to request VIP access.",
-  },
-  {
-    kind: "bool", key: "sales_scripts_done", label: "Sales scripts loaded",
-    guide: "Load the sales scripts into your Telegram quick replies so you can respond to leads fast.",
-  },
-  {
-    kind: "text", key: "ib_profile_id", label: "PU Prime IB Profile ID", placeholder: "e.g. IB-12345",
-    guide: "Create your Introducing Broker account on PU Prime and paste your IB ID here. This is how your commissions are tracked.",
-  },
-  {
-    kind: "bool", key: "pixel_setup_done", label: "Meta Pixel setup",
-    guide: "Set up your Meta Pixel in Ads Manager so your ad conversions are tracked.",
-  },
-  {
-    kind: "bool", key: "ads_live", label: "Ads running",
-    guide: "Your funnel: Ads → Free Channel → CTA button → DM → Qualify → Tutorial → VIP",
+    eyebrow: "04",
+    title: "Turn on traffic",
+    steps: [
+      {
+        kind: "bool", key: "pixel_setup_done", label: "Meta Pixel installed",
+        guide: "Install your Meta Pixel on the landing page so your ad conversions are tracked.",
+      },
+      {
+        kind: "bool", key: "ads_live", label: "Ads running",
+        guide: "Your funnel: Ads → Free channel → Acquisition Bot → Conversion Desk → Tutorial channel → PU Prime deposit → Signals channel.",
+      },
+    ],
   },
 ];
 
-const TOTAL = STEPS.length;
+const ALL_STEPS: ChecklistStep[] = GROUPS.flatMap(g => g.steps);
+const TOTAL = ALL_STEPS.length;
+
+function stepIsDone(step: ChecklistStep, aff: AffiliateChecklist): boolean {
+  if (step.kind === "bool" || step.kind === "derived") return Boolean(aff[step.key]);
+  if (step.kind === "channel") return Boolean(aff[step.idKey]);
+  return Boolean(aff[step.key]);
+}
 
 function progress(aff: AffiliateChecklist): number {
-  let done = 0;
-  if (aff.esim_done) done++;
-  if (aff.free_channel_id) done++;
-  if (aff.bot_setup_done) done++;
-  if (aff.vip_channel_id) done++;
-  if (aff.tutorial_channel_id) done++;
-  if (aff.sales_scripts_done) done++;
-  if (aff.ib_profile_id) done++;
-  if (aff.pixel_setup_done) done++;
-  if (aff.ads_live) done++;
-  return done;
+  return ALL_STEPS.reduce((n, s) => n + (stepIsDone(s, aff) ? 1 : 0), 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -120,11 +162,8 @@ function StepRow({
     debounceRef.current = setTimeout(() => updateMyChecklist(patch).catch(() => {}), 600);
   };
 
-  const isDone = (() => {
-    if (step.kind === "bool") return Boolean(profile[step.key]);
-    if (step.kind === "channel") return Boolean(profile[step.idKey]);
-    return Boolean(profile[step.key]);
-  })();
+  const navigate = useNavigate();
+  const isDone = stepIsDone(step, profile);
 
   return (
     <div className="border-b border-border last:border-0">
@@ -202,6 +241,16 @@ function StepRow({
                 </div>
               </div>
             </div>
+          )}
+
+          {step.kind === "derived" && (
+            <button
+              onClick={() => navigate(step.ctaPath)}
+              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-primary/15 text-primary hover:bg-primary/20 transition-colors"
+            >
+              <ExternalLink className="h-3 w-3" />
+              {step.ctaLabel}
+            </button>
           )}
 
           {step.kind === "text" && (
@@ -318,16 +367,37 @@ export default function AffiliateSelfDashboard() {
         </div>
       </div>
 
-      {/* Checklist steps */}
-      <div className="surface-card overflow-hidden">
-        {STEPS.map((step) => (
-          <StepRow
-            key={step.kind === "bool" || step.kind === "text" ? step.key : step.idKey}
-            step={step}
-            profile={profile}
-            onSave={handlePatch}
-          />
-        ))}
+      {/* Checklist — grouped by pipeline stage */}
+      <div className="space-y-5">
+        {GROUPS.map((group) => {
+          const groupDone = group.steps.filter((s) => stepIsDone(s, profile)).length;
+          return (
+            <div key={group.title}>
+              <div className="flex items-center justify-between mb-2 px-1">
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] font-mono text-muted-foreground/60">{group.eyebrow}</span>
+                  <h3 className="text-sm font-semibold text-foreground tracking-tight">{group.title}</h3>
+                </div>
+                <span className={cn(
+                  "text-[11px] font-medium tabular-nums",
+                  groupDone === group.steps.length ? "text-success" : "text-muted-foreground"
+                )}>
+                  {groupDone}/{group.steps.length}
+                </span>
+              </div>
+              <div className="surface-card overflow-hidden">
+                {group.steps.map((step: ChecklistStep) => (
+                  <StepRow
+                    key={step.kind === "channel" ? step.idKey : step.key}
+                    step={step}
+                    profile={profile}
+                    onSave={handlePatch}
+                  />
+                ))}
+              </div>
+            </div>
+          );
+        })}
       </div>
     </div>
   );

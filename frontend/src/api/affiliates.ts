@@ -37,6 +37,10 @@ export interface AffiliateChecklist {
   ib_profile_id: string | null;
   ads_live: boolean;
   pixel_setup_done: boolean;
+  // Derived on the server from the affiliate's workspace — NOT editable via PATCH.
+  // Always in sync with what onboarding/settings has actually configured.
+  has_bot_token?: boolean;
+  has_conversion_desk?: boolean;
 }
 
 export interface AffiliatePerformance extends AffiliateChecklist {

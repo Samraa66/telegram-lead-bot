@@ -9,7 +9,7 @@ const PAGE_META: Record<string, PageMeta> = {
   "/":           { title: "Dashboard",  subtitle: "An overview of your workspace" },
   "/leads":      { title: "Leads",      subtitle: "Conversations flowing through the pipeline" },
   "/analytics":  { title: "Analytics",  subtitle: "Funnel performance, signals, and trends" },
-  "/members":    { title: "Members",    subtitle: "VIP channel membership" },
+  "/members":    { title: "Members",    subtitle: "Signals channel membership" },
   "/affiliates": { title: "Affiliates", subtitle: "Partner performance and onboarding" },
   "/settings":   { title: "Settings",   subtitle: "Workspace and integrations" },
 };
