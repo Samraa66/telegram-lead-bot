@@ -17,6 +17,8 @@ from sqlalchemy import BigInteger, Boolean, Column, Date, DateTime, Float, Forei
 from sqlalchemy.orm import relationship
 from sqlalchemy.ext.declarative import declarative_base
 
+from app.database.types import EncryptedText
+
 Base = declarative_base()
 
 
@@ -186,19 +188,20 @@ class Workspace(Base):
     parent_workspace_id = Column(Integer, nullable=True)   # null = org root
     root_workspace_id = Column(Integer, nullable=True)     # always points to tree root
     workspace_role = Column(String(50), nullable=True, default="owner")  # owner | affiliate
-    # Meta credentials — saved via Settings UI, override .env values
-    meta_access_token = Column(Text, nullable=True)
+    # Meta credentials — saved via Settings UI, override .env values.
+    # Access token is encrypted at rest (Fernet); the rest are non-sensitive IDs.
+    meta_access_token = Column(EncryptedText, nullable=True)
     meta_ad_account_id = Column(String(100), nullable=True)
     meta_pixel_id = Column(String(100), nullable=True)
     landing_page_url = Column(Text, nullable=True)
     # Signal forwarding config — override .env values when set
     source_channel_id = Column(String(64), nullable=True)
     destination_channel_ids = Column(Text, nullable=True)  # comma-separated static destinations
-    # Telegram bot credentials per workspace
-    bot_token = Column(Text, nullable=True)
-    webhook_secret = Column(String(255), nullable=True)
-    # Telethon operator session — StringSession serialized string
-    telethon_session = Column(Text, nullable=True)
+    # Telegram bot credentials per workspace — encrypted at rest
+    bot_token = Column(EncryptedText, nullable=True)
+    webhook_secret = Column(EncryptedText, nullable=True)
+    # Telethon operator session — StringSession, encrypted at rest
+    telethon_session = Column(EncryptedText, nullable=True)
     # Affiliate onboarding — flipped to True once wizard is completed
     onboarding_complete = Column(Boolean, default=False)
 
@@ -396,3 +399,26 @@ class AdCreative(Base):
     deposits = Column(Integer, nullable=False, default=0)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+
+class AuditLog(Base):
+    """
+    Append-only record of security-relevant actions: logins, credential resets,
+    affiliate creates/deletes, workspace switches, etc.
+    Read by admins; never edited or pruned automatically.
+    """
+
+    __tablename__ = "audit_log"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    timestamp = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    actor_username = Column(String(255), nullable=True)        # null for unauthenticated events
+    actor_role = Column(String(50), nullable=True)
+    workspace_id = Column(Integer, nullable=True, index=True)
+    org_id = Column(Integer, nullable=True)
+    action = Column(String(100), nullable=False, index=True)   # e.g. "login.success", "affiliate.delete"
+    target_type = Column(String(50), nullable=True)            # e.g. "affiliate", "workspace", "team_member"
+    target_id = Column(String(100), nullable=True)             # stringly-typed so int + telegram-id both fit
+    detail = Column(Text, nullable=True)                       # short human-readable note
+    ip_address = Column(String(64), nullable=True)

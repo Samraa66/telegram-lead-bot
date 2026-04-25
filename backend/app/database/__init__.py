@@ -542,6 +542,58 @@ def init_db() -> None:
         _sync_classifications()
     except Exception:
         pass
+    try:
+        _encrypt_legacy_secrets()
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning("legacy-secret encryption pass failed: %s", e)
+
+
+def _encrypt_legacy_secrets() -> None:
+    """
+    One-time pass: load every Workspace and re-save it. The EncryptedText
+    TypeDecorator will encrypt any field that's still plaintext (no enc: prefix).
+    Rows that are already encrypted are decrypted-then-re-encrypted, which is
+    a no-op effect from the app's perspective.
+
+    Cheap (one row per workspace, only sensitive fields). Safe to run on every
+    boot; idempotent after the first run.
+    """
+    from app.services.crypto import ENC_PREFIX
+    from sqlalchemy import inspect as _inspect, Column as _Col, Table as _Table, MetaData as _MD, text as _text
+    db = SessionLocal()
+    try:
+        # Read raw values via a non-EncryptedText query so we see the storage form
+        rows = db.execute(_text(
+            "SELECT id, bot_token, webhook_secret, telethon_session, meta_access_token "
+            "FROM workspaces"
+        )).fetchall()
+        plaintext_ids = []
+        for r in rows:
+            for col_value in (r[1], r[2], r[3], r[4]):
+                if col_value and isinstance(col_value, str) and not col_value.startswith(ENC_PREFIX):
+                    plaintext_ids.append(r[0])
+                    break
+        if not plaintext_ids:
+            return
+        # Re-save via the ORM so the TypeDecorator runs and encrypts on bind
+        from .models import Workspace
+        for ws_id in plaintext_ids:
+            ws = db.query(Workspace).filter(Workspace.id == ws_id).first()
+            if not ws:
+                continue
+            # Touch each field — assignment marks dirty, commit re-binds (encrypts)
+            ws.bot_token = ws.bot_token
+            ws.webhook_secret = ws.webhook_secret
+            ws.telethon_session = ws.telethon_session
+            ws.meta_access_token = ws.meta_access_token
+        db.commit()
+        import logging
+        logging.getLogger(__name__).info(
+            "Encrypted legacy plaintext secrets in %d workspace(s)", len(plaintext_ids)
+        )
+    finally:
+        db.close()
 
 
 def get_db():

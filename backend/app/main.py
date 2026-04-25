@@ -18,7 +18,7 @@ from contextlib import asynccontextmanager
 from typing import Optional
 from fastapi import FastAPI, Depends, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse as _JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, conint
 from sqlalchemy.orm import Session
@@ -77,7 +77,13 @@ async def lifespan(app: FastAPI):
     logger.info("Server shutting down")
 
 
-limiter = Limiter(key_func=get_remote_address)
+# SlowAPI per-route limiter. key_func reads CF-Connecting-IP / X-Forwarded-For
+# first so per-IP buckets reflect the real client when we're behind Cloudflare.
+def _slowapi_key(request: Request) -> str:
+    from app.services.net import client_ip as _client_ip
+    return _client_ip(request) or get_remote_address(request) or "unknown"
+
+limiter = Limiter(key_func=_slowapi_key)
 
 # Resolve frontend dist path once at startup — used by the SPA middleware below
 _FRONTEND_DIST = os.path.abspath(
@@ -99,7 +105,7 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 # it sends Accept: text/html and no Authorization header.  API calls from JavaScript
 # always include Authorization.  We intercept browser navigations and serve index.html
 # so the React router can handle the path instead of letting the API route return 401.
-_API_PASS_THROUGH = ("/assets/", "/webhook", "/auth/", "/health", "/api/")
+_API_PASS_THROUGH = ("/assets/", "/webhook", "/auth/", "/health", "/api/", "/.well-known/")
 
 @app.middleware("http")
 async def spa_browser_nav_middleware(request: Request, call_next):
@@ -113,6 +119,62 @@ async def spa_browser_nav_middleware(request: Request, call_next):
     return await call_next(request)
 
 
+# Content Security Policy — strict-ish, allowing Telegram login widget + Recharts inline styles.
+# 'unsafe-inline' on style-src is required by recharts/Tailwind runtime; script-src stays tight.
+_CSP = (
+    "default-src 'self'; "
+    "script-src 'self' https://telegram.org https://oauth.telegram.org; "
+    "frame-src https://oauth.telegram.org https://telegram.org; "
+    "img-src 'self' data: https://t.me https://*.telegram.org; "
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+    "font-src 'self' https://fonts.gstatic.com data:; "
+    "connect-src 'self' https://telelytics.org https://api.telegram.org https://graph.facebook.com; "
+    "object-src 'none'; "
+    "base-uri 'self'; "
+    "form-action 'self'; "
+    "frame-ancestors 'none'"
+)
+
+# ---------------------------------------------------------------------------
+# Global per-IP rate limit — catches scrapers and anything not explicitly limited.
+# Per-route @limiter.limit decorators stay tighter for sensitive endpoints.
+# ---------------------------------------------------------------------------
+from collections import deque
+import time as _time
+from threading import Lock as _Lock
+
+_GLOBAL_RPM_CAP = 240             # requests per minute per IP
+_GLOBAL_WINDOW = 60.0             # seconds
+_global_buckets: dict[str, deque] = {}
+_global_buckets_lock = _Lock()
+# Don't gate the webhook (Telegram itself bursts) or static assets
+_GLOBAL_LIMIT_SKIP_PREFIXES = ("/webhook", "/assets/")
+
+
+@app.middleware("http")
+async def global_rate_limit(request: Request, call_next):
+    path = request.url.path
+    if any(path.startswith(p) for p in _GLOBAL_LIMIT_SKIP_PREFIXES):
+        return await call_next(request)
+
+    from app.services.net import client_ip as _client_ip
+    ip = _client_ip(request) or "unknown"
+    now = _time.monotonic()
+    cutoff = now - _GLOBAL_WINDOW
+    with _global_buckets_lock:
+        bucket = _global_buckets.setdefault(ip, deque())
+        while bucket and bucket[0] < cutoff:
+            bucket.popleft()
+        if len(bucket) >= _GLOBAL_RPM_CAP:
+            return _JSONResponse(
+                status_code=429,
+                content={"detail": "Too many requests. Slow down."},
+                headers={"Retry-After": "60"},
+            )
+        bucket.append(now)
+    return await call_next(request)
+
+
 # Security headers on every response
 @app.middleware("http")
 async def add_security_headers(request: Request, call_next):
@@ -122,6 +184,9 @@ async def add_security_headers(request: Request, call_next):
     response.headers["X-XSS-Protection"] = "1; mode=block"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+    # HSTS — only over HTTPS. 1 year + subdomains. Skip "preload" until we're sure.
+    response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    response.headers["Content-Security-Policy"] = _CSP
     return response
 
 # CORS: production domain + localhost for local dev
@@ -135,8 +200,9 @@ app.add_middleware(
         "http://127.0.0.1:5174",
     ],
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "Accept", "X-Telegram-Bot-Api-Secret-Token"],
+    max_age=600,
 )
 
 
@@ -213,8 +279,15 @@ async def _handle_webhook(request: Request, db: Session, workspace_id: int, secr
 
 @app.post("/webhook")
 async def webhook_legacy(request: Request, db: Session = Depends(get_db)):
-    """Legacy single-workspace webhook (workspace 1). Kept for backward compatibility."""
-    return await _handle_webhook(request, db, workspace_id=1)
+    """
+    Legacy single-workspace webhook (workspace 1). Kept for backward compatibility,
+    but now hard-requires WEBHOOK_SECRET to be set in env so this route can never
+    be open. New deployments should register the per-workspace /webhook/{ws_id} route.
+    """
+    if not WEBHOOK_SECRET:
+        logger.warning("Legacy /webhook hit but WEBHOOK_SECRET is not set — refusing.")
+        raise HTTPException(status_code=503, detail="Legacy webhook disabled: WEBHOOK_SECRET not configured")
+    return await _handle_webhook(request, db, workspace_id=1, secret=WEBHOOK_SECRET)
 
 
 @app.post("/webhook/{workspace_id}")
@@ -325,6 +398,10 @@ def switch_workspace(
         org_id=ws.org_id or caller_org_id,
         org_role=current_user.get("org_role", "org_owner"),
     )
+    from app.services.audit import log_audit
+    log_audit(db, action="workspace.switch", actor=current_user,
+              target_type="workspace", target_id=workspace_id,
+              detail=f"from={caller_ws_id}; to={workspace_id}")
     return {
         "access_token": token,
         "workspace_id": workspace_id,
@@ -461,13 +538,77 @@ class LoginRequest(BaseModel):
     password: str
 
 
+# ---------------------------------------------------------------------------
+# Per-account login lockout — defense in depth on top of per-IP rate limiting.
+# In-memory; resets on process restart, which is fine for our scale.
+# ---------------------------------------------------------------------------
+_LOGIN_FAIL_THRESHOLD = 10              # failed attempts before lock
+_LOGIN_FAIL_WINDOW = 15 * 60            # within this many seconds
+_LOGIN_LOCK_DURATION = 30 * 60          # lock for this many seconds once triggered
+_login_failures: dict[str, list[float]] = {}
+_login_locks: dict[str, float] = {}
+_login_lock_mutex = _Lock()
+
+
+def _check_login_lock(username: str) -> Optional[int]:
+    """Return seconds remaining if the account is locked, else None."""
+    if not username:
+        return None
+    key = username.strip().lower()
+    with _login_lock_mutex:
+        until = _login_locks.get(key)
+        if until and until > _time.time():
+            return int(until - _time.time())
+        if until and until <= _time.time():
+            _login_locks.pop(key, None)
+    return None
+
+
+def _record_login_failure(username: str) -> None:
+    if not username:
+        return
+    key = username.strip().lower()
+    now = _time.time()
+    with _login_lock_mutex:
+        recent = [t for t in _login_failures.get(key, []) if t > now - _LOGIN_FAIL_WINDOW]
+        recent.append(now)
+        _login_failures[key] = recent
+        if len(recent) >= _LOGIN_FAIL_THRESHOLD:
+            _login_locks[key] = now + _LOGIN_LOCK_DURATION
+            _login_failures[key] = []  # reset counter once locked
+            logger.warning("Account locked after %d failed logins: %s", len(recent), key)
+
+
+def _record_login_success(username: str) -> None:
+    if not username:
+        return
+    key = username.strip().lower()
+    with _login_lock_mutex:
+        _login_failures.pop(key, None)
+        _login_locks.pop(key, None)
+
+
 @app.post("/auth/login")
 @limiter.limit("5/minute")
 def login(request: Request, req: LoginRequest, db: Session = Depends(get_db)):
     """Authenticate and return a JWT token. Checks env-based roles and DB affiliates."""
+    from app.services.audit import log_audit
+    locked_for = _check_login_lock(req.username)
+    if locked_for is not None:
+        log_audit(db, action="login.locked", request=request,
+                  detail=f"username={req.username[:64]}; locked_for_sec={locked_for}")
+        raise HTTPException(
+            status_code=429,
+            detail=f"Account temporarily locked after too many failed attempts. Try again in {locked_for // 60 + 1} min.",
+        )
     user = authenticate_user(req.username, req.password, db=db)
     if not user:
+        _record_login_failure(req.username)
+        log_audit(db, action="login.failure", request=request,
+                  detail=f"attempted_username={req.username[:64]}")
         raise HTTPException(status_code=401, detail="Invalid credentials")
+    _record_login_success(req.username)
+    log_audit(db, action="login.success", actor=user, request=request)
 
     ws_id = user.get("workspace_id", 1)
 
@@ -521,6 +662,25 @@ def auth_config():
     """Public endpoint — returns the bot username needed by the Telegram Login Widget."""
     from app.config import BOT_USERNAME, META_APP_ID
     return {"bot_username": BOT_USERNAME, "meta_app_id": META_APP_ID}
+
+
+# ---------------------------------------------------------------------------
+# Public well-known files (security.txt — RFC 9116)
+# ---------------------------------------------------------------------------
+
+_SECURITY_TXT = """\
+Contact: mailto:sameerkaram2@gmail.com
+Expires: 2027-04-25T00:00:00.000Z
+Preferred-Languages: en
+Canonical: https://telelytics.org/.well-known/security.txt
+"""
+
+
+@app.get("/.well-known/security.txt", include_in_schema=False)
+def well_known_security_txt():
+    """RFC 9116 — tells security researchers where to report vulnerabilities."""
+    from fastapi.responses import PlainTextResponse
+    return PlainTextResponse(_SECURITY_TXT, media_type="text/plain; charset=utf-8")
 
 
 # ---------------------------------------------------------------------------
@@ -813,7 +973,7 @@ async def telethon_verify(
     req: TelethonVerifyRequest,
     db: Session = Depends(get_db),
     workspace_id: int = Depends(get_workspace_id),
-    _=Depends(require_workspace_owner),
+    current_user: dict = Depends(require_workspace_owner),
 ):
     """Submit OTP code, save StringSession to DB, and start the client."""
     from telethon.errors import SessionPasswordNeededError
@@ -841,6 +1001,10 @@ async def telethon_verify(
 
     from app.services.telethon_client import start_workspace_client
     started = await start_workspace_client(workspace_id, session_str, TELEGRAM_API_ID, TELEGRAM_API_HASH)
+    from app.services.audit import log_audit
+    log_audit(db, action="telethon.connected", actor=current_user,
+              target_type="workspace", target_id=workspace_id,
+              workspace_id=workspace_id, detail=f"phone={req.phone[-4:]}")
     return {"ok": started}
 
 
@@ -848,17 +1012,21 @@ async def telethon_verify(
 async def telethon_disconnect(
     db: Session = Depends(get_db),
     workspace_id: int = Depends(get_workspace_id),
-    _=Depends(require_workspace_owner),
+    current_user: dict = Depends(require_workspace_owner),
 ):
     """Stop the Telethon client and clear the saved session."""
     from app.database.models import Workspace
     from app.services.telethon_client import stop_workspace_client
+    from app.services.audit import log_audit
 
     await stop_workspace_client(workspace_id)
     ws = db.query(Workspace).filter(Workspace.id == workspace_id).first()
     if ws:
         ws.telethon_session = None
         db.commit()
+    log_audit(db, action="telethon.disconnected", actor=current_user,
+              target_type="workspace", target_id=workspace_id,
+              workspace_id=workspace_id)
     return {"ok": True}
 
 
@@ -912,7 +1080,7 @@ def bot_save_credentials(
     req: BotCredentialsRequest,
     db: Session = Depends(get_db),
     workspace_id: int = Depends(get_workspace_id),
-    _=Depends(require_workspace_owner),
+    current_user: dict = Depends(require_workspace_owner),
 ):
     """Save bot token (and optional webhook secret) to the workspace."""
     from app.database.models import Workspace
@@ -923,6 +1091,10 @@ def bot_save_credentials(
     if req.webhook_secret is not None:
         ws.webhook_secret = req.webhook_secret.strip() or None
     db.commit()
+    from app.services.audit import log_audit
+    log_audit(db, action="bot.token_saved", actor=current_user,
+              target_type="workspace", target_id=workspace_id,
+              workspace_id=workspace_id)
     return {"ok": True}
 
 
@@ -1789,6 +1961,11 @@ def create_affiliate(
 
     seed_workspace_defaults(aff_workspace.id, db)
 
+    from app.services.audit import log_audit
+    log_audit(db, action="affiliate.create", actor=current_user,
+              target_type="affiliate", target_id=affiliate.id,
+              detail=f"name={affiliate.name}; ws={aff_workspace.id}")
+
     # Fire welcome DM in background — non-blocking
     affiliate_id = affiliate.id
     import threading
@@ -1845,6 +2022,10 @@ def reset_affiliate_credentials(
     # already gates on org/workspace scope for the queries that matter.
     aff.login_password_hash = None  # force them to set a new one via the invite
     token = _issue_invite_token(aff, db)
+    from app.services.audit import log_audit
+    log_audit(db, action="affiliate.credentials_reset", actor=current_user,
+              target_type="affiliate", target_id=aff.id,
+              detail=f"name={aff.name}")
     return {
         "login_username": aff.login_username,
         "invite_url": _build_invite_url(token),
@@ -1902,6 +2083,11 @@ def invite_accept(token: str, req: AcceptInviteRequest, request: Request, db: Se
     aff.invite_token = None
     aff.invite_expires_at = None
     db.commit()
+    from app.services.audit import log_audit
+    log_audit(db, action="invite.accepted",
+              actor={"username": aff.login_username, "role": "affiliate"},
+              target_type="affiliate", target_id=aff.id,
+              workspace_id=aff.affiliate_workspace_id, request=request)
 
     # Mint a JWT just like /auth/login would, so the frontend can log the affiliate
     # in without bouncing them through the login page.
@@ -1982,7 +2168,7 @@ def _cascade_delete_workspace(ws_id: int, db: Session) -> None:
 def delete_affiliate(
     affiliate_id: int,
     db: Session = Depends(get_db),
-    _=Depends(require_roles("developer", "admin")),
+    current_user: dict = Depends(require_roles("developer", "admin")),
 ):
     """
     Permanently delete an affiliate AND their provisioned workspace with every
@@ -2008,11 +2194,16 @@ def delete_affiliate(
                 detail=f"This affiliate has {sub_count} sub-affiliate(s). Delete them first.",
             )
 
+    aff_name = affiliate.name
     if ws_id:
         _cascade_delete_workspace(ws_id, db)
 
     db.delete(affiliate)
     db.commit()
+    from app.services.audit import log_audit
+    log_audit(db, action="affiliate.delete", actor=current_user,
+              target_type="affiliate", target_id=affiliate_id,
+              detail=f"name={aff_name}; cascaded_workspace={ws_id}")
     return {"ok": True}
 
 
@@ -2063,16 +2254,58 @@ def list_orphaned_workspaces(
     return result
 
 
+@app.get("/admin/audit-log")
+def list_audit_log(
+    db: Session = Depends(get_db),
+    _=Depends(require_roles("developer", "admin")),
+    limit: int = 100,
+    action: Optional[str] = None,
+    actor: Optional[str] = None,
+):
+    """
+    Read the audit log. Newest first. Filter by action prefix (e.g. 'login.')
+    or actor username. Capped at 500 rows per call.
+    """
+    from app.database.models import AuditLog
+    limit = max(1, min(limit, 500))
+    q = db.query(AuditLog).order_by(AuditLog.timestamp.desc())
+    if action:
+        q = q.filter(AuditLog.action.like(f"{action}%"))
+    if actor:
+        q = q.filter(AuditLog.actor_username == actor.strip().lower())
+    rows = q.limit(limit).all()
+    return [
+        {
+            "id": r.id,
+            "timestamp": r.timestamp.isoformat() if r.timestamp else None,
+            "actor_username": r.actor_username,
+            "actor_role": r.actor_role,
+            "workspace_id": r.workspace_id,
+            "org_id": r.org_id,
+            "action": r.action,
+            "target_type": r.target_type,
+            "target_id": r.target_id,
+            "detail": r.detail,
+            "ip_address": r.ip_address,
+        }
+        for r in rows
+    ]
+
+
 @app.post("/admin/orphaned-workspaces/purge")
 def purge_orphaned_workspaces(
     db: Session = Depends(get_db),
-    _=Depends(require_roles("developer", "admin")),
+    current_user: dict = Depends(require_roles("developer", "admin")),
 ):
     """Cascade-delete every orphaned affiliate workspace. Returns {deleted: N}."""
     orphans = _find_orphaned_affiliate_workspaces(db)
+    purged_ids = [w.id for w in orphans]
     for w in orphans:
         _cascade_delete_workspace(w.id, db)
     db.commit()
+    from app.services.audit import log_audit
+    log_audit(db, action="workspace.orphans_purged", actor=current_user,
+              detail=f"count={len(purged_ids)}; ws_ids={purged_ids}")
     return {"deleted": len(orphans)}
 
 
@@ -2361,7 +2594,7 @@ def settings_list_team(
 def settings_create_team_member(
     req: CreateTeamMemberRequest,
     db: Session = Depends(get_db),
-    _=Depends(require_roles("developer", "admin")),
+    current_user: dict = Depends(require_roles("developer", "admin")),
     workspace_id: int = Depends(get_workspace_id),
 ):
     from app.database.models import TeamMember
@@ -2406,6 +2639,11 @@ def settings_create_team_member(
     }
     if plain_password:
         result["password"] = plain_password
+    from app.services.audit import log_audit
+    log_audit(db, action="team.create", actor=current_user,
+              target_type="team_member", target_id=member.id,
+              workspace_id=workspace_id,
+              detail=f"username={username}; role={req.role}; auth={req.auth_type}")
     return result
 
 
@@ -2445,11 +2683,12 @@ def settings_update_team_member(
 def settings_reset_team_password(
     member_id: int,
     db: Session = Depends(get_db),
-    _=Depends(require_roles("developer", "admin")),
+    current_user: dict = Depends(require_roles("developer", "admin")),
     workspace_id: int = Depends(get_workspace_id),
 ):
     from app.database.models import TeamMember
     from app.auth import generate_password, hash_password
+    from app.services.audit import log_audit
     member = db.query(TeamMember).filter(
         TeamMember.id == member_id, TeamMember.workspace_id == workspace_id
     ).first()
@@ -2458,6 +2697,9 @@ def settings_reset_team_password(
     plain_password = generate_password()
     member.password_hash = hash_password(plain_password)
     db.commit()
+    log_audit(db, action="team.password_reset", actor=current_user,
+              target_type="team_member", target_id=member.id,
+              workspace_id=workspace_id, detail=f"username={member.username}")
     return {"ok": True, "password": plain_password}
 
 
@@ -2465,17 +2707,22 @@ def settings_reset_team_password(
 def settings_delete_team_member(
     member_id: int,
     db: Session = Depends(get_db),
-    _=Depends(require_roles("developer", "admin")),
+    current_user: dict = Depends(require_roles("developer", "admin")),
     workspace_id: int = Depends(get_workspace_id),
 ):
     from app.database.models import TeamMember
+    from app.services.audit import log_audit
     member = db.query(TeamMember).filter(
         TeamMember.id == member_id, TeamMember.workspace_id == workspace_id
     ).first()
     if not member:
         raise HTTPException(status_code=404, detail="team member not found")
+    member_username = member.username
     db.delete(member)
     db.commit()
+    log_audit(db, action="team.delete", actor=current_user,
+              target_type="team_member", target_id=member_id,
+              workspace_id=workspace_id, detail=f"username={member_username}")
     return {"ok": True}
 
 

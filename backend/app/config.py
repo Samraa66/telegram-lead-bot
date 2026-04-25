@@ -59,8 +59,22 @@ SESSION_FILE: str = os.path.join(
     "operator.session",
 )
 
-# Auth — JWT + user credentials
-SECRET_KEY: str = os.getenv("SECRET_KEY", "change-me-in-production").strip()
+# Auth — JWT signing key. Hard-fail in production rather than ship a forgeable token.
+# Local dev still gets a stable fallback so you can run the app without a .env file.
+_SECRET_DEFAULT = "change-me-in-production"
+_RAW_SECRET_KEY: str = os.getenv("SECRET_KEY", "").strip()
+_APP_ENV: str = os.getenv("APP_ENV", "production").strip().lower()
+
+if not _RAW_SECRET_KEY or _RAW_SECRET_KEY == _SECRET_DEFAULT:
+    if _APP_ENV in ("production", "prod"):
+        raise RuntimeError(
+            "SECRET_KEY env var is missing or set to the default. Set a strong random "
+            "value (e.g. `python -c \"import secrets; print(secrets.token_urlsafe(48))\"`) "
+            "before starting in production. To run locally without a .env, set APP_ENV=development."
+        )
+    SECRET_KEY: str = _SECRET_DEFAULT  # dev-only fallback
+else:
+    SECRET_KEY = _RAW_SECRET_KEY
 
 # Telegram bot username (without @) — used to construct tracked deep links
 BOT_USERNAME: str = os.getenv("BOT_USERNAME", "").strip()
