@@ -551,47 +551,41 @@ def init_db() -> None:
 
 def _encrypt_legacy_secrets() -> None:
     """
-    One-time pass: load every Workspace and re-save it. The EncryptedText
-    TypeDecorator will encrypt any field that's still plaintext (no enc: prefix).
-    Rows that are already encrypted are decrypted-then-re-encrypted, which is
-    a no-op effect from the app's perspective.
+    One-time pass: encrypt any plaintext sensitive columns on the workspaces
+    table. Bypasses the ORM and writes already-encrypted values via raw UPDATE,
+    because SQLAlchemy's mutation tracker treats `obj.col = obj.col` as a no-op
+    and skips the flush — so going through the ORM doesn't actually persist.
 
-    Cheap (one row per workspace, only sensitive fields). Safe to run on every
-    boot; idempotent after the first run.
+    Idempotent: rows already prefixed with enc:v1: are skipped.
     """
-    from app.services.crypto import ENC_PREFIX
-    from sqlalchemy import inspect as _inspect, Column as _Col, Table as _Table, MetaData as _MD, text as _text
+    from app.services.crypto import ENC_PREFIX, encrypt
+    from sqlalchemy import text as _text
     db = SessionLocal()
     try:
-        # Read raw values via a non-EncryptedText query so we see the storage form
         rows = db.execute(_text(
             "SELECT id, bot_token, webhook_secret, telethon_session, meta_access_token "
             "FROM workspaces"
         )).fetchall()
-        plaintext_ids = []
+        encrypted_count = 0
         for r in rows:
-            for col_value in (r[1], r[2], r[3], r[4]):
-                if col_value and isinstance(col_value, str) and not col_value.startswith(ENC_PREFIX):
-                    plaintext_ids.append(r[0])
-                    break
-        if not plaintext_ids:
-            return
-        # Re-save via the ORM so the TypeDecorator runs and encrypts on bind
-        from .models import Workspace
-        for ws_id in plaintext_ids:
-            ws = db.query(Workspace).filter(Workspace.id == ws_id).first()
-            if not ws:
-                continue
-            # Touch each field — assignment marks dirty, commit re-binds (encrypts)
-            ws.bot_token = ws.bot_token
-            ws.webhook_secret = ws.webhook_secret
-            ws.telethon_session = ws.telethon_session
-            ws.meta_access_token = ws.meta_access_token
+            updates: dict = {}
+            if r[1] and not r[1].startswith(ENC_PREFIX): updates["bot_token"] = encrypt(r[1])
+            if r[2] and not r[2].startswith(ENC_PREFIX): updates["webhook_secret"] = encrypt(r[2])
+            if r[3] and not r[3].startswith(ENC_PREFIX): updates["telethon_session"] = encrypt(r[3])
+            if r[4] and not r[4].startswith(ENC_PREFIX): updates["meta_access_token"] = encrypt(r[4])
+            if updates:
+                set_clause = ", ".join(f"{k} = :{k}" for k in updates)
+                db.execute(
+                    _text(f"UPDATE workspaces SET {set_clause} WHERE id = :id"),
+                    {"id": r[0], **updates},
+                )
+                encrypted_count += 1
         db.commit()
-        import logging
-        logging.getLogger(__name__).info(
-            "Encrypted legacy plaintext secrets in %d workspace(s)", len(plaintext_ids)
-        )
+        if encrypted_count:
+            import logging
+            logging.getLogger(__name__).info(
+                "Encrypted legacy plaintext secrets in %d workspace(s)", encrypted_count
+            )
     finally:
         db.close()
 
