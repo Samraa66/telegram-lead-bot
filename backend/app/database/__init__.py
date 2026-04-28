@@ -138,6 +138,14 @@ def _ensure_columns() -> None:
             ("last_name", "TEXT"),
             ("activity_status", "TEXT"),
             ("workspace_id", "INTEGER DEFAULT 1"),
+            # Task 1.5 columns
+            ("current_stage_id", "INTEGER"),
+            ("deposit_status", "TEXT NOT NULL DEFAULT 'none'"),
+            ("deposited_at", "TIMESTAMP"),
+            ("deposit_amount", "REAL"),
+            ("deposit_currency", "TEXT"),
+            ("deposit_source", "TEXT"),
+            ("puprime_client_id", "TEXT"),
         ]
     else:
         contacts_needed = [
@@ -154,6 +162,14 @@ def _ensure_columns() -> None:
             ("last_name", "VARCHAR(255)"),
             ("activity_status", "VARCHAR(20)"),
             ("workspace_id", "INTEGER DEFAULT 1"),
+            # Task 1.5 columns
+            ("current_stage_id", "INTEGER"),
+            ("deposit_status", "VARCHAR(20) NOT NULL DEFAULT 'none'"),
+            ("deposited_at", "TIMESTAMP"),
+            ("deposit_amount", "NUMERIC(18,4)"),
+            ("deposit_currency", "VARCHAR(8)"),
+            ("deposit_source", "VARCHAR(20)"),
+            ("puprime_client_id", "VARCHAR(255)"),
         ]
 
     messages_needed = [
@@ -179,6 +195,14 @@ def _ensure_columns() -> None:
                 _add_column("follow_up_templates", "workspace_id", "INTEGER DEFAULT 1")
             else:
                 _add_column("follow_up_templates", "workspace_id", "INTEGER DEFAULT 1")
+        # Task 1.5 columns
+        fut_needed: list[tuple[str, str]] = [
+            ("stage_id", "INTEGER"),
+            ("hours_offset", "REAL DEFAULT 24" if dialect == "sqlite" else "DOUBLE PRECISION DEFAULT 24"),
+        ]
+        for col, ddl in fut_needed:
+            if col not in existing_fut:
+                _add_column("follow_up_templates", col, ddl)
 
     if _table_exists("workspaces"):
         existing_ws = _existing_columns("workspaces")
@@ -198,6 +222,18 @@ def _ensure_columns() -> None:
             ("landing_page_url", "TEXT"),
             ("source_channel_id", "TEXT"),
             ("destination_channel_ids", "TEXT"),
+            # Task 1.5 columns
+            ("niche", "TEXT"),
+            ("language", "TEXT"),
+            ("timezone", "TEXT"),
+            ("country", "TEXT"),
+            ("main_channel_url", "TEXT"),
+            ("sales_telegram_username", "TEXT"),
+            ("deposited_stage_id", "INTEGER"),
+            ("member_stage_id", "INTEGER"),
+            ("conversion_stage_id", "INTEGER"),
+            ("vip_marker_phrases", "TEXT"),
+            ("deposit_webhook_secret", "TEXT"),
         ]
         for col, ddl in ws_needed:
             if col not in existing_ws:
@@ -229,6 +265,55 @@ def _ensure_columns() -> None:
         if _table_exists(tbl):
             if "workspace_id" not in _existing_columns(tbl):
                 _add_column(tbl, "workspace_id", "INTEGER DEFAULT 1")
+
+    # Task 1.5: stage_keywords — target_stage_id
+    if _table_exists("stage_keywords"):
+        existing_sk = _existing_columns("stage_keywords")
+        sk_needed: list[tuple[str, str]] = [
+            ("target_stage_id", "INTEGER"),
+        ]
+        for col, ddl in sk_needed:
+            if col not in existing_sk:
+                _add_column("stage_keywords", col, ddl)
+
+    # Task 1.5: quick_replies — stage_id
+    if _table_exists("quick_replies"):
+        existing_qr = _existing_columns("quick_replies")
+        qr_needed: list[tuple[str, str]] = [
+            ("stage_id", "INTEGER"),
+        ]
+        for col, ddl in qr_needed:
+            if col not in existing_qr:
+                _add_column("quick_replies", col, ddl)
+
+    # Task 1.5: stage_history — from_stage_id, to_stage_id
+    if _table_exists("stage_history"):
+        existing_sh = _existing_columns("stage_history")
+        sh_needed: list[tuple[str, str]] = [
+            ("from_stage_id", "INTEGER"),
+            ("to_stage_id", "INTEGER"),
+        ]
+        for col, ddl in sh_needed:
+            if col not in existing_sh:
+                _add_column("stage_history", col, ddl)
+
+    # Task 1.5: follow_up_queue — stage_id
+    if _table_exists("follow_up_queue"):
+        existing_fuq = _existing_columns("follow_up_queue")
+        fuq_needed: list[tuple[str, str]] = [
+            ("stage_id", "INTEGER"),
+        ]
+        for col, ddl in fuq_needed:
+            if col not in existing_fuq:
+                _add_column("follow_up_queue", col, ddl)
+
+    # pipeline_stages — placeholder guard for future column additions
+    if _table_exists("pipeline_stages"):
+        existing_ps = _existing_columns("pipeline_stages")
+        ps_needed: list[tuple[str, str]] = []  # populated by future tasks
+        for col, ddl in ps_needed:
+            if col not in existing_ps:
+                _add_column("pipeline_stages", col, ddl)
 
     if _table_exists("affiliates"):
         if dialect == "sqlite":
