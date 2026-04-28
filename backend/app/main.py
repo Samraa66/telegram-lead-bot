@@ -689,28 +689,36 @@ def login(request: Request, req: LoginRequest, db: Session = Depends(get_db)):
     _record_login_success(req.username)
     log_audit(db, action="login.success", actor=user, request=request)
 
-    ws_id = user.get("workspace_id", 1)
-
-    # Resolve org context from the workspace the user belongs to
+    # Resolve workspace / org context
     from app.database.models import Workspace as WsModel, Affiliate as AffModel
     org_id = 1
     org_role = "member"
 
-    if user["role"] in ("developer", "admin"):
-        org_role = "org_owner"
+    if user.get("account_id"):
+        # Account rows already carry the correct workspace/org/org_role — use directly
+        ws_id = user["workspace_id"]
+        org_id = user["org_id"]
+        org_role = user["org_role"]
+    else:
+        ws_id = user.get("workspace_id", 1)
 
-    # For affiliates: scope to their own provisioned workspace, not the parent's
-    if user["role"] == "affiliate" and user.get("affiliate_id"):
-        aff = db.query(AffModel).filter(AffModel.id == user["affiliate_id"]).first()
-        if aff:
-            # affiliate_workspace_id = their own CRM workspace
-            # workspace_id = their parent's workspace (fallback for legacy affiliates)
-            ws_id = aff.affiliate_workspace_id or aff.workspace_id or ws_id
-            org_role = "workspace_owner"
+        if user["role"] in ("developer", "admin"):
+            org_role = "org_owner"
+
+        # For affiliates: scope to their own provisioned workspace, not the parent's
+        if user["role"] == "affiliate" and user.get("affiliate_id"):
+            aff = db.query(AffModel).filter(AffModel.id == user["affiliate_id"]).first()
+            if aff:
+                # affiliate_workspace_id = their own CRM workspace
+                # workspace_id = their parent's workspace (fallback for legacy affiliates)
+                ws_id = aff.affiliate_workspace_id or aff.workspace_id or ws_id
+                org_role = "workspace_owner"
+
+        ws = db.query(WsModel).filter(WsModel.id == ws_id).first()
+        if ws and ws.org_id:
+            org_id = ws.org_id
 
     ws = db.query(WsModel).filter(WsModel.id == ws_id).first()
-    if ws and ws.org_id:
-        org_id = ws.org_id
 
     token = create_access_token(
         user["username"], user["role"],
@@ -718,6 +726,7 @@ def login(request: Request, req: LoginRequest, db: Session = Depends(get_db)):
         org_id=org_id,
         org_role=org_role,
         affiliate_id=user.get("affiliate_id"),
+        account_id=user.get("account_id"),
     )
     return {
         "access_token": token,
@@ -727,6 +736,7 @@ def login(request: Request, req: LoginRequest, db: Session = Depends(get_db)):
         "org_id": org_id,
         "org_role": org_role,
         "onboarding_complete": (bool(ws.onboarding_complete) if ws else True) if user["role"] == "affiliate" else True,
+        "account_id": user.get("account_id"),
     }
 
 
@@ -2272,7 +2282,7 @@ def _cascade_delete_workspace(ws_id: int, db: Session) -> None:
     from app.database.models import (
         Workspace, Contact, Message, StageHistory, FollowUpQueue,
         FollowUpTemplate, StageKeyword, StageLabel, QuickReply, TeamMember,
-        Campaign, PendingChannel,
+        Campaign, PendingChannel, Account,
     )
 
     # Stop Telethon client if running (fire-and-forget)
@@ -2293,6 +2303,9 @@ def _cascade_delete_workspace(ws_id: int, db: Session) -> None:
         db.query(Message).filter(Message.contact_id.in_(contact_ids)).delete(synchronize_session=False)
         db.query(StageHistory).filter(StageHistory.contact_id.in_(contact_ids)).delete(synchronize_session=False)
         db.query(FollowUpQueue).filter(FollowUpQueue.contact_id.in_(contact_ids)).delete(synchronize_session=False)
+
+    # Delete Account rows before Affiliate rows (Account.affiliate_id FKs into affiliates)
+    db.query(Account).filter(Account.workspace_id == ws_id).delete(synchronize_session=False)
 
     for model in (Contact, FollowUpTemplate, StageKeyword, StageLabel, QuickReply, TeamMember, Campaign, PendingChannel):
         db.query(model).filter(model.workspace_id == ws_id).delete(synchronize_session=False)
