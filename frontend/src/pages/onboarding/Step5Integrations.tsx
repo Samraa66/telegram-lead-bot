@@ -7,19 +7,19 @@ const API_BASE = import.meta.env.DEV
 
 const FIELDS = [
   {
-    key: "meta_pixel_id",
+    key: "pixel_id",
     label: "Meta Pixel ID",
     placeholder: "123456789012345",
     help: "Business Manager → Events Manager → your pixel → Settings.",
   },
   {
-    key: "meta_ad_account_id",
+    key: "ad_account_id",
     label: "Meta Ad Account ID",
     placeholder: "act_1234567890",
     help: "Ads Manager URL: facebook.com/adsmanager/manage/?act=<this>.",
   },
   {
-    key: "meta_access_token",
+    key: "access_token",
     label: "Meta Access Token",
     placeholder: "EAAB…",
     help: "System User token from Business Settings. Stored encrypted at rest.",

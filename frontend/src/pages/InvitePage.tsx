@@ -49,6 +49,7 @@ export default function InvitePage() {
         org_id: res.org_id,
         org_role: res.org_role,
         onboarding_complete: res.onboarding_complete,
+        parent_bot_username: res.parent_bot_username ?? null,
       });
       navigate(res.onboarding_complete ? "/" : "/onboarding");
     } catch (e: any) {

@@ -220,13 +220,13 @@ export function StepTelethon({ onDone, onSkip }: { onDone: () => void; onSkip: (
 
 // ---------------------------------------------------------------------------
 // Step — Channel (branched by org_role)
-//   workspace_owner → set source_channel_id (the org's signal feed)
-//   sub-affiliate   → set vip_channel_id (where signals copy TO)
+//   org_owner       → set source_channel_id (the org's signal feed)
+//   workspace_owner → set vip_channel_id (sub-affiliate's destination channel)
 // ---------------------------------------------------------------------------
 
 export function StepChannel({ onDone, onSkip }: StepProps) {
   const user = getStoredUser();
-  if (user?.org_role === "workspace_owner") {
+  if (user?.org_role === "org_owner") {
     return <StepSourceChannel onDone={onDone} onSkip={onSkip} />;
   }
   return <StepVipChannel onDone={onDone} onSkip={onSkip} />;

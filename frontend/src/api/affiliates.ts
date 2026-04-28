@@ -172,6 +172,7 @@ export interface InviteAcceptResponse {
   org_id: number;
   org_role: string;
   onboarding_complete: boolean;
+  parent_bot_username?: string | null;
 }
 
 export const acceptInvite = async (token: string, password: string): Promise<InviteAcceptResponse> => {

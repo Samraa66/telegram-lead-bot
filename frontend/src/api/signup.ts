@@ -63,6 +63,7 @@ export async function acceptAffiliateInvite(token: string, body: AcceptInviteBod
     workspace_id: j.workspace_id, org_id: j.org_id, org_role: j.org_role,
     account_id: j.account_id,
     onboarding_complete: false,
+    parent_bot_username: j.parent_bot_username ?? null,
   };
   saveAuth(user);
   return user;

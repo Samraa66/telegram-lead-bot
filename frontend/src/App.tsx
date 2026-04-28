@@ -15,8 +15,8 @@ import AffiliateInvitePage from "./pages/AffiliateInvitePage";
 function PrivateRoute({ element, roles }: { element: React.ReactElement; roles?: string[] }) {
   if (!getToken()) return <Navigate to="/login" replace />;
   const user = getStoredUser();
-  // Affiliates who haven't finished onboarding go to the wizard first
-  if (user?.role === "affiliate" && !user.onboarding_complete) {
+  // Anyone (org owner or affiliate) with an unfinished wizard is sent there first
+  if (user && user.onboarding_complete === false) {
     return <Navigate to="/onboarding" replace />;
   }
   if (roles && !roles.includes(user?.role || "")) return <Navigate to="/" replace />;

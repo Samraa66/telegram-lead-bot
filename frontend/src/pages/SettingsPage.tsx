@@ -926,10 +926,8 @@ function ForwardingStatusCard() {
 type ForwardingConfig = {
   source_channel_id: string | null;
   destination_channel_ids: string | null;
-  effective_source_channel_id: string;
-  effective_static_destinations: string[];
-  env_source_channel_id: string;
-  env_destination_channel_ids: string[];
+  effective_source_channel_id: string | null;
+  effective_destinations: string[];
   affiliate_destinations: { id: number; name: string; vip_channel_id: string }[];
 };
 
@@ -985,9 +983,6 @@ function SignalForwardingTab() {
     );
   }
 
-  const envSourceInUse = !config.source_channel_id && config.env_source_channel_id;
-  const envDestsInUse = !config.destination_channel_ids && config.env_destination_channel_ids.length > 0;
-
   return (
     <div className="space-y-6">
       <ForwardingStatusCard />
@@ -1011,11 +1006,6 @@ function SignalForwardingTab() {
           <p className="text-xs text-muted-foreground/70 mt-1">
             The channel ID starts with <code className="font-mono">-100</code>. Your Conversion Desk must be a member.
           </p>
-          {envSourceInUse && (
-            <p className="text-xs text-amber-600 mt-1">
-              Currently using env value: <code className="font-mono">{config.env_source_channel_id}</code>. Save to override.
-            </p>
-          )}
         </div>
       </div>
 
@@ -1035,11 +1025,6 @@ function SignalForwardingTab() {
             value={form.destinations}
             onChange={e => setForm(f => ({ ...f, destinations: e.target.value }))}
           />
-          {envDestsInUse && (
-            <p className="text-xs text-amber-600 mt-1">
-              Currently using env values: <code className="font-mono">{config.env_destination_channel_ids.join(", ")}</code>. Save to override.
-            </p>
-          )}
         </div>
 
         <div className="flex items-center gap-2 pt-1">

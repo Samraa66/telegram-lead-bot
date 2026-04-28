@@ -20,8 +20,12 @@ logger = logging.getLogger(__name__)
 
 def get_destinations_for_org(workspace_id: int, db: Session) -> List[str]:
     """
-    Return vip_channel_ids of all active affiliates whose workspace
-    is in the org tree rooted at workspace_id.
+    Return destination channel IDs for the org rooted at workspace_id:
+      - Manual destinations CSV from the owner's Workspace.destination_channel_ids
+      - vip_channel_ids of all active affiliates in the org tree
+
+    Deduplicated, preserving manual-first order so owner-configured channels
+    appear before the auto-synced affiliate set.
     """
     rows = (
         db.query(Affiliate.vip_channel_id)
@@ -33,7 +37,19 @@ def get_destinations_for_org(workspace_id: int, db: Session) -> List[str]:
         )
         .all()
     )
-    return [ch for (ch,) in rows if ch]
+    affiliate_channels = [ch for (ch,) in rows if ch]
+
+    ws = db.query(Workspace).filter(Workspace.id == workspace_id).first()
+    manual_csv = (ws.destination_channel_ids if ws else None) or ""
+    manual_channels = [c.strip() for c in manual_csv.split(",") if c.strip()]
+
+    seen: set[str] = set()
+    merged: List[str] = []
+    for ch in manual_channels + affiliate_channels:
+        if ch not in seen:
+            seen.add(ch)
+            merged.append(ch)
+    return merged
 
 
 TELEGRAM_API_BASE = "https://api.telegram.org/bot"

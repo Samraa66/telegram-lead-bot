@@ -845,9 +845,10 @@ def me(current_user: dict = Depends(get_current_user), db: Session = Depends(get
     data = dict(current_user)
 
     # Resolve the tenant's bot username for sub-affiliate onboarding UI.
-    # Org owners themselves don't need it (their wizard branches to source-channel).
+    # Only sub-affiliates (org_role=workspace_owner with a parent workspace) need this;
+    # org owners' wizard branches to the source-channel step instead.
     parent_bot_username = None
-    if current_user.get("org_role") != "workspace_owner":
+    if current_user.get("org_role") == "workspace_owner":
         from app.database.models import Workspace
         ws = db.query(Workspace).filter(Workspace.id == current_user.get("workspace_id")).first()
         if ws and ws.parent_workspace_id:
@@ -1401,13 +1402,21 @@ def my_pending_channels(
     _=Depends(require_workspace_owner),
 ):
     """
-    Return channels/groups that THIS workspace's bot was recently added to as admin.
-    Used by the onboarding wizard ("Detect channel") so affiliates don't have to
-    manually copy a channel ID.
+    Return channels/groups recently detected by the bot that serves this workspace.
+    Sub-affiliates use the parent org's bot, so we read PendingChannel rows from the
+    parent workspace (which is where the my_chat_member webhook stored them).
+    Used by the onboarding wizard ("Detect channel").
     """
+    from app.database.models import Workspace
+    ws = db.query(Workspace).filter(Workspace.id == workspace_id).first()
+    bot_ws_id = (
+        ws.parent_workspace_id
+        if (ws and ws.workspace_role == "affiliate" and ws.parent_workspace_id)
+        else workspace_id
+    )
     rows = (
         db.query(PendingChannel)
-        .filter(PendingChannel.workspace_id == workspace_id)
+        .filter(PendingChannel.workspace_id == bot_ws_id)
         .order_by(PendingChannel.detected_at.desc())
         .limit(20)
         .all()
@@ -2101,7 +2110,10 @@ def reengage_member(
     contact = db.query(User).filter(User.id == contact_id, User.workspace_id == workspace_id).first()
     if not contact:
         raise HTTPException(status_code=404, detail="contact not found")
-    if contact.current_stage not in (7, 8):
+    from app.database.models import Workspace
+    ws = db.query(Workspace).filter(Workspace.id == workspace_id).first()
+    vip_stage_ids = {sid for sid in (ws.deposited_stage_id, ws.member_stage_id) if sid} if ws else set()
+    if not vip_stage_ids or contact.current_stage_id not in vip_stage_ids:
         raise HTTPException(status_code=400, detail="contact is not a VIP member")
 
     from app.services.member_activity import send_reengage_message
@@ -2410,6 +2422,22 @@ def invite_accept(token: str, req: AcceptInviteRequest, request: Request, db: Se
         workspace_id=ws_id, org_id=org_id, org_role="workspace_owner",
         affiliate_id=aff.id,
     )
+
+    # Resolve the parent's bot username so the wizard can show @ParentBot
+    parent_bot_username = None
+    parent = (
+        db.query(Workspace).filter(Workspace.id == ws.parent_workspace_id).first()
+        if ws and ws.parent_workspace_id else None
+    )
+    if parent and parent.bot_token:
+        import requests as _r
+        try:
+            r = _r.get(f"https://api.telegram.org/bot{parent.bot_token}/getMe", timeout=5)
+            if r.status_code == 200:
+                parent_bot_username = r.json().get("result", {}).get("username")
+        except Exception:
+            pass
+
     return {
         "access_token": token_jwt,
         "role": "affiliate",
@@ -2418,6 +2446,7 @@ def invite_accept(token: str, req: AcceptInviteRequest, request: Request, db: Se
         "org_id": org_id,
         "org_role": "workspace_owner",
         "onboarding_complete": bool(ws.onboarding_complete) if ws else False,
+        "parent_bot_username": parent_bot_username,
     }
 
 
@@ -2579,6 +2608,19 @@ def accept_affiliate_invite(
         workspace_id=child.id, org_id=parent.org_id, org_role="workspace_owner",
         affiliate_id=aff.id, account_id=acct.id,
     )
+
+    # Resolve the parent's bot username so the wizard can show @ParentBot
+    # in the "Add this bot to your channel" instructions.
+    parent_bot_username = None
+    if parent.bot_token:
+        import requests as _r
+        try:
+            r = _r.get(f"https://api.telegram.org/bot{parent.bot_token}/getMe", timeout=5)
+            if r.status_code == 200:
+                parent_bot_username = r.json().get("result", {}).get("username")
+        except Exception:
+            pass
+
     return {
         "access_token": token_jwt,
         "role": "affiliate",
@@ -2589,6 +2631,7 @@ def accept_affiliate_invite(
         "account_id": acct.id,
         "affiliate_id": aff.id,
         "onboarding_complete": False,
+        "parent_bot_username": parent_bot_username,
     }
 
 

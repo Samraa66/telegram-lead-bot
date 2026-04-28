@@ -125,6 +125,10 @@ def _make_inbound_handler(workspace_id: int):
             ).first()
 
             if not contact:
+                from app.handlers.leads import _initial_stage_for_contact
+                sid, spos, entered_at = _initial_stage_for_contact(
+                    db, workspace_id, first_name, last_name, now,
+                )
                 contact = Contact(
                     id=user_id,
                     workspace_id=workspace_id,
@@ -133,19 +137,22 @@ def _make_inbound_handler(workspace_id: int):
                     last_name=last_name,
                     source=source,
                     classification="new_lead",
-                    current_stage=1,
-                    stage_entered_at=now,
+                    current_stage_id=sid,
+                    current_stage=spos,  # legacy mirror
+                    stage_entered_at=entered_at,
                     first_seen=now,
                     last_seen=now,
+                    deposit_status="none",
                 )
                 db.add(contact)
                 db.flush()
                 logger.info("New lead: user_id=%s ws=%s source=%s", user_id, workspace_id, source)
-                try:
-                    from app.services.scheduler import schedule_follow_ups
-                    schedule_follow_ups(user_id, 1, now)
-                except Exception:
-                    pass
+                if sid is not None and spos == 1:
+                    try:
+                        from app.services.scheduler import schedule_follow_ups_for_stage_id
+                        schedule_follow_ups_for_stage_id(user_id, sid, now)
+                    except Exception:
+                        pass
             else:
                 contact.username = username
                 if first_name is not None:
