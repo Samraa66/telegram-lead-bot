@@ -4,16 +4,14 @@ Contact classifier: determines the lead type based on pipeline stage and flags.
 Classifications (stored as VARCHAR, never ENUM):
   new_lead   — in DB, stage 1 (just arrived, pipeline not yet started)
   warm_lead  — in DB, stage 2-6, no deposit
-  vip        — in DB, stage 7-8 OR deposit confirmed
+  vip        — in DB, member stage OR deposit confirmed
   affiliate  — manually tagged (is_affiliate=True)
   noise      — manually tagged by operator (not automatic)
 
 Priority order: affiliate > noise > vip > warm_lead > new_lead
 
-NOTE: noise is MANUAL ONLY. @WalidxBullish_Support is a personal Telegram
-account — Telegram never auto-sends /start for personal accounts, so we
-cannot use /start to distinguish leads from random DMs. All new DMs default
-to new_lead; the operator marks spam as noise from the dashboard.
+NOTE: noise is MANUAL ONLY. All new DMs default to new_lead; the operator
+marks spam as noise from the dashboard.
 """
 
 from __future__ import annotations
@@ -54,11 +52,31 @@ def classify_contact(
 
     stage = contact.current_stage or 1
 
-    # VIP: deposit confirmed OR stage 7-8
-    if contact.deposit_confirmed or stage >= 7:
+    # VIP: deposit confirmed OR deposit_status="deposited" OR member stage
+    # deposit_status is the new canonical field; deposit_confirmed is the legacy boolean.
+    # Task 4.2 will consolidate these — for now both are checked.
+    deposited = contact.deposit_confirmed or getattr(contact, "deposit_status", None) == "deposited"
+
+    # When current_stage_id is set, use the is_member_stage flag on PipelineStage
+    # to determine VIP status (replaces the hardcoded stage >= 7 heuristic).
+    is_member = False
+    stage_id = getattr(contact, "current_stage_id", None)
+    if stage_id:
+        from app.database.models import PipelineStage
+        ps = db.query(PipelineStage).filter(PipelineStage.id == stage_id).first()
+        if ps:
+            is_member = bool(ps.is_member_stage)
+        else:
+            # Fallback for legacy data: position >= 8 is member
+            is_member = stage >= 8
+    else:
+        # Legacy path: no stage_id — use old heuristic
+        is_member = stage >= 7
+
+    if deposited or is_member:
         return "vip"
 
-    # Warm lead: in pipeline, stages 2-6, no deposit
+    # Warm lead: in pipeline, stages 2+, no deposit, not a member stage
     if stage >= 2:
         return "warm_lead"
 

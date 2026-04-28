@@ -28,7 +28,7 @@ def handle_outbound(
     message_text: str,
 ) -> Optional[int]:
     """
-    Process an outgoing message from Talal to a contact.
+    Process an outgoing message from the operator to a contact.
 
     Saves the message as 'outbound' and advances the stage if a keyword is
     matched. Schedules follow-ups for the new stage when a transition occurs.
@@ -44,8 +44,8 @@ def handle_outbound(
 
     if new_stage is not None:
         try:
-            from app.services.scheduler import schedule_follow_ups
-            schedule_follow_ups(contact_id, new_stage, contact.stage_entered_at)
+            from app.services.scheduler import schedule_follow_ups_for_stage_id
+            schedule_follow_ups_for_stage_id(contact_id, new_stage, contact.stage_entered_at)
         except Exception:
             pass  # Never crash the send path due to scheduler errors
 

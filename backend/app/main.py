@@ -1690,7 +1690,7 @@ class SendMessageRequest(BaseModel):
 
 
 class ManualStageRequest(BaseModel):
-    stage: conint(ge=1, le=8)
+    stage_id: int
 
 
 class NotesRequest(BaseModel):
@@ -1767,11 +1767,11 @@ def set_contact_stage(contact_id: int, req: ManualStageRequest, db: Session = De
             contact.stage_entered_at = now
         db.commit()
 
-    set_stage_manual(contact, req.stage)
+    set_stage_manual(contact, req.stage_id)
 
     # Cancel stale follow-ups and schedule new ones for the new stage
-    from app.services.scheduler import schedule_follow_ups
-    schedule_follow_ups(contact_id, req.stage, contact.stage_entered_at)
+    from app.services.scheduler import schedule_follow_ups_for_stage_id
+    schedule_follow_ups_for_stage_id(contact_id, req.stage_id, contact.stage_entered_at)
 
     return {"ok": True}
 
