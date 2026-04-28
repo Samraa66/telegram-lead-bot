@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { fetchContacts } from "@/api/crm";
-import { Lead, STAGE_TEXT_COLORS, Stage } from "@/data/crmData";
+import { Lead } from "@/data/crmData";
 
 const RecentLeads = () => {
   const [leads, setLeads] = useState<Lead[]>([]);
@@ -38,7 +38,6 @@ const RecentLeads = () => {
       ) : (
         <div className="-mx-2">
           {leads.map((lead) => {
-            const textColor = STAGE_TEXT_COLORS[lead.stage as Stage] || "text-muted-foreground";
             const initials = (lead.name || lead.username || "?")
               .split(" ").map((n) => n[0]).join("").slice(0, 2).toUpperCase();
             return (
@@ -57,7 +56,7 @@ const RecentLeads = () => {
                   </div>
                 </div>
                 <div className="flex items-center gap-3 shrink-0">
-                  <span className={`text-xs font-medium ${textColor}`}>{lead.stage}</span>
+                  <span className="text-xs font-medium text-muted-foreground">{lead.stageName}</span>
                   <span className="text-xs text-muted-foreground w-12 text-right tabular-nums">{timeAgo(lead.lastMessageAt)}</span>
                 </div>
               </button>

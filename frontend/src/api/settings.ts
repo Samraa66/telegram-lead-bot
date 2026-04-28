@@ -26,20 +26,24 @@ async function apiFetch(path: string, init?: RequestInit) {
 export interface Keyword {
   id: number;
   keyword: string;
-  target_stage: number;
+  target_stage_id: number;
+  target_stage: number;     // legacy mirror
   is_active: boolean;
 }
 
 export interface FollowUpTemplate {
   id: number;
   stage: number;
+  stage_id: number | null;
   sequence_num: number;
+  hours_offset: number;
   message_text: string;
 }
 
 export interface QuickReply {
   id: number;
-  stage_num: number;
+  stage_id: number;
+  stage_num: number;        // legacy mirror
   label: string;
   text: string;
   sort_order: number;
@@ -57,17 +61,14 @@ export interface StageLabel {
 export const fetchKeywords = (): Promise<Keyword[]> =>
   apiFetch("/settings/keywords");
 
-export const createKeyword = (keyword: string, target_stage: number): Promise<Keyword> =>
+export const createKeyword = (keyword: string, target_stage_id: number): Promise<Keyword> =>
   apiFetch("/settings/keywords", {
     method: "POST",
-    body: JSON.stringify({ keyword, target_stage }),
+    body: JSON.stringify({ keyword, target_stage_id }),
   });
 
-export const updateKeyword = (id: number, data: Partial<Omit<Keyword, "id">>): Promise<Keyword> =>
-  apiFetch(`/settings/keywords/${id}`, {
-    method: "PATCH",
-    body: JSON.stringify(data),
-  });
+export const updateKeyword = (id: number, body: { keyword?: string; target_stage_id?: number; is_active?: boolean }) =>
+  apiFetch(`/settings/keywords/${id}`, { method: "PATCH", body: JSON.stringify(body) });
 
 export const deleteKeyword = (id: number): Promise<void> =>
   apiFetch(`/settings/keywords/${id}`, { method: "DELETE" });
@@ -83,27 +84,30 @@ export const updateFollowUpTemplate = (id: number, message_text: string): Promis
     body: JSON.stringify({ message_text }),
   });
 
+export const updateFollowUp = (id: number, body: { message_text?: string; hours_offset?: number }) =>
+  apiFetch(`/settings/follow-up-templates/${id}`, { method: "PATCH", body: JSON.stringify(body) });
+
 // ---- Quick Replies ----
 
 export const fetchQuickReplies = (): Promise<QuickReply[]> =>
   apiFetch("/settings/quick-replies");
 
-export const createQuickReply = (data: Omit<QuickReply, "id" | "is_active">): Promise<QuickReply> =>
+export const createQuickReply = (stage_id: number, label: string, text: string, sort_order = 0): Promise<QuickReply> =>
   apiFetch("/settings/quick-replies", {
     method: "POST",
-    body: JSON.stringify(data),
+    body: JSON.stringify({ stage_id, label, text, sort_order }),
   });
 
-export const updateQuickReply = (id: number, data: Partial<Omit<QuickReply, "id">>): Promise<QuickReply> =>
+export const updateQuickReply = (id: number, body: { stage_id?: number; label?: string; text?: string; sort_order?: number; is_active?: boolean }): Promise<QuickReply> =>
   apiFetch(`/settings/quick-replies/${id}`, {
     method: "PATCH",
-    body: JSON.stringify(data),
+    body: JSON.stringify(body),
   });
 
 export const deleteQuickReply = (id: number): Promise<void> =>
   apiFetch(`/settings/quick-replies/${id}`, { method: "DELETE" });
 
-// ---- Stage Labels ----
+// ---- Stage Labels (kept for legacy reads) ----
 
 export const fetchStageLabels = (): Promise<StageLabel[]> =>
   apiFetch("/settings/stage-labels");

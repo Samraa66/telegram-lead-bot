@@ -31,7 +31,8 @@ export interface VipMember {
   name: string;
   username: string;
   avatar: string;
-  stage: number;
+  stage_id: number | null;
+  stage: number;            // legacy mirror
   activity_status: ActivityStatus;
   days_inactive: number | null;
   last_activity_at: string | null;
@@ -44,7 +45,10 @@ export const fetchMembers = (): Promise<VipMember[]> =>
   apiFetch("/members");
 
 export const confirmDeposit = (contactId: string): Promise<void> =>
-  apiFetch(`/contacts/${contactId}/deposit-confirm`, { method: "POST" });
+  apiFetch(`/contacts/${contactId}/deposit`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
 
 export const reengageMember = (contactId: string, message?: string): Promise<void> =>
   apiFetch(`/members/${contactId}/reengage`, {

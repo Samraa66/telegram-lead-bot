@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect } from "react";
 import AppLayout from "@/components/AppLayout";
 import { LeadList } from "@/components/crm/LeadList";
 import { LeadDrawer } from "@/components/crm/LeadDrawer";
-import { Lead, uiStageToBackend } from "@/data/crmData";
+import { Lead } from "@/data/crmData";
 import {
   fetchContacts, sendMessageToContact, setContactStage,
   saveContactNotes, escalateContact, toggleAffiliate,
@@ -47,8 +47,10 @@ export default function LeadsPage() {
 
   const handleUpdateLead = useCallback(async (updated: Lead) => {
     setLeads((prev) => prev.map((l) => (l.id === updated.id ? updated : l)));
-    try { await setContactStage(updated.id, uiStageToBackend(updated.stage)); await loadContacts(true); }
-    catch (e: any) { setError(e?.message || "Failed to update stage"); }
+    if (updated.stageId !== null) {
+      try { await setContactStage(updated.id, updated.stageId); await loadContacts(true); }
+      catch (e: any) { setError(e?.message || "Failed to update stage"); }
+    }
   }, [loadContacts]);
 
   const handleSaveNotes = useCallback(async (notes: string) => {

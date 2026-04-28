@@ -1,55 +1,17 @@
-// Shared CRM frontend types + constants (no mock in-memory leads/messages).
+// Shared CRM frontend types + small helpers — pipeline stages are now dynamic
+// and fetched via useWorkspaceStages(); see api/pipeline.ts.
 
 export const ESCALATION_CONTACT_NAME = "Admin";
 
-export type Stage =
-  | "New Lead"
-  | "Qualified"
-  | "Hesitant / Ghosting"
-  | "Link Sent"
-  | "Account Created"
-  | "Deposit Intent"
-  | "Deposited"
-  | "VIP Member";
-
-export const STAGES: Stage[] = [
-  "New Lead",
-  "Qualified",
-  "Hesitant / Ghosting",
-  "Link Sent",
-  "Account Created",
-  "Deposit Intent",
-  "Deposited",
-  "VIP Member",
-];
-
-export const STAGE_COLORS: Record<Stage, string> = {
-  "New Lead": "bg-stage-new",
-  Qualified: "bg-stage-qualified",
-  "Hesitant / Ghosting": "bg-stage-hesitant",
-  "Link Sent": "bg-stage-link-sent",
-  "Account Created": "bg-stage-link-sent",
-  "Deposit Intent": "bg-stage-link-sent",
-  Deposited: "bg-stage-deposited",
-  "VIP Member": "bg-stage-deposited",
-};
-
-export const STAGE_TEXT_COLORS: Record<Stage, string> = {
-  "New Lead": "text-stage-new",
-  Qualified: "text-stage-qualified",
-  "Hesitant / Ghosting": "text-stage-hesitant",
-  "Link Sent": "text-stage-link-sent",
-  "Account Created": "text-stage-link-sent",
-  "Deposit Intent": "text-stage-link-sent",
-  Deposited: "text-stage-deposited",
-  "VIP Member": "text-stage-deposited",
-};
+export type DepositStatus = "none" | "pending" | "deposited";
 
 export interface Lead {
   id: string;
   name: string;
   username: string;
-  stage: Stage;
+  stageId: number | null;
+  stageName: string;
+  stagePosition: number | null;
   stageEnteredAt: string;
   classification: string;
   notes: string;
@@ -57,6 +19,7 @@ export interface Lead {
   lastMessageAt: string;
   unread: number;
   escalated: boolean;
+  depositStatus: DepositStatus;
 }
 
 export function classificationLabel(c: string): string {
@@ -122,49 +85,8 @@ export function formatMessageTime(timestamp: string): string {
   return d.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: true });
 }
 
-// Backend stage mapping (1..8) -> UI labels
-export function backendStageToUi(stageNum: number): Stage {
-  switch (stageNum) {
-    case 1:
-      return "New Lead";
-    case 2:
-      return "Qualified";
-    case 3:
-      return "Hesitant / Ghosting";
-    case 4:
-      return "Link Sent";
-    case 5:
-      return "Account Created";
-    case 6:
-      return "Deposit Intent";
-    case 7:
-      return "Deposited";
-    case 8:
-      return "VIP Member";
-    default:
-      return "New Lead";
-  }
-}
-
-export function uiStageToBackend(stage: Stage): number {
-  switch (stage) {
-    case "New Lead":
-      return 1;
-    case "Qualified":
-      return 2;
-    case "Hesitant / Ghosting":
-      return 3;
-    case "Link Sent":
-      return 4;
-    case "Account Created":
-      return 5;
-    case "Deposit Intent":
-      return 6;
-    case "Deposited":
-      return 7;
-    case "VIP Member":
-      return 8;
-    default:
-      return 1;
-  }
+// Helper to look up the stage name from a fetched PipelineConfig given a stage_id
+export function stageNameFromId(stages: { id: number; name: string }[] | undefined, id: number | null | undefined): string {
+  if (!id || !stages) return "—";
+  return stages.find(s => s.id === id)?.name ?? "—";
 }
