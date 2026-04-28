@@ -12,6 +12,7 @@ export interface AuthUser {
   workspace_name?: string;
   org_id?: number;
   org_role?: string;
+  account_id?: number;
   onboarding_complete?: boolean;
 }
 
@@ -27,6 +28,7 @@ export function saveAuth(user: AuthUser): void {
     workspace_name: user.workspace_name ?? null,
     org_id: user.org_id ?? 1,
     org_role: user.org_role ?? "member",
+    account_id: user.account_id ?? null,
     onboarding_complete: user.onboarding_complete ?? true,
   }));
 }
@@ -49,12 +51,12 @@ export function getToken(): string | null {
   return localStorage.getItem(TOKEN_KEY);
 }
 
-export function getStoredUser(): { username: string; role: Role; workspace_id: number; workspace_name: string | null; org_id: number; org_role: string; onboarding_complete: boolean } | null {
+export function getStoredUser(): { username: string; role: Role; workspace_id: number; workspace_name: string | null; org_id: number; org_role: string; account_id: number | null; onboarding_complete: boolean } | null {
   const raw = localStorage.getItem(USER_KEY);
   if (!raw) return null;
   try {
     const parsed = JSON.parse(raw);
-    return { workspace_id: 1, workspace_name: null, org_id: 1, org_role: "member", onboarding_complete: true, ...parsed };
+    return { workspace_id: 1, workspace_name: null, org_id: 1, org_role: "member", account_id: null, onboarding_complete: true, ...parsed };
   } catch { return null; }
 }
 
@@ -88,6 +90,7 @@ export async function loginWithTelegram(data: TelegramAuthData): Promise<AuthUse
   const user: AuthUser = {
     username: json.username, role: json.role, token: json.access_token,
     workspace_id: json.workspace_id ?? 1, org_id: json.org_id ?? 1, org_role: json.org_role ?? "member",
+    account_id: json.account_id,
   };
   saveAuth(user);
   return user;
@@ -109,6 +112,7 @@ export async function login(username: string, password: string): Promise<AuthUse
   const user: AuthUser = {
     username: data.username, role: data.role, token: data.access_token,
     workspace_id: data.workspace_id ?? 1, org_id: data.org_id ?? 1, org_role: data.org_role ?? "member",
+    account_id: data.account_id,
     onboarding_complete: data.onboarding_complete ?? true,
   };
   saveAuth(user);
@@ -129,6 +133,7 @@ export async function switchWorkspace(workspaceId: number): Promise<{ workspace_
       username: stored.username, role: stored.role, token: data.access_token,
       workspace_id: workspaceId, workspace_name: data.workspace_name,
       org_id: data.org_id ?? stored.org_id, org_role: stored.org_role,
+      account_id: stored.account_id ?? undefined,
     });
   }
   return { workspace_name: data.workspace_name };
