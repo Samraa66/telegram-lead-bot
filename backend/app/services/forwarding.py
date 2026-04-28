@@ -14,8 +14,10 @@ import logging
 from typing import List, Optional
 
 import requests
+from sqlalchemy.orm import Session
 
 from app.config import BOT_TOKEN, DESTINATION_CHANNEL_IDS
+from app.database.models import Affiliate, Workspace
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +26,24 @@ def _parse_csv(raw: Optional[str]) -> List[str]:
     if not raw:
         return []
     return [x.strip() for x in raw.split(",") if x.strip()]
+
+
+def get_destinations_for_org(workspace_id: int, db: Session) -> List[str]:
+    """
+    Return vip_channel_ids of all active affiliates whose workspace
+    is in the org tree rooted at workspace_id.
+    """
+    rows = (
+        db.query(Affiliate.vip_channel_id)
+        .join(Workspace, Affiliate.affiliate_workspace_id == Workspace.id)
+        .filter(
+            Workspace.root_workspace_id == workspace_id,
+            Affiliate.is_active.is_(True),
+            Affiliate.vip_channel_id.isnot(None),
+        )
+        .all()
+    )
+    return [ch for (ch,) in rows if ch]
 
 
 def get_static_destination_channels(workspace_id: int = 1) -> List[str]:

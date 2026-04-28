@@ -70,15 +70,58 @@ def make_org_tree(db):
 
     # Affiliate rows tied to the affiliate workspaces
     db.add(Affiliate(id=10, name="AffA", workspace_id=1, affiliate_workspace_id=2,
-                     vip_channel_id="-100AAA", is_active=True))
+                     referral_tag="affa", vip_channel_id="-100AAA", is_active=True))
     db.add(Affiliate(id=11, name="AffB", workspace_id=1, affiliate_workspace_id=3,
-                     vip_channel_id="-100BBB", is_active=True))
+                     referral_tag="affb", vip_channel_id="-100BBB", is_active=True))
     db.add(Affiliate(id=12, name="AffC", workspace_id=4, affiliate_workspace_id=5,
-                     vip_channel_id="-100CCC", is_active=True))
+                     referral_tag="affc", vip_channel_id="-100CCC", is_active=True))
     db.commit()
     return {"orgA_root": 1, "orgB_root": 4}
 
 
 if __name__ == "__main__":
-    print("Forwarding tests")
-    print("(no assertions yet — fixtures only)")
+    from app.services.forwarding import get_destinations_for_org
+
+    db = Session()
+    ids = make_org_tree(db)
+
+    # OrgA's destinations = AffA + AffB (workspaces 2, 3)
+    print("Test 1: get_destinations_for_org returns own org's affiliates")
+    dests_a = sorted(get_destinations_for_org(ids["orgA_root"], db))
+    check("OrgA destinations match [-100AAA, -100BBB]", dests_a == ["-100AAA", "-100BBB"])
+
+    # OrgB's destinations = AffC only (workspace 5)
+    print("\nTest 2: orgs are isolated")
+    dests_b = get_destinations_for_org(ids["orgB_root"], db)
+    check("OrgB destinations match ['-100CCC']", dests_b == ["-100CCC"])
+
+    # Inactive affiliate is excluded
+    print("\nTest 3: inactive affiliates excluded")
+    aff_a = db.query(Affiliate).filter(Affiliate.id == 10).first()
+    aff_a.is_active = False
+    db.commit()
+    dests_a2 = get_destinations_for_org(ids["orgA_root"], db)
+    check("OrgA now has only AffB", dests_a2 == ["-100BBB"])
+    aff_a.is_active = True  # reset
+    db.commit()
+
+    # NULL vip_channel_id excluded
+    print("\nTest 4: affiliates without vip_channel_id excluded")
+    aff_b = db.query(Affiliate).filter(Affiliate.id == 11).first()
+    aff_b.vip_channel_id = None
+    db.commit()
+    dests_a3 = get_destinations_for_org(ids["orgA_root"], db)
+    check("OrgA now has only AffA", dests_a3 == ["-100AAA"])
+    aff_b.vip_channel_id = "-100BBB"  # reset
+    db.commit()
+
+    # Org with no affiliates returns empty list
+    print("\nTest 5: empty list when no affiliates")
+    db.add(Organization(id=3, name="OrgEmpty"))
+    db.add(Workspace(id=6, name="OrgEmpty-root", org_id=3, workspace_role="owner",
+                     parent_workspace_id=None, root_workspace_id=6))
+    db.commit()
+    check("OrgEmpty destinations are []", get_destinations_for_org(6, db) == [])
+
+    db.close()
+    print("\nDone.")
