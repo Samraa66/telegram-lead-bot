@@ -2734,6 +2734,20 @@ def purge_orphaned_workspaces(
     return {"deleted": len(orphans)}
 
 
+@app.post("/workspaces/{workspace_id}/backfill-telegram-history")
+async def trigger_backfill(
+    workspace_id: int,
+    limit_per_dialog: int = 200,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_roles("developer", "admin")),
+):
+    """Pull past Telegram DMs for the workspace and replay them through advance_stage."""
+    if current_user.get("workspace_id") != workspace_id and current_user["role"] != "developer":
+        raise HTTPException(status_code=403, detail="cross-workspace backfill not allowed")
+    from app.services.backfill import backfill_workspace_history
+    return await backfill_workspace_history(workspace_id, limit_per_dialog=min(limit_per_dialog, 500))
+
+
 @app.patch("/affiliates/{affiliate_id}/checklist")
 def update_affiliate_checklist(
     affiliate_id: int,
