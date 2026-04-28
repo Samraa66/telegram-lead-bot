@@ -295,6 +295,26 @@ class Account(Base):
     last_login_at = Column(DateTime, nullable=True)
 
 
+class AffiliateInvite(Base):
+    """
+    Pre-creates an invite without creating an Affiliate row yet.
+    On accept, the invite_token is consumed and Affiliate + Account + child
+    Workspace are all created in one transaction.
+    """
+
+    __tablename__ = "affiliate_invites"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    workspace_id = Column(Integer, nullable=False, index=True)
+    invited_by_account_id = Column(Integer, ForeignKey("accounts.id"), nullable=True)
+    invite_token = Column(String(64), nullable=False, unique=True, index=True)
+    email = Column(String(255), nullable=True)
+    status = Column(String(20), nullable=False, default="pending")  # pending|accepted|expired
+    expires_at = Column(DateTime, nullable=False)
+    accepted_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
 class StageKeyword(Base):
     """
     Keyword phrases that trigger pipeline stage advances.
