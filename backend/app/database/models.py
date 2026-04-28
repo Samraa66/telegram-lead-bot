@@ -240,6 +240,33 @@ class PipelineStage(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class DepositEvent(Base):
+    """
+    Append-only log of deposit events. Created by process_deposit_event() from
+    any input source (manual button, email webhook, future PuPrime API).
+    Idempotency_key dedupes — same key from same provider is a no-op.
+    """
+
+    __tablename__ = "deposit_events"
+    __table_args__ = (
+        UniqueConstraint("workspace_id", "provider", "idempotency_key",
+                         name="uq_deposit_idempotency"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    workspace_id = Column(Integer, nullable=False, index=True)
+    contact_id = Column(BigInteger, ForeignKey("contacts.id"), nullable=False, index=True)
+    provider = Column(String(50), nullable=False)              # manual | puprime | other
+    provider_client_id = Column(String(255), nullable=True)    # e.g. PuPrime account #
+    amount = Column(Float, nullable=True)
+    currency = Column(String(8), nullable=True)
+    occurred_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    source = Column(String(20), nullable=False)                # manual | email_parser | api
+    idempotency_key = Column(String(255), nullable=False)
+    raw_payload = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
 class StageKeyword(Base):
     """
     Keyword phrases that trigger pipeline stage advances.
