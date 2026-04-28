@@ -1024,6 +1024,39 @@ async def telethon_disconnect(
     return {"ok": True}
 
 
+class WorkspaceSourceChannelRequest(BaseModel):
+    source_channel_id: str
+
+
+@app.patch("/workspace/me/source-channel")
+async def update_workspace_source_channel(
+    req: WorkspaceSourceChannelRequest,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_workspace_owner),
+):
+    """
+    Set the org owner's source channel. Cycles their Telethon client so the
+    new channel's signal handler activates without a service restart.
+    """
+    from app.database.models import Workspace
+    from app.services.telethon_client import stop_workspace_client, start_workspace_client
+    from app.config import TELEGRAM_API_ID, TELEGRAM_API_HASH
+
+    ws_id = current_user["workspace_id"]
+    ws = db.query(Workspace).filter(Workspace.id == ws_id).first()
+    if not ws:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+
+    ws.source_channel_id = req.source_channel_id.strip()
+    db.commit()
+
+    if ws.telethon_session:
+        await stop_workspace_client(ws_id)
+        await start_workspace_client(ws_id, ws.telethon_session, TELEGRAM_API_ID, TELEGRAM_API_HASH)
+
+    return {"ok": True, "source_channel_id": ws.source_channel_id}
+
+
 # ---------------------------------------------------------------------------
 # Bot token + webhook registration
 # ---------------------------------------------------------------------------
