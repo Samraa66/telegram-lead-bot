@@ -2361,6 +2361,177 @@ def invite_accept(token: str, req: AcceptInviteRequest, request: Request, db: Se
     }
 
 
+# ---------------------------------------------------------------------------
+# AffiliateInvite endpoints — token-based invite flow (Task 6.4)
+# URL prefix /auth/affiliate-invites avoids collision with legacy /invite/{token}
+# ---------------------------------------------------------------------------
+
+class AffiliateInviteCreateRequest(BaseModel):
+    email: Optional[str] = None
+    expires_in_days: int = 14
+
+
+class AffiliateInviteAcceptRequest(BaseModel):
+    full_name: str
+    email: str
+    password: str
+    affiliate_username: Optional[str] = None  # Telegram @handle (optional)
+
+
+@app.post("/auth/affiliate-invites", status_code=201)
+def issue_affiliate_invite(
+    req: AffiliateInviteCreateRequest,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_workspace_owner),
+):
+    import secrets as _secrets
+    from datetime import datetime, timedelta
+    from app.database.models import AffiliateInvite
+    from app.services.audit import log_audit
+
+    token = _secrets.token_urlsafe(32)
+    inv = AffiliateInvite(
+        workspace_id=current_user["workspace_id"],
+        invited_by_account_id=current_user.get("account_id"),
+        email=(req.email or "").strip() or None,
+        invite_token=token,
+        status="pending",
+        expires_at=datetime.utcnow() + timedelta(days=req.expires_in_days),
+    )
+    db.add(inv); db.commit(); db.refresh(inv)
+    log_audit(db, action="affiliate_invite.issued", actor=current_user,
+              target_type="affiliate_invite", target_id=inv.id,
+              workspace_id=current_user["workspace_id"],
+              detail=f"email={inv.email or '—'}")
+    from app.config import APP_BASE_URL
+    base = (APP_BASE_URL or "").rstrip("/")
+    return {
+        "invite_token": token,
+        "invite_url": f"{base}/affiliate-invite/{token}" if base else f"/affiliate-invite/{token}",
+        "expires_at": inv.expires_at.isoformat(),
+    }
+
+
+@app.get("/auth/affiliate-invites/{token}")
+def lookup_affiliate_invite(token: str, db: Session = Depends(get_db)):
+    from datetime import datetime
+    from app.database.models import AffiliateInvite, Workspace, Account
+    inv = db.query(AffiliateInvite).filter(AffiliateInvite.invite_token == token).first()
+    if not inv or inv.status != "pending":
+        raise HTTPException(status_code=404, detail="Invite not found or already used")
+    if inv.expires_at < datetime.utcnow():
+        raise HTTPException(status_code=410, detail="Invite expired")
+    ws = db.query(Workspace).filter(Workspace.id == inv.workspace_id).first()
+    inviter = (db.query(Account).filter(Account.id == inv.invited_by_account_id).first()
+               if inv.invited_by_account_id else None)
+    return {
+        "workspace_name": ws.name if ws else "Unknown",
+        "inviter_name": inviter.full_name if inviter else None,
+        "expires_at": inv.expires_at.isoformat(),
+    }
+
+
+@app.post("/auth/affiliate-invites/{token}/accept")
+@limiter.limit("5/minute")
+def accept_affiliate_invite(
+    request: Request, token: str, req: AffiliateInviteAcceptRequest,
+    db: Session = Depends(get_db),
+):
+    """Public. Creates Account + Affiliate + child Workspace; consumes invite."""
+    from datetime import datetime
+    import re, uuid
+    from sqlalchemy.exc import IntegrityError
+    from app.database.models import (
+        AffiliateInvite, Workspace, Affiliate, Account,
+    )
+    from app.auth import hash_password as _hash, create_access_token as _tok
+    from app.database import seed_workspace_defaults
+    from app.services.audit import log_audit
+
+    inv = db.query(AffiliateInvite).filter(AffiliateInvite.invite_token == token).first()
+    if not inv or inv.status != "pending":
+        raise HTTPException(status_code=404, detail="Invite not found or already used")
+    if inv.expires_at < datetime.utcnow():
+        raise HTTPException(status_code=410, detail="Invite expired")
+
+    email = (req.email or "").strip().lower()
+    if "@" not in email or len(email) < 4:
+        raise HTTPException(status_code=400, detail="invalid email")
+    if len(req.password) < 8:
+        raise HTTPException(status_code=400, detail="password must be at least 8 characters")
+    if not req.full_name.strip():
+        raise HTTPException(status_code=400, detail="full_name is required")
+    if db.query(Account).filter(Account.email == email).first():
+        raise HTTPException(status_code=409, detail="email already in use")
+
+    parent = db.query(Workspace).filter(Workspace.id == inv.workspace_id).first()
+    if not parent:
+        raise HTTPException(status_code=404, detail="parent workspace gone")
+
+    base_slug = re.sub(r"[^a-z0-9]+", ".", req.full_name.strip().lower()).strip(".")
+    if not base_slug:
+        base_slug = "affiliate"
+    referral_tag = f"{base_slug[:16]}-{uuid.uuid4().hex[:4]}"
+
+    try:
+        child = Workspace(
+            name=req.full_name.strip(),
+            org_id=parent.org_id, parent_workspace_id=parent.id,
+            root_workspace_id=parent.root_workspace_id or parent.id,
+            workspace_role="affiliate", onboarding_complete=False,
+        )
+        db.add(child); db.flush()
+
+        aff = Affiliate(
+            workspace_id=parent.id,
+            name=req.full_name.strip(),
+            username=(req.affiliate_username or "").strip() or None,
+            referral_tag=referral_tag,
+            affiliate_workspace_id=child.id,
+        )
+        db.add(aff); db.flush()
+
+        acct = Account(
+            workspace_id=child.id, org_id=parent.org_id,
+            email=email, full_name=req.full_name.strip(),
+            password_hash=_hash(req.password),
+            role="affiliate", org_role="workspace_owner",
+            affiliate_id=aff.id,
+        )
+        db.add(acct)
+
+        inv.status = "accepted"
+        inv.accepted_at = datetime.utcnow()
+        db.commit(); db.refresh(acct); db.refresh(child); db.refresh(aff)
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="email already in use")
+
+    seed_workspace_defaults(child.id, db)
+
+    log_audit(db, action="affiliate.invite_accepted",
+              actor={"username": email, "role": "affiliate"},
+              target_type="affiliate", target_id=aff.id,
+              workspace_id=child.id, request=request)
+
+    token_jwt = _tok(
+        email, "affiliate",
+        workspace_id=child.id, org_id=parent.org_id, org_role="workspace_owner",
+        affiliate_id=aff.id, account_id=acct.id,
+    )
+    return {
+        "access_token": token_jwt,
+        "role": "affiliate",
+        "username": email,
+        "workspace_id": child.id,
+        "org_id": parent.org_id,
+        "org_role": "workspace_owner",
+        "account_id": acct.id,
+        "affiliate_id": aff.id,
+        "onboarding_complete": False,
+    }
+
+
 @app.patch("/affiliates/{affiliate_id}/lots")
 def update_affiliate_lots(
     affiliate_id: int,
