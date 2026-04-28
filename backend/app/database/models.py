@@ -206,6 +206,40 @@ class Workspace(Base):
     onboarding_complete = Column(Boolean, default=False)
 
 
+class PipelineStage(Base):
+    """
+    Per-workspace pipeline stage definition. Replaces hardcoded 1..8 stages.
+
+    Flags:
+      is_deposit_stage    — landing here marks the contact as deposited
+      is_member_stage     — landing here marks the contact as a paying member (VIP)
+      is_conversion_stage — used by analytics for "converted" cohort metrics
+
+    end_action drives scheduler behavior after the last follow-up in this stage:
+      "cold"     — stop following up
+      "revert"   — move contact back to revert_to_stage_id
+      "weekly"   — keep following up every 168h
+      "monthly"  — keep following up every 720h
+    """
+
+    __tablename__ = "pipeline_stages"
+    __table_args__ = (UniqueConstraint("workspace_id", "position", name="uq_workspace_position"),)
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    workspace_id = Column(Integer, nullable=False, index=True)
+    position = Column(Integer, nullable=False)
+    name = Column(String(255), nullable=False)
+    description = Column(Text, nullable=True)
+    color = Column(String(32), nullable=True)
+    is_member_stage = Column(Boolean, default=False, nullable=False)
+    is_deposit_stage = Column(Boolean, default=False, nullable=False)
+    is_conversion_stage = Column(Boolean, default=False, nullable=False)
+    end_action = Column(String(20), nullable=False, default="cold")
+    revert_to_stage_id = Column(Integer, ForeignKey("pipeline_stages.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class StageKeyword(Base):
     """
     Keyword phrases that trigger pipeline stage advances.

@@ -25,7 +25,7 @@ load_dotenv(Path(__file__).parent.parent.parent / ".env")
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from .models import Base, FollowUpTemplate, Organization, Workspace, StageKeyword, StageLabel, QuickReply, TeamMember
+from .models import Base, FollowUpTemplate, Organization, Workspace, StageKeyword, StageLabel, QuickReply, TeamMember, PipelineStage
 
 # Use DATABASE_URL if set (PostgreSQL); otherwise SQLite for local dev
 _db_url = os.getenv("DATABASE_URL", "").strip()
