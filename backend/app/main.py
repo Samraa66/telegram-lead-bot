@@ -32,7 +32,6 @@ from app.database import get_db, init_db, SessionLocal
 from app.database.models import User, PendingChannel
 from app.handlers.outbound import handle_outbound
 from app.handlers.leads import process_lead_update
-from app.handlers.signals import process_signal_update
 from app.bot import send_message
 from app.services.analytics import (
     get_today_stats, get_stats_by_source, get_messages_per_day,
@@ -235,11 +234,6 @@ async def _handle_webhook(request: Request, db: Session, workspace_id: int, secr
             if reply_text and chat_id is not None:
                 loop = asyncio.get_running_loop()
                 await loop.run_in_executor(None, send_message, chat_id, reply_text, workspace_id)
-            return {"ok": True}
-
-        if body.get("channel_post") is not None or body.get("edited_channel_post") is not None:
-            loop = asyncio.get_running_loop()
-            await loop.run_in_executor(None, process_signal_update, body)
             return {"ok": True}
 
         if body.get("my_chat_member") is not None:
