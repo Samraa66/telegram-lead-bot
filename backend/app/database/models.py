@@ -13,7 +13,7 @@ User = Contact alias kept so existing code that imports User continues to work.
 
 from datetime import date, datetime
 
-from sqlalchemy import BigInteger, Boolean, Column, Date, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import BigInteger, Boolean, Column, Date, DateTime, Float, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.orm import relationship
 from sqlalchemy.ext.declarative import declarative_base
 
@@ -258,9 +258,9 @@ class DepositEvent(Base):
     contact_id = Column(BigInteger, ForeignKey("contacts.id"), nullable=False, index=True)
     provider = Column(String(50), nullable=False)              # manual | puprime | other
     provider_client_id = Column(String(255), nullable=True)    # e.g. PuPrime account #
-    amount = Column(Float, nullable=True)
+    amount = Column(Numeric(precision=18, scale=4), nullable=True)
     currency = Column(String(8), nullable=True)
-    occurred_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    occurred_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     source = Column(String(20), nullable=False)                # manual | email_parser | api
     idempotency_key = Column(String(255), nullable=False)
     raw_payload = Column(Text, nullable=True)
