@@ -64,6 +64,15 @@ class Contact(Base):
 
     deposit_confirmed = Column(Boolean, nullable=False, default=False)
     deposit_date = Column(Date, nullable=True)
+    # New deposit semantics — supersede deposit_confirmed/deposit_date.
+    # Old columns kept until phase-1 backfill confirms parity, then removed in phase 4.
+    current_stage_id = Column(Integer, ForeignKey("pipeline_stages.id"), nullable=True)
+    deposit_status = Column(String(20), nullable=False, default="none")  # none|pending|deposited
+    deposited_at = Column(DateTime, nullable=True)
+    deposit_amount = Column(Numeric(precision=18, scale=4), nullable=True)
+    deposit_currency = Column(String(8), nullable=True)
+    deposit_source = Column(String(20), nullable=True)  # manual|email|api
+    puprime_client_id = Column(String(255), nullable=True, index=True)
 
     is_affiliate = Column(Boolean, nullable=False, default=False)
     escalated = Column(Boolean, nullable=False, default=False)
@@ -118,6 +127,8 @@ class StageHistory(Base):
 
     from_stage = Column(Integer, nullable=True)
     to_stage = Column(Integer, nullable=False)
+    from_stage_id = Column(Integer, ForeignKey("pipeline_stages.id"), nullable=True)
+    to_stage_id = Column(Integer, ForeignKey("pipeline_stages.id"), nullable=True)
     moved_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     moved_by = Column(String(20), nullable=False, default="system")  # system / manual / talal
     trigger_keyword = Column(String(255), nullable=True)
@@ -137,6 +148,7 @@ class FollowUpQueue(Base):
     contact_id = Column(BigInteger, ForeignKey("contacts.id"), nullable=False)
 
     stage = Column(Integer, nullable=False)
+    stage_id = Column(Integer, ForeignKey("pipeline_stages.id"), nullable=True)
     sequence_num = Column(Integer, nullable=False)  # position in the follow-up sequence
     scheduled_at = Column(DateTime, nullable=False)
     fired_at = Column(DateTime, nullable=True)
@@ -155,6 +167,8 @@ class FollowUpTemplate(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     workspace_id = Column(Integer, nullable=False, default=1)
     stage = Column(Integer, nullable=False)
+    stage_id = Column(Integer, ForeignKey("pipeline_stages.id"), nullable=True)
+    hours_offset = Column(Float, nullable=False, default=24.0)
     sequence_num = Column(Integer, nullable=False)
     message_text = Column(Text, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -204,6 +218,23 @@ class Workspace(Base):
     telethon_session = Column(EncryptedText, nullable=True)
     # Affiliate onboarding — flipped to True once wizard is completed
     onboarding_complete = Column(Boolean, default=False)
+    # Org metadata (filled during signup / onboarding)
+    niche = Column(String(255), nullable=True)
+    language = Column(String(16), nullable=True)
+    timezone = Column(String(64), nullable=True)
+    country = Column(String(64), nullable=True)
+    main_channel_url = Column(Text, nullable=True)
+    sales_telegram_username = Column(String(255), nullable=True)
+    # Pipeline pointers — null until pipeline stages are created
+    deposited_stage_id = Column(Integer, ForeignKey("pipeline_stages.id"), nullable=True)
+    member_stage_id = Column(Integer, ForeignKey("pipeline_stages.id"), nullable=True)
+    conversion_stage_id = Column(Integer, ForeignKey("pipeline_stages.id"), nullable=True)
+    # JSON-encoded list of substrings — if any appear in a contact's first/last name,
+    # the contact is auto-promoted to member_stage_id at first sight (replaces the
+    # hardcoded 'vip' substring check in handlers/leads.py:_vip_stage_from_name).
+    vip_marker_phrases = Column(Text, nullable=True)  # JSON: ["vip", "premium", ...]
+    # HMAC secret for POST /webhook/deposit-events
+    deposit_webhook_secret = Column(EncryptedText, nullable=True)
 
 
 class PipelineStage(Base):
@@ -328,6 +359,7 @@ class StageKeyword(Base):
     workspace_id = Column(Integer, nullable=False, default=1)
     keyword = Column(String(500), nullable=False)
     target_stage = Column(Integer, nullable=False)
+    target_stage_id = Column(Integer, ForeignKey("pipeline_stages.id"), nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -352,6 +384,7 @@ class QuickReply(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     workspace_id = Column(Integer, nullable=False, default=1)
     stage_num = Column(Integer, nullable=False)
+    stage_id = Column(Integer, ForeignKey("pipeline_stages.id"), nullable=True)
     label = Column(String(255), nullable=False)
     text = Column(Text, nullable=False)
     sort_order = Column(Integer, nullable=False, default=0)
