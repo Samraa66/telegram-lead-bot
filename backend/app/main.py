@@ -1721,26 +1721,80 @@ def escalate_contact(contact_id: int, db: Session = Depends(get_db), workspace_i
     return {"ok": True}
 
 
+class DepositRequest(BaseModel):
+    amount: Optional[float] = None
+    currency: Optional[str] = None
+    occurred_at: Optional[str] = None  # ISO timestamp
+
+
+@app.post("/contacts/{contact_id}/deposit")
+def record_contact_deposit(
+    contact_id: int,
+    req: DepositRequest,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_roles("developer", "admin", "operator", "vip_manager")),
+):
+    """Manually record a deposit for a contact. Idempotent per (contact, day)."""
+    from datetime import datetime as _dt
+    from app.services.deposit import process_deposit_event
+    workspace_id: int = current_user.get("workspace_id", 1)
+    contact = db.query(User).filter(
+        User.id == contact_id, User.workspace_id == workspace_id,
+    ).first()
+    if not contact:
+        raise HTTPException(status_code=404, detail="contact not found")
+
+    occurred = (_dt.fromisoformat(req.occurred_at) if req.occurred_at
+                else _dt.utcnow())
+    idem = f"manual:{contact_id}:{occurred.strftime('%Y%m%d')}"
+    result = process_deposit_event(
+        db,
+        workspace_id=workspace_id,
+        contact=contact,
+        provider="manual",
+        source="manual",
+        idempotency_key=idem,
+        amount=req.amount,
+        currency=req.currency,
+        occurred_at=occurred,
+    )
+    return {
+        "ok": True,
+        "deposit_event_id": result.deposit_event_id,
+        "deduped": result.dedup,
+        "moved_to_stage_id": result.moved_to_stage_id,
+    }
+
+
+# Backwards compat alias — old frontend builds still POST here
 @app.post("/contacts/{contact_id}/deposit-confirm")
-def confirm_deposit(
+def deposit_confirm_legacy(
     contact_id: int,
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_roles("developer", "admin", "operator", "vip_manager")),
 ):
-    """Mark deposit as confirmed and auto-promote contact to stage 8."""
-    from datetime import datetime, date
+    return record_contact_deposit(contact_id, DepositRequest(), db, current_user)
+
+
+class PuPrimeIdRequest(BaseModel):
+    puprime_client_id: str
+
+
+@app.post("/contacts/{contact_id}/puprime-id")
+def set_contact_puprime_id(
+    contact_id: int, req: PuPrimeIdRequest,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_roles("developer", "admin", "operator")),
+):
+    """Store the PuPrime account number for a contact (used by deposit matching)."""
     workspace_id: int = current_user.get("workspace_id", 1)
-    contact = db.query(User).filter(User.id == contact_id, User.workspace_id == workspace_id).first()
+    contact = db.query(User).filter(
+        User.id == contact_id, User.workspace_id == workspace_id,
+    ).first()
     if not contact:
         raise HTTPException(status_code=404, detail="contact not found")
-    contact.deposit_confirmed = True
-    contact.deposit_date = date.today()
-    if (contact.current_stage or 1) < 8:
-        set_stage_manual(contact, 8, moved_by="system", db=db)
-        from app.services.scheduler import schedule_follow_ups
-        schedule_follow_ups(contact_id, 8, datetime.utcnow())
-    else:
-        db.commit()
+    contact.puprime_client_id = req.puprime_client_id.strip()
+    db.commit()
     return {"ok": True}
 
 
