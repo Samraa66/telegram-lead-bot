@@ -267,6 +267,34 @@ class DepositEvent(Base):
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
 
+class Account(Base):
+    """
+    User accounts with email-based login. Distinct from:
+      TeamMember — workspace-internal team accounts (operator/vip_manager/admin)
+      Affiliate  — affiliate-specific record with referral_tag and channel checklist
+      static env users (developer/admin) — kept for backward compat
+
+    role: "admin" (org owner / workspace owner) or "affiliate".
+    org_role: "org_owner" | "workspace_owner" | "member" — written into the JWT.
+    """
+
+    __tablename__ = "accounts"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    workspace_id = Column(Integer, nullable=False, index=True)
+    org_id = Column(Integer, nullable=False, index=True)
+    email = Column(String(255), nullable=False, unique=True, index=True)
+    full_name = Column(String(255), nullable=False)
+    password_hash = Column(String(255), nullable=False)
+    role = Column(String(50), nullable=False)              # admin | affiliate
+    org_role = Column(String(50), nullable=False, default="member")  # org_owner | workspace_owner | member
+    affiliate_id = Column(Integer, ForeignKey("affiliates.id"), nullable=True)
+    email_verified = Column(Boolean, default=False, nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    last_login_at = Column(DateTime, nullable=True)
+
+
 class StageKeyword(Base):
     """
     Keyword phrases that trigger pipeline stage advances.
