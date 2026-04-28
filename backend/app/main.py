@@ -2873,21 +2873,22 @@ SETTINGS_ROLES = Depends(require_roles("developer", "admin"))
 
 class KeywordCreateRequest(BaseModel):
     keyword: str
-    target_stage: conint(ge=1, le=8)
+    target_stage_id: int
 
 
 class KeywordUpdateRequest(BaseModel):
     keyword: Optional[str] = None
-    target_stage: Optional[conint(ge=1, le=8)] = None
+    target_stage_id: Optional[int] = None
     is_active: Optional[bool] = None
 
 
 class FollowUpUpdateRequest(BaseModel):
     message_text: str
+    hours_offset: Optional[float] = None
 
 
 class QuickReplyCreateRequest(BaseModel):
-    stage_num: conint(ge=1, le=8)
+    stage_id: int
     label: str
     text: str
     sort_order: int = 0
@@ -2904,6 +2905,275 @@ class StageLabelUpdateRequest(BaseModel):
     label: str
 
 
+# --- Pipeline CRUD ---
+
+class PipelineStageCreateRequest(BaseModel):
+    name: str
+    description: Optional[str] = None
+    color: Optional[str] = None
+    is_deposit_stage: bool = False
+    is_member_stage: bool = False
+    is_conversion_stage: bool = False
+    end_action: str = "cold"
+    revert_to_stage_id: Optional[int] = None
+
+
+class PipelineStageUpdateRequest(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    color: Optional[str] = None
+    is_deposit_stage: Optional[bool] = None
+    is_member_stage: Optional[bool] = None
+    is_conversion_stage: Optional[bool] = None
+    end_action: Optional[str] = None
+    revert_to_stage_id: Optional[int] = None
+
+
+class PipelineReorderRequest(BaseModel):
+    ordered_ids: list[int]
+
+
+class PipelineFlagsRequest(BaseModel):
+    deposited_stage_id: Optional[int] = None
+    member_stage_id: Optional[int] = None
+    conversion_stage_id: Optional[int] = None
+    vip_marker_phrases: Optional[list[str]] = None
+
+
+def _stage_dto(s):
+    return {
+        "id": s.id, "position": s.position, "name": s.name,
+        "description": s.description, "color": s.color,
+        "is_deposit_stage": s.is_deposit_stage,
+        "is_member_stage": s.is_member_stage,
+        "is_conversion_stage": s.is_conversion_stage,
+        "end_action": s.end_action,
+        "revert_to_stage_id": s.revert_to_stage_id,
+    }
+
+
+@app.get("/settings/pipeline")
+def get_pipeline(
+    db: Session = Depends(get_db),
+    workspace_id: int = Depends(get_workspace_id),
+):
+    from app.database.models import PipelineStage, Workspace
+    import json as _json
+    stages = (db.query(PipelineStage)
+              .filter(PipelineStage.workspace_id == workspace_id)
+              .order_by(PipelineStage.position).all())
+    ws = db.query(Workspace).filter(Workspace.id == workspace_id).first()
+    markers: list = []
+    if ws and ws.vip_marker_phrases:
+        try:
+            markers = _json.loads(ws.vip_marker_phrases) or []
+        except Exception:
+            markers = []
+    return {
+        "stages": [_stage_dto(s) for s in stages],
+        "deposited_stage_id": ws.deposited_stage_id if ws else None,
+        "member_stage_id": ws.member_stage_id if ws else None,
+        "conversion_stage_id": ws.conversion_stage_id if ws else None,
+        "vip_marker_phrases": markers,
+    }
+
+
+@app.post("/settings/pipeline/stages", status_code=201)
+def create_pipeline_stage(
+    req: PipelineStageCreateRequest,
+    db: Session = Depends(get_db),
+    workspace_id: int = Depends(get_workspace_id),
+    _=Depends(require_workspace_owner),
+):
+    from app.database.models import PipelineStage
+    last = (db.query(PipelineStage)
+            .filter(PipelineStage.workspace_id == workspace_id)
+            .order_by(PipelineStage.position.desc()).first())
+    next_pos = (last.position if last else 0) + 1
+    stage = PipelineStage(
+        workspace_id=workspace_id, position=next_pos, name=req.name.strip(),
+        description=req.description, color=req.color,
+        is_deposit_stage=req.is_deposit_stage,
+        is_member_stage=req.is_member_stage,
+        is_conversion_stage=req.is_conversion_stage,
+        end_action=req.end_action,
+        revert_to_stage_id=req.revert_to_stage_id,
+    )
+    db.add(stage)
+    db.commit()
+    db.refresh(stage)
+    return _stage_dto(stage)
+
+
+@app.patch("/settings/pipeline/stages/{stage_id}")
+def update_pipeline_stage(
+    stage_id: int, req: PipelineStageUpdateRequest,
+    db: Session = Depends(get_db),
+    workspace_id: int = Depends(get_workspace_id),
+    _=Depends(require_workspace_owner),
+):
+    from app.database.models import PipelineStage
+    s = db.query(PipelineStage).filter(
+        PipelineStage.id == stage_id,
+        PipelineStage.workspace_id == workspace_id,
+    ).first()
+    if not s:
+        raise HTTPException(status_code=404, detail="stage not found")
+    for k, v in req.dict(exclude_none=True).items():
+        setattr(s, k, v)
+    db.commit()
+    db.refresh(s)
+    return _stage_dto(s)
+
+
+@app.delete("/settings/pipeline/stages/{stage_id}")
+def delete_pipeline_stage(
+    stage_id: int,
+    move_contacts_to: Optional[int] = None,
+    db: Session = Depends(get_db),
+    workspace_id: int = Depends(get_workspace_id),
+    _=Depends(require_workspace_owner),
+):
+    from app.database.models import PipelineStage, Contact, Workspace
+    s = db.query(PipelineStage).filter(
+        PipelineStage.id == stage_id,
+        PipelineStage.workspace_id == workspace_id,
+    ).first()
+    if not s:
+        raise HTTPException(status_code=404, detail="stage not found")
+
+    ws = db.query(Workspace).filter(Workspace.id == workspace_id).first()
+    if ws and stage_id in (ws.deposited_stage_id, ws.member_stage_id):
+        raise HTTPException(
+            status_code=400,
+            detail="cannot delete a stage marked as deposit or member; reassign the flag first",
+        )
+
+    occupied = db.query(Contact).filter(
+        Contact.workspace_id == workspace_id,
+        Contact.current_stage_id == stage_id,
+    ).count()
+    if occupied:
+        if move_contacts_to is None:
+            raise HTTPException(
+                status_code=409,
+                detail=f"{occupied} contacts in this stage; pass ?move_contacts_to=<stage_id>",
+            )
+        target = db.query(PipelineStage).filter(
+            PipelineStage.id == move_contacts_to,
+            PipelineStage.workspace_id == workspace_id,
+        ).first()
+        if not target:
+            raise HTTPException(status_code=400, detail="move target stage not found")
+        db.query(Contact).filter(
+            Contact.workspace_id == workspace_id,
+            Contact.current_stage_id == stage_id,
+        ).update({
+            Contact.current_stage_id: target.id,
+            Contact.current_stage: target.position,
+        })
+
+    db.delete(s)
+    db.flush()
+    # Re-densify positions so they remain 1..N contiguous.
+    # Use raw SQL two-pass to avoid UNIQUE(workspace_id, position) collision.
+    from sqlalchemy import text
+    rest = (db.query(PipelineStage)
+            .filter(PipelineStage.workspace_id == workspace_id)
+            .order_by(PipelineStage.position).all())
+    for row in rest:
+        db.execute(
+            text("UPDATE pipeline_stages SET position = :neg WHERE id = :id"),
+            {"neg": -(row.id), "id": row.id},
+        )
+    db.flush()
+    for i, row in enumerate(rest, start=1):
+        db.execute(
+            text("UPDATE pipeline_stages SET position = :pos WHERE id = :id"),
+            {"pos": i, "id": row.id},
+        )
+    db.commit()
+    db.expire_all()
+    return {"ok": True}
+
+
+@app.post("/settings/pipeline/reorder")
+def reorder_pipeline(
+    req: PipelineReorderRequest,
+    db: Session = Depends(get_db),
+    workspace_id: int = Depends(get_workspace_id),
+    _=Depends(require_workspace_owner),
+):
+    from sqlalchemy import text
+    from app.database.models import PipelineStage
+    stages = (db.query(PipelineStage)
+              .filter(PipelineStage.workspace_id == workspace_id).all())
+    if {s.id for s in stages} != set(req.ordered_ids):
+        raise HTTPException(
+            status_code=400,
+            detail="ordered_ids must contain exactly the workspace's stage ids",
+        )
+    # Two-pass to avoid UNIQUE(workspace_id, position) collisions:
+    # Pass 1 — move all rows to large negative positions so none clash.
+    for s in stages:
+        db.execute(
+            text("UPDATE pipeline_stages SET position = :neg WHERE id = :id"),
+            {"neg": -(s.id), "id": s.id},
+        )
+    db.flush()
+    # Pass 2 — assign real positions.
+    for i, sid in enumerate(req.ordered_ids, start=1):
+        db.execute(
+            text("UPDATE pipeline_stages SET position = :pos WHERE id = :id"),
+            {"pos": i, "id": sid},
+        )
+    db.commit()
+    db.expire_all()
+    return {"ok": True}
+
+
+@app.patch("/settings/pipeline/flags")
+def update_pipeline_flags(
+    req: PipelineFlagsRequest,
+    db: Session = Depends(get_db),
+    workspace_id: int = Depends(get_workspace_id),
+    _=Depends(require_workspace_owner),
+):
+    import json as _json
+    from app.database.models import Workspace, PipelineStage
+    ws = db.query(Workspace).filter(Workspace.id == workspace_id).first()
+    if not ws:
+        raise HTTPException(status_code=404, detail="workspace not found")
+
+    def _validate(stage_id):
+        if stage_id is None:
+            return None
+        s = db.query(PipelineStage).filter(
+            PipelineStage.id == stage_id,
+            PipelineStage.workspace_id == workspace_id,
+        ).first()
+        if not s:
+            raise HTTPException(status_code=400, detail=f"stage {stage_id} not in workspace")
+        return stage_id
+
+    if req.deposited_stage_id is not None:
+        ws.deposited_stage_id = _validate(req.deposited_stage_id)
+    if req.member_stage_id is not None:
+        ws.member_stage_id = _validate(req.member_stage_id)
+    if req.conversion_stage_id is not None:
+        ws.conversion_stage_id = _validate(req.conversion_stage_id)
+    if req.vip_marker_phrases is not None:
+        ws.vip_marker_phrases = _json.dumps([p for p in req.vip_marker_phrases if p])
+
+    db.commit()
+    return {
+        "ok": True,
+        "deposited_stage_id": ws.deposited_stage_id,
+        "member_stage_id": ws.member_stage_id,
+        "conversion_stage_id": ws.conversion_stage_id,
+    }
+
+
 # --- Keywords ---
 
 @app.get("/settings/keywords")
@@ -2916,35 +3186,54 @@ def settings_list_keywords(db: Session = Depends(get_db), _=SETTINGS_ROLES, work
         .all()
     )
     return [
-        {"id": r.id, "keyword": r.keyword, "target_stage": r.target_stage, "is_active": r.is_active}
+        {"id": r.id, "keyword": r.keyword, "target_stage": r.target_stage,
+         "target_stage_id": r.target_stage_id, "is_active": r.is_active}
         for r in rows
     ]
 
 
 @app.post("/settings/keywords", status_code=201)
 def settings_create_keyword(req: KeywordCreateRequest, db: Session = Depends(get_db), _=SETTINGS_ROLES, workspace_id: int = Depends(get_workspace_id)):
-    from app.database.models import StageKeyword
-    kw = StageKeyword(workspace_id=workspace_id, keyword=req.keyword.strip(), target_stage=req.target_stage)
+    from app.database.models import StageKeyword, PipelineStage
+    stage = db.query(PipelineStage).filter(
+        PipelineStage.id == req.target_stage_id,
+        PipelineStage.workspace_id == workspace_id,
+    ).first()
+    if not stage:
+        raise HTTPException(status_code=400, detail=f"stage {req.target_stage_id} not in workspace")
+    kw = StageKeyword(
+        workspace_id=workspace_id, keyword=req.keyword.strip(),
+        target_stage_id=req.target_stage_id, target_stage=stage.position,
+    )
     db.add(kw)
     db.commit()
     db.refresh(kw)
-    return {"id": kw.id, "keyword": kw.keyword, "target_stage": kw.target_stage, "is_active": kw.is_active}
+    return {"id": kw.id, "keyword": kw.keyword, "target_stage": kw.target_stage,
+            "target_stage_id": kw.target_stage_id, "is_active": kw.is_active}
 
 
 @app.patch("/settings/keywords/{kw_id}")
 def settings_update_keyword(kw_id: int, req: KeywordUpdateRequest, db: Session = Depends(get_db), _=SETTINGS_ROLES, workspace_id: int = Depends(get_workspace_id)):
-    from app.database.models import StageKeyword
+    from app.database.models import StageKeyword, PipelineStage
     kw = db.query(StageKeyword).filter(StageKeyword.id == kw_id, StageKeyword.workspace_id == workspace_id).first()
     if not kw:
         raise HTTPException(status_code=404, detail="keyword not found")
     if req.keyword is not None:
         kw.keyword = req.keyword.strip()
-    if req.target_stage is not None:
-        kw.target_stage = req.target_stage
+    if req.target_stage_id is not None:
+        stage = db.query(PipelineStage).filter(
+            PipelineStage.id == req.target_stage_id,
+            PipelineStage.workspace_id == workspace_id,
+        ).first()
+        if not stage:
+            raise HTTPException(status_code=400, detail=f"stage {req.target_stage_id} not in workspace")
+        kw.target_stage_id = req.target_stage_id
+        kw.target_stage = stage.position
     if req.is_active is not None:
         kw.is_active = req.is_active
     db.commit()
-    return {"id": kw.id, "keyword": kw.keyword, "target_stage": kw.target_stage, "is_active": kw.is_active}
+    return {"id": kw.id, "keyword": kw.keyword, "target_stage": kw.target_stage,
+            "target_stage_id": kw.target_stage_id, "is_active": kw.is_active}
 
 
 @app.delete("/settings/keywords/{kw_id}")
@@ -2970,7 +3259,8 @@ def settings_list_templates(db: Session = Depends(get_db), _=SETTINGS_ROLES, wor
         .all()
     )
     return [
-        {"id": r.id, "stage": r.stage, "sequence_num": r.sequence_num, "message_text": r.message_text}
+        {"id": r.id, "stage": r.stage, "sequence_num": r.sequence_num,
+         "message_text": r.message_text, "hours_offset": r.hours_offset}
         for r in rows
     ]
 
@@ -2982,8 +3272,11 @@ def settings_update_template(tmpl_id: int, req: FollowUpUpdateRequest, db: Sessi
     if not tmpl:
         raise HTTPException(status_code=404, detail="template not found")
     tmpl.message_text = req.message_text.strip()
+    if req.hours_offset is not None:
+        tmpl.hours_offset = req.hours_offset
     db.commit()
-    return {"id": tmpl.id, "stage": tmpl.stage, "sequence_num": tmpl.sequence_num, "message_text": tmpl.message_text}
+    return {"id": tmpl.id, "stage": tmpl.stage, "sequence_num": tmpl.sequence_num,
+            "message_text": tmpl.message_text, "hours_offset": tmpl.hours_offset}
 
 
 # --- Quick Replies ---
@@ -2998,19 +3291,30 @@ def settings_list_quick_replies(db: Session = Depends(get_db), _=SETTINGS_ROLES,
         .all()
     )
     return [
-        {"id": r.id, "stage_num": r.stage_num, "label": r.label, "text": r.text, "sort_order": r.sort_order, "is_active": r.is_active}
+        {"id": r.id, "stage_num": r.stage_num, "stage_id": r.stage_id,
+         "label": r.label, "text": r.text, "sort_order": r.sort_order, "is_active": r.is_active}
         for r in rows
     ]
 
 
 @app.post("/settings/quick-replies", status_code=201)
 def settings_create_quick_reply(req: QuickReplyCreateRequest, db: Session = Depends(get_db), _=SETTINGS_ROLES, workspace_id: int = Depends(get_workspace_id)):
-    from app.database.models import QuickReply
-    qr = QuickReply(workspace_id=workspace_id, stage_num=req.stage_num, label=req.label.strip(), text=req.text.strip(), sort_order=req.sort_order)
+    from app.database.models import QuickReply, PipelineStage
+    stage = db.query(PipelineStage).filter(
+        PipelineStage.id == req.stage_id,
+        PipelineStage.workspace_id == workspace_id,
+    ).first()
+    if not stage:
+        raise HTTPException(status_code=400, detail=f"stage {req.stage_id} not in workspace")
+    qr = QuickReply(
+        workspace_id=workspace_id, stage_id=req.stage_id, stage_num=stage.position,
+        label=req.label.strip(), text=req.text.strip(), sort_order=req.sort_order,
+    )
     db.add(qr)
     db.commit()
     db.refresh(qr)
-    return {"id": qr.id, "stage_num": qr.stage_num, "label": qr.label, "text": qr.text, "sort_order": qr.sort_order, "is_active": qr.is_active}
+    return {"id": qr.id, "stage_num": qr.stage_num, "stage_id": qr.stage_id,
+            "label": qr.label, "text": qr.text, "sort_order": qr.sort_order, "is_active": qr.is_active}
 
 
 @app.patch("/settings/quick-replies/{qr_id}")
@@ -3028,7 +3332,8 @@ def settings_update_quick_reply(qr_id: int, req: QuickReplyUpdateRequest, db: Se
     if req.is_active is not None:
         qr.is_active = req.is_active
     db.commit()
-    return {"id": qr.id, "stage_num": qr.stage_num, "label": qr.label, "text": qr.text, "sort_order": qr.sort_order, "is_active": qr.is_active}
+    return {"id": qr.id, "stage_num": qr.stage_num, "stage_id": qr.stage_id,
+            "label": qr.label, "text": qr.text, "sort_order": qr.sort_order, "is_active": qr.is_active}
 
 
 @app.delete("/settings/quick-replies/{qr_id}")
