@@ -154,3 +154,44 @@ def copy_message(
     except Exception as e:
         logger.exception("Error copying to channel %s: %s", destination_chat_id, e)
         return False
+
+
+def copy_signal_for_org(
+    workspace_id: int,
+    source_chat_id: str,
+    message_id: int,
+    db: Session,
+) -> None:
+    """
+    Orchestrate signal copy for one org:
+      1. Fetch the org's bot_token from its workspace row
+      2. Fetch destinations (active affiliates in the org tree)
+      3. Loop copy_message — log per-channel failures, never abort the loop
+    """
+    ws = db.query(Workspace).filter(Workspace.id == workspace_id).first()
+    if not ws or not ws.bot_token:
+        logger.warning(
+            "copy_signal_for_org: ws=%s has no bot_token, skipping signal",
+            workspace_id,
+        )
+        return
+
+    destinations = get_destinations_for_org(workspace_id, db)
+    if not destinations:
+        logger.info(
+            "copy_signal_for_org: ws=%s has no active affiliate destinations",
+            workspace_id,
+        )
+        return
+
+    logger.info(
+        "Forwarding signal for ws=%s to %d channel(s)",
+        workspace_id, len(destinations),
+    )
+    for dest_id in destinations:
+        copy_message(
+            from_chat_id=source_chat_id,
+            message_id=message_id,
+            destination_chat_id=dest_id,
+            bot_token=ws.bot_token,
+        )

@@ -140,5 +140,41 @@ if __name__ == "__main__":
     check("returns True on 200", ok is True)
     check("URL contains the bot_token", "my-token-XYZ" in (captured_url["value"] or ""))
 
+    print("\nTest 8: copy_signal_for_org skips when bot_token is NULL")
+    from app.services.forwarding import copy_signal_for_org
+    db.add(Workspace(id=7, name="NoBot", org_id=1, workspace_role="owner",
+                     root_workspace_id=7, source_channel_id="-100777", bot_token=None))
+    db.commit()
+    with patch("app.services.forwarding.requests.post") as mock_post:
+        copy_signal_for_org(7, "-100777", 42, db)
+        check("requests.post not called", mock_post.call_count == 0)
+
+    print("\nTest 9: copy_signal_for_org loops all destinations using workspace's bot")
+    captured_calls = []
+    def fake_post_orgA(url, json=None, timeout=None):
+        captured_calls.append((url, json["chat_id"]))
+        resp = MagicMock()
+        resp.status_code = 200
+        return resp
+    with patch("app.services.forwarding.requests.post", side_effect=fake_post_orgA):
+        copy_signal_for_org(ids["orgA_root"], "-1001111", 99, db)
+    check("posted to 2 destinations (AffA + AffB)", len(captured_calls) == 2)
+    check("uses OrgA's bot token in URL", all("botA-token" in u for u, _ in captured_calls))
+    captured_chat_ids = sorted([c for _, c in captured_calls])
+    check("destinations are AffA + AffB channels",
+          captured_chat_ids == ["-100AAA", "-100BBB"])
+
+    print("\nTest 10: per-channel failure does not abort the loop")
+    call_log = []
+    def fake_post_partial_fail(url, json=None, timeout=None):
+        call_log.append(json["chat_id"])
+        resp = MagicMock()
+        resp.status_code = 400 if json["chat_id"] == "-100AAA" else 200
+        resp.text = "{}"
+        return resp
+    with patch("app.services.forwarding.requests.post", side_effect=fake_post_partial_fail):
+        copy_signal_for_org(ids["orgA_root"], "-1001111", 100, db)
+    check("both destinations attempted despite first failure", len(call_log) == 2)
+
     db.close()
     print("\nDone.")
