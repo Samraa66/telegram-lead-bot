@@ -126,16 +126,16 @@ def copy_message(
     from_chat_id: str,
     message_id: int,
     destination_chat_id: str,
+    bot_token: str,
 ) -> bool:
     """
-    Copy a message from one chat to another using Telegram Bot API.
-    Works for text, photos with captions, videos, documents (no need to inspect type).
-    Returns True if successful, False otherwise.
+    Copy a message between chats using the given bot's token.
+    Returns True on success, False on any failure (logged per-channel).
     """
-    if not BOT_TOKEN:
-        logger.error("BOT_TOKEN not set; cannot copy message")
+    if not bot_token:
+        logger.error("copy_message called with empty bot_token; cannot copy")
         return False
-    url = f"{TELEGRAM_API_BASE}{BOT_TOKEN}/copyMessage"
+    url = f"{TELEGRAM_API_BASE}{bot_token}/copyMessage"
     payload = {
         "chat_id": destination_chat_id,
         "from_chat_id": from_chat_id,
@@ -144,38 +144,13 @@ def copy_message(
     try:
         r = requests.post(url, json=payload, timeout=15)
         if r.status_code == 200:
-            logger.info("Copied signal to VIP channel %s", destination_chat_id)
+            logger.info("Copied signal to channel %s", destination_chat_id)
             return True
         logger.error(
             "Failed copying signal to channel %s: %s %s",
-            destination_chat_id,
-            r.status_code,
-            r.text,
+            destination_chat_id, r.status_code, r.text,
         )
         return False
     except Exception as e:
-        logger.exception("Error copying signal to channel %s: %s", destination_chat_id, e)
+        logger.exception("Error copying to channel %s: %s", destination_chat_id, e)
         return False
-
-
-def copy_signal_to_all_destinations(
-    source_channel_id: str,
-    message_id: int,
-    destination_channel_ids: Optional[List[str]] = None,
-) -> None:
-    """
-    Copy the given message to each destination channel. Logs and continues
-    if one channel fails so the rest are still processed.
-    """
-    destinations = destination_channel_ids if destination_channel_ids is not None else get_all_destination_channels()
-    if not destinations:
-        logger.warning("No destination channels configured; signal not copied")
-        return
-    for dest_id in destinations:
-        ok = copy_message(
-            from_chat_id=source_channel_id,
-            message_id=message_id,
-            destination_chat_id=dest_id,
-        )
-        if not ok:
-            logger.error("Failed copying signal to channel %s", dest_id)

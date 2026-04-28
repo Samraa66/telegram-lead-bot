@@ -123,5 +123,22 @@ if __name__ == "__main__":
     db.commit()
     check("OrgEmpty destinations are []", get_destinations_for_org(6, db) == [])
 
+    print("\nTest 6: copy_message returns False when bot_token is empty")
+    from app.services.forwarding import copy_message
+    result = copy_message("-100SRC", 42, "-100DST", bot_token="")
+    check("empty bot_token → False", result is False)
+
+    print("\nTest 7: copy_message uses the bot_token in URL")
+    captured_url = {"value": None}
+    def fake_post(url, json=None, timeout=None):
+        captured_url["value"] = url
+        resp = MagicMock()
+        resp.status_code = 200
+        return resp
+    with patch("app.services.forwarding.requests.post", side_effect=fake_post):
+        ok = copy_message("-100SRC", 42, "-100DST", bot_token="my-token-XYZ")
+    check("returns True on 200", ok is True)
+    check("URL contains the bot_token", "my-token-XYZ" in (captured_url["value"] or ""))
+
     db.close()
     print("\nDone.")
