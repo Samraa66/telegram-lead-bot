@@ -121,6 +121,51 @@ def schedule_follow_ups(contact_id: int, stage: int, stage_entered_at: datetime)
         db.close()
 
 
+def schedule_follow_ups_for_stage_id(contact_id: int, stage_id: int, stage_entered_at: datetime) -> None:
+    """
+    DB-driven follow-up scheduler keyed by stage_id (replaces the hardcoded
+    _SCHEDULE dict for new code paths). Reads FollowUpTemplate rows for the
+    given stage_id and schedules one FollowUpQueue row per template using
+    its hours_offset. Cancels any existing pending follow-ups for the contact first.
+    """
+    db = SessionLocal()
+    try:
+        from app.database.models import PipelineStage, FollowUpTemplate
+        stage = db.query(PipelineStage).filter(PipelineStage.id == stage_id).first()
+        if not stage:
+            return
+        templates = (
+            db.query(FollowUpTemplate)
+            .filter(FollowUpTemplate.stage_id == stage_id)
+            .order_by(FollowUpTemplate.sequence_num)
+            .all()
+        )
+
+        db.query(FollowUpQueue).filter(
+            FollowUpQueue.contact_id == contact_id,
+            FollowUpQueue.status == "pending",
+        ).update({"status": "cancelled"})
+
+        for tmpl in templates:
+            fire_at = _bump_to_window(stage_entered_at + timedelta(hours=float(tmpl.hours_offset or 24)))
+            db.add(FollowUpQueue(
+                contact_id=contact_id,
+                stage=stage.position,        # legacy int mirror
+                stage_id=stage.id,
+                sequence_num=tmpl.sequence_num,
+                scheduled_at=fire_at,
+                status="pending",
+                template_key=f"stage{stage.position}_seq{tmpl.sequence_num}",
+            ))
+        db.commit()
+        logger.info(
+            "Scheduled %d follow-up(s) for contact_id=%s stage_id=%s",
+            len(templates), contact_id, stage_id,
+        )
+    finally:
+        db.close()
+
+
 def cancel_follow_ups(contact_id: int) -> None:
     """Cancel all pending follow-ups for a contact (called when they reply)."""
     db = SessionLocal()
