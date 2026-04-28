@@ -437,35 +437,6 @@ def _seed_settings() -> None:
 # Public API
 # ---------------------------------------------------------------------------
 
-def _sync_classifications() -> None:
-    """
-    Re-classify all contacts based on current stage and flags.
-    Runs on startup to fix any contacts whose classification drifted.
-    Skips noise and affiliate contacts (those are explicitly set).
-    """
-    db = SessionLocal()
-    try:
-        from app.database.models import Contact as C
-        contacts = db.query(C).filter(
-            C.classification.notin_(["noise", "affiliate"])
-        ).all()
-        for contact in contacts:
-            stage = contact.current_stage or 1
-            if contact.deposit_confirmed or stage >= 7:
-                new_cls = "vip"
-            elif stage >= 2:
-                new_cls = "warm_lead"
-            else:
-                new_cls = "new_lead"
-            if contact.classification != new_cls:
-                contact.classification = new_cls
-        db.commit()
-    except Exception:
-        db.rollback()
-    finally:
-        db.close()
-
-
 def init_db() -> None:
     """
     Migrate schema and initialise tables on startup.
@@ -487,10 +458,6 @@ def init_db() -> None:
         _seed_organization()
         _seed_workspace()
         _seed_settings()
-    except Exception:
-        pass
-    try:
-        _sync_classifications()
     except Exception:
         pass
     try:

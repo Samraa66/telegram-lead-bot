@@ -1520,9 +1520,12 @@ def list_campaigns(
     for c in campaigns:
         leads = db.query(Contact).filter(Contact.source == c.source_tag).count()
         deposits = (
-            db.query(StageHistory)
-            .join(Contact, Contact.id == StageHistory.contact_id)
-            .filter(Contact.source == c.source_tag, StageHistory.to_stage == 7)
+            db.query(Contact)
+            .filter(
+                Contact.source == c.source_tag,
+                Contact.workspace_id == workspace_id,
+                Contact.deposit_status == "deposited",
+            )
             .count()
         )
         link = f"https://t.me/{BOT_USERNAME}?start={c.source_tag}" if BOT_USERNAME else None
@@ -2492,9 +2495,11 @@ def affiliate_me(
         .scalar() or 0
     )
     deposits = (
-        db.query(func.count(func.distinct(StageHistory.contact_id)))
-        .join(Contact, Contact.id == StageHistory.contact_id)
-        .filter(Contact.source == aff.referral_tag, StageHistory.to_stage == 7)
+        db.query(func.count(Contact.id))
+        .filter(
+            Contact.source == aff.referral_tag,
+            Contact.deposit_status == "deposited",
+        )
         .scalar() or 0
     )
     conversion_rate = round(deposits / leads * 100, 1) if leads > 0 else 0.0
