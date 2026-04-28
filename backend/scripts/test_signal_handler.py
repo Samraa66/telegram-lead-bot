@@ -51,6 +51,20 @@ async def run():
     check("source_chat_id passed through", captured.get("src") == "-1009999")
     check("message_id passed through", captured.get("msg") == 777)
 
+    print("\nTest 3: handler registration is gated on workspace_role + source_channel_id")
+    from app.database.models import Workspace
+
+    def should_register(ws):
+        return bool(ws and ws.workspace_role == "owner" and ws.source_channel_id)
+
+    check("owner + source set → register", should_register(
+        Workspace(workspace_role="owner", source_channel_id="-100123")) is True)
+    check("affiliate + source set → no register", should_register(
+        Workspace(workspace_role="affiliate", source_channel_id="-100123")) is False)
+    check("owner + no source → no register", should_register(
+        Workspace(workspace_role="owner", source_channel_id=None)) is False)
+    check("None workspace → no register", should_register(None) is False)
+
 
 if __name__ == "__main__":
     print("Signal handler tests")

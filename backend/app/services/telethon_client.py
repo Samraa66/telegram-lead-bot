@@ -28,7 +28,7 @@ from telethon.sessions import StringSession
 from telethon.tl.types import User
 
 from app.database import SessionLocal
-from app.database.models import Contact, Message
+from app.database.models import Contact, Message, Workspace
 from app.services.forwarding import copy_signal_for_org
 from app.services.classifier import classify_contact
 from app.services.scheduler import cancel_follow_ups
@@ -293,6 +293,32 @@ async def start_workspace_client(
     )
     client.add_event_handler(_make_inbound_handler(workspace_id), events.NewMessage(incoming=True))
     client.add_event_handler(_make_outgoing_handler(workspace_id), events.NewMessage(outgoing=True))
+
+    # Signal handler — only for org-owner workspaces with a source channel set.
+    # Allows tenants to forward their own signal feed to their own affiliates.
+    db = SessionLocal()
+    try:
+        ws = db.query(Workspace).filter(Workspace.id == workspace_id).first()
+    finally:
+        db.close()
+
+    if ws and ws.workspace_role == "owner" and ws.source_channel_id:
+        try:
+            source_id_int = int(ws.source_channel_id)
+        except (TypeError, ValueError):
+            logger.warning(
+                "ws=%s source_channel_id=%r is not a valid int; signal handler not registered",
+                workspace_id, ws.source_channel_id,
+            )
+        else:
+            client.add_event_handler(
+                _make_signal_handler(workspace_id),
+                events.NewMessage(chats=[source_id_int]),
+            )
+            logger.info(
+                "Registered signal handler for ws=%s on source=%s",
+                workspace_id, source_id_int,
+            )
 
     await client.connect()
     if not await client.is_user_authorized():
