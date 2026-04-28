@@ -29,6 +29,7 @@ from telethon.tl.types import User
 
 from app.database import SessionLocal
 from app.database.models import Contact, Message
+from app.services.forwarding import copy_signal_for_org
 from app.services.classifier import classify_contact
 from app.services.scheduler import cancel_follow_ups
 
@@ -177,6 +178,39 @@ def _make_inbound_handler(workspace_id: int):
             db.close()
 
     return _on_new_message
+
+
+# ---------------------------------------------------------------------------
+# Signal handler — listens to the workspace's source channel and forwards
+# ---------------------------------------------------------------------------
+
+def _make_signal_handler(workspace_id: int):
+    """
+    Closure that fires on new messages in the workspace's source channel.
+    Calls copy_signal_for_org which uses the workspace's own bot token
+    and routes to that workspace's affiliates only.
+    """
+    async def handler(event):
+        source_chat_id = str(event.chat_id)
+        message_id = event.message.id
+
+        db = SessionLocal()
+        try:
+            copy_signal_for_org(
+                workspace_id=workspace_id,
+                source_chat_id=source_chat_id,
+                message_id=message_id,
+                db=db,
+            )
+        except Exception as e:
+            logger.exception(
+                "Signal handler failed: ws=%s msg_id=%s: %s",
+                workspace_id, message_id, e,
+            )
+        finally:
+            db.close()
+
+    return handler
 
 
 # ---------------------------------------------------------------------------
