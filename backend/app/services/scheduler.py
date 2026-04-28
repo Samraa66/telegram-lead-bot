@@ -5,16 +5,10 @@ Fires follow-up messages only within 09:00–22:00 Dubai time (UTC+4).
 If a scheduled time falls outside that window it is bumped forward to
 09:00 Dubai the same day (if before window) or 09:00 next day (if after).
 
-Per-stage follow-up sequences (hours after the contact entered that stage):
-
-  stage 1:  +24h, +72h                     → then cold (no more follow-ups)
-  stage 2:  +24h                            → then cold
-  stage 3:  +48h, +120h                     → then weekly (+168h repeating)
-  stage 4:  +6h, +24h, +48h                → then revert to stage 3
-  stage 5:  +6h, +24h                       → then revert to stage 3
-  stage 6:  +6h, +24h                       → then revert to stage 3
-  stage 7:  +1h, +72h, +168h               → then monthly (+720h repeating)
-  stage 8:  (no follow-ups — VIP confirmed)
+Timing and end-actions are driven entirely from DB rows:
+  - FollowUpTemplate.hours_offset  — when to fire each follow-up
+  - PipelineStage.end_action       — what to do after the last sequence ("cold" | "revert" | "weekly" | "monthly")
+  - PipelineStage.revert_to_stage_id — target stage when end_action == "revert"
 
 Follow-ups are cancelled immediately when the lead sends an inbound message.
 """
@@ -27,6 +21,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from apscheduler.schedulers.background import BackgroundScheduler
+from sqlalchemy import func
 
 from app.database import SessionLocal
 from app.database.models import Contact, FollowUpQueue, FollowUpTemplate, Message, StageHistory
@@ -37,19 +32,6 @@ logger = logging.getLogger(__name__)
 DUBAI_TZ = timezone(timedelta(hours=4))
 WINDOW_OPEN = 9    # 09:00 Dubai
 WINDOW_CLOSE = 22  # 22:00 Dubai
-
-# (sequence_num, hours_offset, end_action)
-# end_action: "cold" | "revert3" | "weekly" | "monthly"
-_SCHEDULE: dict[int, list[tuple[int, float, str]]] = {
-    1: [(1, 24.0, "cold"), (2, 72.0, "cold")],
-    2: [(1, 24.0, "cold")],
-    3: [(1, 48.0, "weekly"), (2, 120.0, "weekly")],
-    4: [(1, 6.0, "revert3"), (2, 24.0, "revert3"), (3, 48.0, "revert3")],
-    5: [(1, 6.0, "revert3"), (2, 24.0, "revert3")],
-    6: [(1, 6.0, "revert3"), (2, 24.0, "revert3")],
-    7: [(1, 1.0, "monthly"), (2, 72.0, "monthly"), (3, 168.0, "monthly")],
-    8: [],
-}
 
 
 # ---------------------------------------------------------------------------
@@ -86,39 +68,10 @@ def _bump_to_window(utc_dt: datetime) -> datetime:
 # Public: schedule / cancel
 # ---------------------------------------------------------------------------
 
-def schedule_follow_ups(contact_id: int, stage: int, stage_entered_at: datetime) -> None:
-    """
-    Create FollowUpQueue rows for a contact entering a given stage.
-    Cancels any existing pending follow-ups for the contact first.
-    """
-    db = SessionLocal()
-    try:
-        # Cancel stale pending follow-ups from the previous stage
-        db.query(FollowUpQueue).filter(
-            FollowUpQueue.contact_id == contact_id,
-            FollowUpQueue.status == "pending",
-        ).update({"status": "cancelled"})
-
-        sequence = _SCHEDULE.get(stage, [])
-        for seq_num, hours, _action in sequence:
-            fire_at = _bump_to_window(stage_entered_at + timedelta(hours=hours))
-            db.add(
-                FollowUpQueue(
-                    contact_id=contact_id,
-                    stage=stage,
-                    sequence_num=seq_num,
-                    scheduled_at=fire_at,
-                    status="pending",
-                    template_key=f"stage{stage}_seq{seq_num}",
-                )
-            )
-        db.commit()
-        logger.info(
-            "Scheduled %d follow-up(s) for contact_id=%s stage=%s",
-            len(sequence), contact_id, stage,
-        )
-    finally:
-        db.close()
+def schedule_follow_ups(contact_id: int, stage_or_stage_id: int, stage_entered_at: datetime) -> None:
+    """Legacy: accepts a stage_id (callers post-Task 4.1 always pass stage_id).
+    Forwards to schedule_follow_ups_for_stage_id."""
+    schedule_follow_ups_for_stage_id(contact_id, stage_or_stage_id, stage_entered_at)
 
 
 def schedule_follow_ups_for_stage_id(contact_id: int, stage_id: int, stage_entered_at: datetime) -> None:
@@ -192,12 +145,12 @@ def cancel_follow_ups(contact_id: int) -> None:
 # Scheduler job
 # ---------------------------------------------------------------------------
 
-def _get_template_text(db, stage: int, seq_num: int, workspace_id: int = 1) -> Optional[str]:
+def _get_template_text(db, stage_id: int, seq_num: int, workspace_id: int = 1) -> Optional[str]:
     tmpl = (
         db.query(FollowUpTemplate)
         .filter(
             FollowUpTemplate.workspace_id == workspace_id,
-            FollowUpTemplate.stage == stage,
+            FollowUpTemplate.stage_id == stage_id,
             FollowUpTemplate.sequence_num == seq_num,
         )
         .first()
@@ -205,77 +158,64 @@ def _get_template_text(db, stage: int, seq_num: int, workspace_id: int = 1) -> O
     return tmpl.message_text if tmpl else None
 
 
-def _end_action_for(stage: int, seq_num: int) -> str:
-    """Return the end_action string for a given stage + sequence_num."""
-    for sn, _h, action in _SCHEDULE.get(stage, []):
-        if sn == seq_num:
-            return action
-    return "cold"
+def _end_action_for_stage_id(db, stage_id: int) -> tuple[str, Optional[int]]:
+    """Return (end_action, revert_to_stage_id) for a given stage_id."""
+    from app.database.models import PipelineStage
+    stage = db.query(PipelineStage).filter(PipelineStage.id == stage_id).first()
+    if not stage:
+        return "cold", None
+    return (stage.end_action or "cold"), stage.revert_to_stage_id
 
 
-def _handle_post_sequence(db, contact: Contact, action: str, from_stage: int) -> None:
+def _handle_post_sequence(db, contact: Contact, action: str, from_stage_id: int,
+                          revert_to_stage_id: Optional[int]) -> None:
     """Execute the end-of-sequence action after the last follow-up fires."""
+    from app.database.models import PipelineStage
     now = datetime.utcnow()
 
     if action == "cold":
-        logger.info("Contact %s cold after stage %s sequence", contact.id, from_stage)
+        logger.info("Contact %s cold after stage_id=%s", contact.id, from_stage_id)
+        return
 
-    elif action == "revert3":
-        old_stage = contact.current_stage
-        contact.current_stage = 3
+    if action == "revert" and revert_to_stage_id:
+        revert_stage = db.query(PipelineStage).filter(PipelineStage.id == revert_to_stage_id).first()
+        if not revert_stage:
+            logger.warning("revert target %s missing for contact %s", revert_to_stage_id, contact.id)
+            return
+        old_stage_id = contact.current_stage_id
+        contact.current_stage_id = revert_stage.id
+        contact.current_stage = revert_stage.position  # legacy mirror
         contact.stage_entered_at = now
-        db.add(
-            StageHistory(
-                contact_id=contact.id,
-                from_stage=old_stage,
-                to_stage=3,
-                moved_at=now,
-                moved_by="system",
-                trigger_keyword="follow_up_revert",
-            )
-        )
+        db.add(StageHistory(
+            contact_id=contact.id,
+            from_stage_id=old_stage_id, to_stage_id=revert_stage.id,
+            from_stage=None, to_stage=revert_stage.position,
+            moved_at=now, moved_by="system",
+            trigger_keyword="follow_up_revert",
+        ))
         contact.classification = classify_contact(db, contact.id, contact.source, existing=contact)
         db.commit()
-        schedule_follow_ups(contact.id, 3, now)
-        logger.info("Reverted contact %s to stage 3", contact.id)
+        schedule_follow_ups_for_stage_id(contact.id, revert_stage.id, now)
+        logger.info("Reverted contact %s to stage_id=%s position=%s",
+                    contact.id, revert_stage.id, revert_stage.position)
+        return
 
-    elif action == "weekly":
-        fire_at = _bump_to_window(now + timedelta(hours=168))
+    if action in ("weekly", "monthly"):
+        hours = 168 if action == "weekly" else 720
+        fire_at = _bump_to_window(now + timedelta(hours=hours))
         seq_next = (
             db.query(FollowUpQueue)
-            .filter(FollowUpQueue.contact_id == contact.id, FollowUpQueue.stage == from_stage)
+            .filter(FollowUpQueue.contact_id == contact.id, FollowUpQueue.stage_id == from_stage_id)
             .count()
         ) + 1
-        db.add(
-            FollowUpQueue(
-                contact_id=contact.id,
-                stage=from_stage,
-                sequence_num=seq_next,
-                scheduled_at=fire_at,
-                status="pending",
-                template_key=f"stage{from_stage}_seq{seq_next}",
-            )
-        )
+        db.add(FollowUpQueue(
+            contact_id=contact.id,
+            stage_id=from_stage_id, sequence_num=seq_next,
+            scheduled_at=fire_at, status="pending",
+            template_key=f"recurring_{action}_seq{seq_next}",
+        ))
         db.commit()
-
-    elif action == "monthly":
-        fire_at = _bump_to_window(now + timedelta(hours=720))
-        seq_next = (
-            db.query(FollowUpQueue)
-            .filter(FollowUpQueue.contact_id == contact.id, FollowUpQueue.stage == from_stage)
-            .count()
-        ) + 1
-        db.add(
-            FollowUpQueue(
-                contact_id=contact.id,
-                stage=from_stage,
-                sequence_num=seq_next,
-                scheduled_at=fire_at,
-                status="pending",
-                template_key=f"stage{from_stage}_seq{seq_next}",
-            )
-        )
-        db.commit()
+        return
 
 
 _SEND_DELAY_SECONDS = 3      # pause between each follow-up send
@@ -329,11 +269,11 @@ def _fire_pending_follow_ups() -> None:
                 continue
 
             ws_id: int = getattr(contact, "workspace_id", 1) or 1
-            text = _get_template_text(db, fup.stage, fup.sequence_num, ws_id)
+            text = _get_template_text(db, fup.stage_id, fup.sequence_num, ws_id) if fup.stage_id else None
             if text is None:
                 logger.warning(
-                    "No template for stage=%s seq=%s ws=%s — skipping follow-up id=%s",
-                    fup.stage, fup.sequence_num, ws_id, fup.id,
+                    "No template for stage_id=%s seq=%s ws=%s — skipping follow-up id=%s",
+                    fup.stage_id, fup.sequence_num, ws_id, fup.id,
                 )
                 continue
 
@@ -369,11 +309,14 @@ def _fire_pending_follow_ups() -> None:
                 db.commit()
 
                 # Check if this was the last in the sequence → run end action
-                stage_seq = _SCHEDULE.get(fup.stage, [])
-                max_seq = max((sn for sn, _, _ in stage_seq), default=0)
-                if fup.sequence_num >= max_seq and max_seq > 0:
-                    action = _end_action_for(fup.stage, max_seq)
-                    _handle_post_sequence(db, contact, action, fup.stage)
+                last_seq = (
+                    db.query(func.max(FollowUpTemplate.sequence_num))
+                    .filter(FollowUpTemplate.stage_id == fup.stage_id)
+                    .scalar()
+                ) or 0
+                if fup.sequence_num >= last_seq and last_seq > 0:
+                    action, revert_to = _end_action_for_stage_id(db, fup.stage_id)
+                    _handle_post_sequence(db, contact, action, fup.stage_id, revert_to)
             else:
                 logger.warning("Telegram send failed for follow-up id=%s", fup.id)
     finally:
