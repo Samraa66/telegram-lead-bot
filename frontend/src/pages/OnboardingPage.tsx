@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Check, Bot, Smartphone, Radio, ArrowRight, Loader2, Eye, EyeOff, ListChecks, Rocket, MessageSquare, Sparkles } from "lucide-react";
-import { markOnboardingComplete, getToken, clearAuth } from "../api/auth";
+import { markOnboardingComplete, getToken, clearAuth, getStoredUser } from "../api/auth";
 import { cn } from "../lib/utils";
 
 const API_BASE = import.meta.env.DEV
@@ -257,7 +257,92 @@ function StepTelethon({ onDone, onSkip }: { onDone: () => void; onSkip: () => vo
 
 type DetectedChannel = { id: number; chat_id: string; title: string | null };
 
+// Step 3 — branched by org_role
 function StepChannel({ onDone, onSkip }: { onDone: () => void; onSkip: () => void }) {
+  const user = getStoredUser();
+  if (user?.org_role === "workspace_owner") {
+    return <StepSourceChannel onDone={onDone} onSkip={onSkip} />;
+  }
+  return <StepVipChannel onDone={onDone} onSkip={onSkip} />;
+}
+
+// For workspace owners (org root) — paste source channel ID
+function StepSourceChannel({ onDone, onSkip }: { onDone: () => void; onSkip: () => void }) {
+  const [channelId, setChannelId] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleSubmit() {
+    if (!channelId.trim()) return;
+    setLoading(true); setError(null);
+    try {
+      await api("PATCH", "/workspace/me/source-channel", { source_channel_id: channelId.trim() });
+      onDone();
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="space-y-5">
+      <div>
+        <h2 className="text-lg font-bold text-foreground">Connect your Signal Source channel</h2>
+        <p className="text-sm text-muted-foreground mt-1">
+          The Telegram channel that posts your trade signals. Each new post here will be copied
+          to every active affiliate's VIP channel automatically. Your Telegram user must be a
+          member or admin of this channel.
+        </p>
+      </div>
+
+      <div className="surface-card p-4 space-y-2 text-xs text-muted-foreground">
+        <p className="eyebrow text-foreground">How it works</p>
+        <ol className="list-decimal list-inside space-y-1 leading-relaxed">
+          <li>Open the channel in Telegram and copy its ID (starts with <code>-100</code>) or @username</li>
+          <li>Paste it below and save</li>
+          <li>Every new post will be mirrored into your affiliates' channels</li>
+        </ol>
+      </div>
+
+      <div className="space-y-1.5">
+        <label className="eyebrow">Source channel ID or @username</label>
+        <input
+          value={channelId}
+          onChange={(e) => setChannelId(e.target.value)}
+          placeholder="-1001234567890 or @yoursignals"
+          className="w-full px-3 py-2.5 rounded-lg border border-border bg-secondary/40 text-sm"
+        />
+      </div>
+
+      {error && <p className="text-xs text-destructive">{error}</p>}
+
+      <div className="flex gap-2">
+        <button
+          type="button"
+          disabled={loading || !channelId.trim()}
+          onClick={handleSubmit}
+          className="flex-1 py-2.5 rounded-lg bg-primary text-primary-foreground font-medium text-sm disabled:opacity-50"
+        >
+          {loading ? "Saving…" : "Save and continue"}
+        </button>
+        <button
+          type="button"
+          onClick={onSkip}
+          className="px-4 py-2.5 rounded-lg border border-border text-sm"
+        >
+          Skip
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// For sub-affiliates — link their VIP channel
+function StepVipChannel({ onDone, onSkip }: { onDone: () => void; onSkip: () => void }) {
+  const parentBotUsername = getStoredUser()?.parent_bot_username;
+  const botLabel = parentBotUsername ? `@${parentBotUsername}` : "your sponsor's bot";
+
   const [channelId, setChannelId] = useState("");
   const [detected, setDetected] = useState<DetectedChannel[]>([]);
   const [detecting, setDetecting] = useState(false);
@@ -309,7 +394,7 @@ function StepChannel({ onDone, onSkip }: { onDone: () => void; onSkip: () => voi
         <ol className="list-decimal list-inside space-y-1 leading-relaxed">
           <li>Open your private Signals channel (the one your paid members will join)</li>
           <li>Go to <span className="text-foreground font-medium">Channel settings → Administrators → Add admin</span></li>
-          <li>Search for <span className="font-medium text-foreground">the bot you created in step 1</span> and add it as admin (with permission to post messages)</li>
+          <li>Search for <span className="font-medium text-foreground">{botLabel}</span> and add it as admin (with permission to post messages)</li>
           <li>Come back here and click <span className="font-medium text-foreground">Detect channel</span> below</li>
         </ol>
       </div>
