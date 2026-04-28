@@ -42,7 +42,18 @@ def get_contacts(db: Session, workspace_id: int = 1, include_noise: bool = False
     )
     if not include_noise:
         q = q.filter(User.classification != "noise")
-    q = q.filter(User.current_stage < 7)
+        # Exclude VIP/deposited contacts from the regular leads list
+        from app.database.models import Workspace
+        ws = db.query(Workspace).filter(Workspace.id == workspace_id).first()
+        exclude_ids = []
+        if ws:
+            if ws.deposited_stage_id:
+                exclude_ids.append(ws.deposited_stage_id)
+            if ws.member_stage_id:
+                exclude_ids.append(ws.member_stage_id)
+        if exclude_ids:
+            q = q.filter(~User.current_stage_id.in_(exclude_ids))
+        q = q.filter(User.deposit_status != "deposited")
     rows = q.all()
 
     result: List[Dict[str, Any]] = []

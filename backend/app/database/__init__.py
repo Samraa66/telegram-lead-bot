@@ -9,12 +9,11 @@ Migration order in init_db():
   2. create_all() — creates any missing tables (contacts, follow_up_queue,
      follow_up_templates, stage_history).
   3. _ensure_columns() — adds new columns to existing installs without dropping data.
-  4. _seed_templates() — populates follow_up_templates on first run.
+  4. seed_workspace_defaults(1, db) — seeds the default pipeline template for workspace 1.
 """
 
 import os
 from pathlib import Path
-from typing import Iterable, Tuple
 
 from dotenv import load_dotenv
 from sqlalchemy import create_engine, event, inspect, text
@@ -25,7 +24,7 @@ load_dotenv(Path(__file__).parent.parent.parent / ".env")
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from .models import Base, FollowUpTemplate, Organization, Workspace, StageKeyword, StageLabel, QuickReply, TeamMember
+from .models import Base, Organization, Workspace
 
 # Use DATABASE_URL if set (PostgreSQL); otherwise SQLite for local dev
 _db_url = os.getenv("DATABASE_URL", "").strip()
@@ -138,6 +137,14 @@ def _ensure_columns() -> None:
             ("last_name", "TEXT"),
             ("activity_status", "TEXT"),
             ("workspace_id", "INTEGER DEFAULT 1"),
+            # Task 1.5 columns
+            ("current_stage_id", "INTEGER"),
+            ("deposit_status", "TEXT NOT NULL DEFAULT 'none'"),
+            ("deposited_at", "TIMESTAMP"),
+            ("deposit_amount", "REAL"),
+            ("deposit_currency", "TEXT"),
+            ("deposit_source", "TEXT"),
+            ("puprime_client_id", "TEXT"),
         ]
     else:
         contacts_needed = [
@@ -154,6 +161,14 @@ def _ensure_columns() -> None:
             ("last_name", "VARCHAR(255)"),
             ("activity_status", "VARCHAR(20)"),
             ("workspace_id", "INTEGER DEFAULT 1"),
+            # Task 1.5 columns
+            ("current_stage_id", "INTEGER"),
+            ("deposit_status", "VARCHAR(20) NOT NULL DEFAULT 'none'"),
+            ("deposited_at", "TIMESTAMP"),
+            ("deposit_amount", "NUMERIC(18,4)"),
+            ("deposit_currency", "VARCHAR(8)"),
+            ("deposit_source", "VARCHAR(20)"),
+            ("puprime_client_id", "VARCHAR(255)"),
         ]
 
     messages_needed = [
@@ -179,6 +194,14 @@ def _ensure_columns() -> None:
                 _add_column("follow_up_templates", "workspace_id", "INTEGER DEFAULT 1")
             else:
                 _add_column("follow_up_templates", "workspace_id", "INTEGER DEFAULT 1")
+        # Task 1.5 columns
+        fut_needed: list[tuple[str, str]] = [
+            ("stage_id", "INTEGER"),
+            ("hours_offset", "REAL DEFAULT 24" if dialect == "sqlite" else "DOUBLE PRECISION DEFAULT 24"),
+        ]
+        for col, ddl in fut_needed:
+            if col not in existing_fut:
+                _add_column("follow_up_templates", col, ddl)
 
     if _table_exists("workspaces"):
         existing_ws = _existing_columns("workspaces")
@@ -198,6 +221,18 @@ def _ensure_columns() -> None:
             ("landing_page_url", "TEXT"),
             ("source_channel_id", "TEXT"),
             ("destination_channel_ids", "TEXT"),
+            # Task 1.5 columns
+            ("niche", "TEXT"),
+            ("language", "TEXT"),
+            ("timezone", "TEXT"),
+            ("country", "TEXT"),
+            ("main_channel_url", "TEXT"),
+            ("sales_telegram_username", "TEXT"),
+            ("deposited_stage_id", "INTEGER"),
+            ("member_stage_id", "INTEGER"),
+            ("conversion_stage_id", "INTEGER"),
+            ("vip_marker_phrases", "TEXT"),
+            ("deposit_webhook_secret", "TEXT"),
         ]
         for col, ddl in ws_needed:
             if col not in existing_ws:
@@ -229,6 +264,55 @@ def _ensure_columns() -> None:
         if _table_exists(tbl):
             if "workspace_id" not in _existing_columns(tbl):
                 _add_column(tbl, "workspace_id", "INTEGER DEFAULT 1")
+
+    # Task 1.5: stage_keywords — target_stage_id
+    if _table_exists("stage_keywords"):
+        existing_sk = _existing_columns("stage_keywords")
+        sk_needed: list[tuple[str, str]] = [
+            ("target_stage_id", "INTEGER"),
+        ]
+        for col, ddl in sk_needed:
+            if col not in existing_sk:
+                _add_column("stage_keywords", col, ddl)
+
+    # Task 1.5: quick_replies — stage_id
+    if _table_exists("quick_replies"):
+        existing_qr = _existing_columns("quick_replies")
+        qr_needed: list[tuple[str, str]] = [
+            ("stage_id", "INTEGER"),
+        ]
+        for col, ddl in qr_needed:
+            if col not in existing_qr:
+                _add_column("quick_replies", col, ddl)
+
+    # Task 1.5: stage_history — from_stage_id, to_stage_id
+    if _table_exists("stage_history"):
+        existing_sh = _existing_columns("stage_history")
+        sh_needed: list[tuple[str, str]] = [
+            ("from_stage_id", "INTEGER"),
+            ("to_stage_id", "INTEGER"),
+        ]
+        for col, ddl in sh_needed:
+            if col not in existing_sh:
+                _add_column("stage_history", col, ddl)
+
+    # Task 1.5: follow_up_queue — stage_id
+    if _table_exists("follow_up_queue"):
+        existing_fuq = _existing_columns("follow_up_queue")
+        fuq_needed: list[tuple[str, str]] = [
+            ("stage_id", "INTEGER"),
+        ]
+        for col, ddl in fuq_needed:
+            if col not in existing_fuq:
+                _add_column("follow_up_queue", col, ddl)
+
+    # pipeline_stages — placeholder guard for future column additions
+    if _table_exists("pipeline_stages"):
+        existing_ps = _existing_columns("pipeline_stages")
+        ps_needed: list[tuple[str, str]] = []  # populated by future tasks
+        for col, ddl in ps_needed:
+            if col not in existing_ps:
+                _add_column("pipeline_stages", col, ddl)
 
     if _table_exists("affiliates"):
         if dialect == "sqlite":
@@ -286,108 +370,14 @@ def _ensure_columns() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Template seeding
-# ---------------------------------------------------------------------------
-
-_TEMPLATE_SEEDS = [
-    (1, 1, "Hey, just checking in - happy to answer any questions!"),
-    (1, 2, "Still here whenever you're ready. No pressure at all."),
-    (2, 1, "Did you get a chance to think about your trading experience?"),
-    (3, 1, "Hey, wanted to follow up - is there anything holding you back?"),
-    (3, 2, "Still thinking it over? I'm here whenever you're ready."),
-    (4, 1, "Quick check - did you manage to open your PuPrime account?"),
-    (4, 2, "The account only takes a few minutes - want me to walk you through it?"),
-    (4, 3, "Last nudge on the account - let me know if you hit any snags."),
-    (5, 1, "You're almost there - any issues with the setup?"),
-    (5, 2, "Let me know if you need help finishing the setup."),
-    (6, 1, "How's the setup going? Happy to answer any questions."),
-    (6, 2, "Just making sure everything went smoothly - any questions?"),
-    (7, 1, "Welcome again! Let me know if you need anything."),
-    (7, 2, "How are you finding the VIP signals so far?"),
-    (7, 3, "Checking in - really happy to have you in the room!"),
-]
-
-
-def _seed_templates() -> None:
-    """Populate follow_up_templates with placeholder texts if the table is empty."""
-    db = SessionLocal()
-    try:
-        if db.query(FollowUpTemplate).count() > 0:
-            return
-        for stage, seq, text_body in _TEMPLATE_SEEDS:
-            db.add(FollowUpTemplate(workspace_id=1, stage=stage, sequence_num=seq, message_text=text_body))
-        db.commit()
-    finally:
-        db.close()
-
-
-# ---------------------------------------------------------------------------
 # Settings seeding (workspace 1 + hardcoded defaults)
 # ---------------------------------------------------------------------------
 
-_KEYWORD_SEEDS: list[tuple[str, int]] = [
-    ("any experience trading", 2),
-    ("is there something specific holding you back", 3),
-    ("your link to open your free puprime account", 4),
-    ("the hard part done", 5),
-    ("exactly how to get set up", 6),
-    ("welcome to the vip room", 7),
-    ("really happy to have you here", 8),
-]
-
-_STAGE_LABEL_SEEDS: list[tuple[int, str]] = [
-    (1, "New Lead"),
-    (2, "Qualified"),
-    (3, "Hesitant / Ghosting"),
-    (4, "Link Sent"),
-    (5, "Account Created"),
-    (6, "Deposit Intent"),
-    (7, "Deposited"),
-    (8, "VIP Member"),
-]
-
-_QUICK_REPLY_SEEDS: list[tuple[int, str, str]] = [
-    (1, "Qualify",      "Hey! Quick question — do you have any experience trading, or is this something new for you? 😊"),
-    (1, "Re-engage",    "Hey, hope you're well! Just circling back — do you have any experience trading before?"),
-    (2, "Objection",    "Totally understand! Is there something specific holding you back from getting started?"),
-    (2, "Probe",        "Makes sense. Is there something specific holding you back right now that I can help with?"),
-    (3, "Send link",    "Here's your link to open your free PuPrime account — takes about 2 minutes! 👇"),
-    (3, "Re-send link", "Sending over your link to open your free PuPrime account again in case you missed it 🔗"),
-    (4, "Confirm done", "Amazing — looks like you've got the hard part done! 🎉 Let me know once you're in and I'll sort your access."),
-    (4, "Check in",     "Hey! Just checking in — is the hard part done with the account setup? Happy to help if you're stuck!"),
-    (5, "Setup guide",  "Perfect! Let me walk you through exactly how to get set up with the signals 📊"),
-    (5, "Next steps",   "Great news! I'll show you exactly how to get set up from here — just follow these steps 👇"),
-    (6, "VIP access",   "Welcome to the VIP room! You're officially in 🔥 Here's everything you need to know to get started..."),
-    (6, "VIP entry",    "Welcome to the vip room — so pumped to have you here! Let's get you fully set up 🚀"),
-    (7, "Welcome",      "Really happy to have you here with us! Here's what to expect going forward 🙌"),
-    (7, "Onboard",      "I'm really happy to have you here — let's make sure you're getting the most out of everything!"),
-]
-
 
 def seed_workspace_defaults(workspace_id: int, db) -> None:
-    """
-    Seed keywords, stage labels, quick replies, and follow-up templates for a workspace.
-    Safe to call on existing workspaces — skips tables that already have data.
-    """
-    if db.query(StageKeyword).filter(StageKeyword.workspace_id == workspace_id).count() == 0:
-        for kw, stage in _KEYWORD_SEEDS:
-            db.add(StageKeyword(workspace_id=workspace_id, keyword=kw, target_stage=stage, is_active=True))
-        db.commit()
-
-    if db.query(StageLabel).filter(StageLabel.workspace_id == workspace_id).count() == 0:
-        for stage_num, label in _STAGE_LABEL_SEEDS:
-            db.add(StageLabel(workspace_id=workspace_id, stage_num=stage_num, label=label))
-        db.commit()
-
-    if db.query(QuickReply).filter(QuickReply.workspace_id == workspace_id).count() == 0:
-        for i, (stage_num, label, text) in enumerate(_QUICK_REPLY_SEEDS):
-            db.add(QuickReply(workspace_id=workspace_id, stage_num=stage_num, label=label, text=text, sort_order=i))
-        db.commit()
-
-    if db.query(FollowUpTemplate).filter(FollowUpTemplate.workspace_id == workspace_id).count() == 0:
-        for stage, seq, text_body in _TEMPLATE_SEEDS:
-            db.add(FollowUpTemplate(workspace_id=workspace_id, stage=stage, sequence_num=seq, message_text=text_body))
-        db.commit()
+    """Delegate to services.pipeline_seed.seed_default_pipeline."""
+    from app.services.pipeline_seed import seed_default_pipeline
+    seed_default_pipeline(workspace_id, db)
 
 
 def _seed_organization() -> None:
@@ -447,69 +437,6 @@ def _seed_settings() -> None:
 # Public API
 # ---------------------------------------------------------------------------
 
-def _promote_vip_names() -> None:
-    """
-    One-time migration: contacts whose name contains 'VIP' (case-insensitive)
-    but are below stage 7 are promoted to stage 7.
-    """
-    from app.database.models import Contact, StageHistory
-    db = SessionLocal()
-    try:
-        contacts = db.query(Contact).filter(Contact.current_stage < 7).all()
-        now = __import__("datetime").datetime.utcnow()
-        promoted = 0
-        for c in contacts:
-            full = f"{c.first_name or ''} {c.last_name or ''}".lower()
-            if "vip" in full:
-                old_stage = c.current_stage or 1
-                c.current_stage = 7
-                c.stage_entered_at = now
-                db.add(StageHistory(
-                    contact_id=c.id,
-                    from_stage=old_stage,
-                    to_stage=7,
-                    moved_at=now,
-                    moved_by="system",
-                    trigger_keyword="vip_name_detected",
-                ))
-                promoted += 1
-        if promoted:
-            db.commit()
-    except Exception:
-        db.rollback()
-    finally:
-        db.close()
-
-
-def _sync_classifications() -> None:
-    """
-    Re-classify all contacts based on current stage and flags.
-    Runs on startup to fix any contacts whose classification drifted.
-    Skips noise and affiliate contacts (those are explicitly set).
-    """
-    db = SessionLocal()
-    try:
-        from app.database.models import Contact as C
-        contacts = db.query(C).filter(
-            C.classification.notin_(["noise", "affiliate"])
-        ).all()
-        for contact in contacts:
-            stage = contact.current_stage or 1
-            if contact.deposit_confirmed or stage >= 7:
-                new_cls = "vip"
-            elif stage >= 2:
-                new_cls = "warm_lead"
-            else:
-                new_cls = "new_lead"
-            if contact.classification != new_cls:
-                contact.classification = new_cls
-        db.commit()
-    except Exception:
-        db.rollback()
-    finally:
-        db.close()
-
-
 def init_db() -> None:
     """
     Migrate schema and initialise tables on startup.
@@ -518,7 +445,7 @@ def init_db() -> None:
             finds 'contacts' and does not try to recreate it).
     Step 2: create_all — creates any still-missing tables.
     Step 3: ensure new columns exist (older deployments).
-    Step 4: seed follow_up_templates.
+    Step 4: seed default pipeline template via seed_workspace_defaults.
     Step 5: sync classifications.
     """
     _migrate_users_to_contacts()
@@ -527,19 +454,10 @@ def init_db() -> None:
         _ensure_columns()
     except Exception:
         pass
-    _seed_templates()
     try:
         _seed_organization()
         _seed_workspace()
         _seed_settings()
-    except Exception:
-        pass
-    try:
-        _promote_vip_names()
-    except Exception:
-        pass
-    try:
-        _sync_classifications()
     except Exception:
         pass
     try:

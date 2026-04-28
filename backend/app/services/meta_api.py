@@ -24,7 +24,7 @@ from typing import Optional
 from sqlalchemy import func
 
 from app.database import SessionLocal
-from app.database.models import AdCampaign, AdCreative, Campaign, Contact, StageHistory, Workspace
+from app.database.models import AdCampaign, AdCreative, Campaign, Contact, Workspace
 
 logger = logging.getLogger(__name__)
 
@@ -168,12 +168,11 @@ def pull_campaign_insights(for_date: Optional[date] = None, workspace_id: int = 
                 .scalar() or 0
             )
             deposits_count = (
-                db.query(func.count(StageHistory.id))
-                .join(Contact, Contact.id == StageHistory.contact_id)
+                db.query(func.count(Contact.id))
                 .filter(
                     Contact.source == source_tag,
-                    StageHistory.to_stage == 7,
-                    func.date(StageHistory.moved_at) == target_date,
+                    Contact.deposit_status == "deposited",
+                    func.date(Contact.deposited_at) == target_date,
                 )
                 .scalar() or 0
             )
@@ -274,12 +273,11 @@ def pull_ad_creative_insights(for_date: Optional[date] = None, workspace_id: int
                 .scalar() or 0
             )
             deposits_count = (
-                db.query(func.count(StageHistory.id))
-                .join(Contact, Contact.id == StageHistory.contact_id)
+                db.query(func.count(Contact.id))
                 .filter(
                     Contact.source == source_tag,
-                    StageHistory.to_stage == 7,
-                    func.date(StageHistory.moved_at) == target_date,
+                    Contact.deposit_status == "deposited",
+                    func.date(Contact.deposited_at) == target_date,
                 )
                 .scalar() or 0
             )

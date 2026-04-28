@@ -4,7 +4,8 @@
 
 import { Send, SkipForward, ChevronDown, AlertTriangle } from "lucide-react";
 import { useState, useRef, useEffect } from "react";
-import { Lead, Message, STAGE_ACTION_REPLIES, FOLLOWUP_REPLIES, STAGES, Stage, STAGE_COLORS, STAGE_TEXT_COLORS, ESCALATION_CONTACT_NAME, formatMessageTime, formatTimeInStage } from "../../data/crmData";
+import { Lead, Message, STAGE_ACTION_REPLIES, FOLLOWUP_REPLIES, ESCALATION_CONTACT_NAME, formatMessageTime, formatTimeInStage } from "../../data/crmData";
+import { useWorkspaceStages } from "../../hooks/useWorkspaceStages";
 import { cn } from "../../lib/utils";
 
 interface ChatPanelProps {
@@ -18,12 +19,17 @@ interface ChatPanelProps {
 }
 
 export function ChatPanel({ lead, messages, onSendMessage, onNextLead, onUpdateLead, onEscalate, flowInfo }: ChatPanelProps) {
+  const pipeline = useWorkspaceStages();
   const [input, setInput] = useState("");
   const [stageToast, setStageToast] = useState<string | null>(null);
   const [showStageMenu, setShowStageMenu] = useState(false);
   const [escalated, setEscalated] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  const stages = pipeline?.stages || [];
+  const currentStageObj = stages.find(s => s.id === lead.stageId);
+  const currentIdx = currentStageObj ? stages.indexOf(currentStageObj) : -1;
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -34,16 +40,15 @@ export function ChatPanel({ lead, messages, onSendMessage, onNextLead, onUpdateL
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  const prevStageRef = useRef(lead.stage);
+  const prevStageIdRef = useRef(lead.stageId);
   useEffect(() => {
-    if (prevStageRef.current !== lead.stage) {
-      const idx = STAGES.indexOf(lead.stage);
-      setStageToast(`Moved to Stage ${idx + 1} — ${lead.stage}`);
-      prevStageRef.current = lead.stage;
+    if (prevStageIdRef.current !== lead.stageId) {
+      setStageToast(`Moved to Stage ${lead.stagePosition ?? ""} — ${lead.stageName}`);
+      prevStageIdRef.current = lead.stageId;
       const t = setTimeout(() => setStageToast(null), 3000);
       return () => clearTimeout(t);
     }
-  }, [lead.stage]);
+  }, [lead.stageId, lead.stageName, lead.stagePosition]);
 
   const handleSend = () => {
     if (!input.trim()) return;
@@ -68,9 +73,16 @@ export function ChatPanel({ lead, messages, onSendMessage, onNextLead, onUpdateL
     }
   };
 
-  const handleStageChange = (newStage: Stage) => {
-    if (onUpdateLead && newStage !== lead.stage) {
-      onUpdateLead({ ...lead, stage: newStage, stageEnteredAt: new Date().toISOString() });
+  const handleStageChange = (stageId: number) => {
+    if (onUpdateLead && stageId !== lead.stageId) {
+      const s = stages.find(st => st.id === stageId);
+      onUpdateLead({
+        ...lead,
+        stageId,
+        stageName: s?.name ?? "—",
+        stagePosition: s?.position ?? null,
+        stageEnteredAt: new Date().toISOString(),
+      });
     }
     setShowStageMenu(false);
   };
@@ -80,7 +92,12 @@ export function ChatPanel({ lead, messages, onSendMessage, onNextLead, onUpdateL
     setEscalated(true);
   };
 
-  const currentIdx = STAGES.indexOf(lead.stage);
+  const stageDotStyle: React.CSSProperties = currentStageObj?.color
+    ? { backgroundColor: currentStageObj.color }
+    : {};
+  const stageTextStyle: React.CSSProperties = currentStageObj?.color
+    ? { color: currentStageObj.color }
+    : {};
 
   return (
     <div className="flex flex-col h-full bg-background">
@@ -126,9 +143,12 @@ export function ChatPanel({ lead, messages, onSendMessage, onNextLead, onUpdateL
               onClick={() => setShowStageMenu(!showStageMenu)}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-secondary active:bg-accent transition-colors w-full"
             >
-              <span className={cn("h-2 w-2 rounded-full shrink-0", STAGE_COLORS[lead.stage])} />
-              <span className={cn("text-[12px] font-semibold truncate", STAGE_TEXT_COLORS[lead.stage])}>
-                Stage {currentIdx + 1} — {lead.stage}
+              <span
+                className="h-2 w-2 rounded-full shrink-0 bg-muted-foreground/40"
+                style={stageDotStyle}
+              />
+              <span className="text-[12px] font-semibold truncate text-muted-foreground" style={stageTextStyle}>
+                {lead.stagePosition ? `Stage ${lead.stagePosition} — ` : ""}{lead.stageName}
               </span>
               <span className="text-[11px] text-muted-foreground ml-auto shrink-0">
                 {formatTimeInStage(lead.stageEnteredAt)}
@@ -139,21 +159,24 @@ export function ChatPanel({ lead, messages, onSendMessage, onNextLead, onUpdateL
             {/* Stage dropdown */}
             {showStageMenu && (
               <div className="absolute top-full left-0 right-0 mt-1 bg-card border border-border rounded-xl shadow-xl z-50 overflow-hidden">
-                {STAGES.map((s, i) => (
+                {stages.map((s, i) => (
                   <button
-                    key={s}
-                    onClick={() => handleStageChange(s)}
+                    key={s.id}
+                    onClick={() => handleStageChange(s.id)}
                     className={cn(
                       "w-full flex items-center gap-2 px-3 py-2.5 text-left transition-colors",
-                      s === lead.stage ? "bg-accent" : "active:bg-secondary",
-                      i < STAGES.length - 1 && "border-b border-[hsl(var(--ios-separator))]"
+                      s.id === lead.stageId ? "bg-accent" : "active:bg-secondary",
+                      i < stages.length - 1 && "border-b border-[hsl(var(--ios-separator))]"
                     )}
                   >
-                    <span className={cn("h-2 w-2 rounded-full shrink-0", STAGE_COLORS[s])} />
-                    <span className={cn("text-[13px] font-medium", s === lead.stage ? "text-foreground font-bold" : "text-muted-foreground")}>
-                      Stage {i + 1} — {s}
+                    <span
+                      className="h-2 w-2 rounded-full shrink-0 bg-muted-foreground/40"
+                      style={s.color ? { backgroundColor: s.color } : undefined}
+                    />
+                    <span className={cn("text-[13px] font-medium", s.id === lead.stageId ? "text-foreground font-bold" : "text-muted-foreground")}>
+                      Stage {s.position} — {s.name}
                     </span>
-                    {s === lead.stage && (
+                    {s.id === lead.stageId && (
                       <span className="ml-auto text-primary text-xs font-bold">✓</span>
                     )}
                   </button>
@@ -162,7 +185,7 @@ export function ChatPanel({ lead, messages, onSendMessage, onNextLead, onUpdateL
             )}
           </div>
 
-          {/* Escalate to Walid */}
+          {/* Escalate */}
           <button
             onClick={handleEscalate}
             disabled={escalated}

@@ -1,6 +1,7 @@
 import { ChevronRight, AlertTriangle, StickyNote, Star, VolumeX } from "lucide-react";
 import { useState, useEffect } from "react";
-import { Lead, Stage, STAGES, STAGE_COLORS, STAGE_TEXT_COLORS, ESCALATION_CONTACT_NAME, formatTimeInStage, classificationLabel, classificationColor } from "../../data/crmData";
+import { Lead, ESCALATION_CONTACT_NAME, formatTimeInStage, classificationLabel, classificationColor } from "../../data/crmData";
+import { useWorkspaceStages } from "../../hooks/useWorkspaceStages";
 import { Button } from "../ui/button";
 import { Textarea } from "../ui/textarea";
 import { cn } from "../../lib/utils";
@@ -16,11 +17,16 @@ interface LeadDetailsProps {
 }
 
 export function LeadDetails({ lead, onUpdateLead, onSaveNotes, onEscalate, onToggleAffiliate, onMarkAsNoise }: LeadDetailsProps) {
+  const pipeline = useWorkspaceStages();
   const [notes, setNotes] = useState(lead.notes);
   const [escalated, setEscalated] = useState(false);
-  const currentIdx = STAGES.indexOf(lead.stage);
   const storedUser = getStoredUser();
   const showAffiliateToggle = storedUser && canManageAffiliates(storedUser.role);
+
+  const stages = pipeline?.stages || [];
+  const currentStageObj = stages.find(s => s.id === lead.stageId);
+  const currentIdx = currentStageObj ? stages.indexOf(currentStageObj) : -1;
+  const stagePosition = lead.stagePosition ?? (currentIdx >= 0 ? currentIdx + 1 : 0);
 
   useEffect(() => {
     setNotes(lead.notes);
@@ -28,14 +34,28 @@ export function LeadDetails({ lead, onUpdateLead, onSaveNotes, onEscalate, onTog
   }, [lead.id]);
 
   const moveToNext = () => {
-    if (currentIdx < STAGES.length - 1) {
-      onUpdateLead({ ...lead, stage: STAGES[currentIdx + 1], stageEnteredAt: new Date().toISOString() });
+    if (currentIdx >= 0 && currentIdx < stages.length - 1) {
+      const nextStage = stages[currentIdx + 1];
+      onUpdateLead({
+        ...lead,
+        stageId: nextStage.id,
+        stageName: nextStage.name,
+        stagePosition: nextStage.position,
+        stageEnteredAt: new Date().toISOString(),
+      });
     }
   };
 
-  const handleStageOverride = (stage: Stage) => {
-    if (stage !== lead.stage) {
-      onUpdateLead({ ...lead, stage, stageEnteredAt: new Date().toISOString() });
+  const handleStageOverride = (stageId: number) => {
+    if (stageId !== lead.stageId) {
+      const s = stages.find(st => st.id === stageId);
+      onUpdateLead({
+        ...lead,
+        stageId,
+        stageName: s?.name ?? "—",
+        stagePosition: s?.position ?? null,
+        stageEnteredAt: new Date().toISOString(),
+      });
     }
   };
 
@@ -48,6 +68,13 @@ export function LeadDetails({ lead, onUpdateLead, onSaveNotes, onEscalate, onTog
     await onEscalate();
     setEscalated(true);
   };
+
+  const stageDotStyle: React.CSSProperties = currentStageObj?.color
+    ? { backgroundColor: currentStageObj.color }
+    : {};
+  const stageTextStyle: React.CSSProperties = currentStageObj?.color
+    ? { color: currentStageObj.color }
+    : {};
 
   return (
     <div className="flex flex-col h-full bg-[hsl(var(--ios-grouped-bg))] md:bg-card md:border-l md:border-border overflow-y-auto">
@@ -68,9 +95,12 @@ export function LeadDetails({ lead, onUpdateLead, onSaveNotes, onEscalate, onTog
         <div className="ios-card p-4 space-y-2">
           <p className="text-[11px] text-muted-foreground uppercase tracking-wider font-semibold">Current Stage</p>
           <div className="flex items-center gap-2">
-            <span className={cn("h-2.5 w-2.5 rounded-full", STAGE_COLORS[lead.stage])} />
-            <span className={cn("text-sm font-bold", STAGE_TEXT_COLORS[lead.stage])}>
-              Stage {currentIdx + 1} — {lead.stage}
+            <span
+              className="h-2.5 w-2.5 rounded-full bg-muted-foreground/40"
+              style={stageDotStyle}
+            />
+            <span className="text-sm font-bold text-muted-foreground" style={stageTextStyle}>
+              {stagePosition > 0 ? `Stage ${stagePosition} — ` : ""}{lead.stageName}
             </span>
           </div>
           <p className="text-xs text-muted-foreground">
@@ -79,33 +109,36 @@ export function LeadDetails({ lead, onUpdateLead, onSaveNotes, onEscalate, onTog
         </div>
 
         {/* Pipeline */}
-        <div className="ios-card p-4 space-y-2">
-          <p className="text-[11px] text-muted-foreground uppercase tracking-wider font-semibold">Pipeline</p>
-          <div className="flex items-center gap-1">
-            {STAGES.map((s, i) => (
-              <div key={s} className="flex-1">
-                <div
-                  className={cn(
-                    "h-2 rounded-full transition-colors",
-                    i <= currentIdx ? STAGE_COLORS[s] : "bg-secondary"
-                  )}
-                  title={s}
-                />
-              </div>
-            ))}
+        {stages.length > 0 && (
+          <div className="ios-card p-4 space-y-2">
+            <p className="text-[11px] text-muted-foreground uppercase tracking-wider font-semibold">Pipeline</p>
+            <div className="flex items-center gap-1">
+              {stages.map((s, i) => (
+                <div key={s.id} className="flex-1">
+                  <div
+                    className={cn(
+                      "h-2 rounded-full transition-colors",
+                      i > currentIdx ? "bg-secondary" : ""
+                    )}
+                    style={i <= currentIdx && s.color ? { backgroundColor: s.color } : undefined}
+                    title={s.name}
+                  />
+                </div>
+              ))}
+            </div>
+            <div className="flex justify-between text-[10px] text-muted-foreground">
+              <span>{stages[0]?.name ?? "Start"}</span>
+              <span>{stages[stages.length - 1]?.name ?? "End"}</span>
+            </div>
           </div>
-          <div className="flex justify-between text-[10px] text-muted-foreground">
-            <span>New</span>
-            <span>VIP</span>
-          </div>
-        </div>
+        )}
 
         {/* Actions */}
         <div className="ios-card p-4 space-y-2.5">
           <p className="text-[11px] text-muted-foreground uppercase tracking-wider font-semibold">Actions</p>
-          <Button onClick={moveToNext} disabled={currentIdx >= STAGES.length - 1} className="w-full rounded-xl" size="sm">
+          <Button onClick={moveToNext} disabled={currentIdx < 0 || currentIdx >= stages.length - 1} className="w-full rounded-xl" size="sm">
             <ChevronRight className="h-4 w-4 mr-1" />
-            Move to {currentIdx < STAGES.length - 1 ? STAGES[currentIdx + 1] : "—"}
+            Move to {currentIdx >= 0 && currentIdx < stages.length - 1 ? stages[currentIdx + 1].name : "—"}
           </Button>
           <Button
             variant="outline"
@@ -147,26 +180,31 @@ export function LeadDetails({ lead, onUpdateLead, onSaveNotes, onEscalate, onTog
         </div>
 
         {/* Manual stage override */}
-        <div className="ios-card p-4 space-y-2">
-          <p className="text-[11px] text-muted-foreground uppercase tracking-wider font-semibold">Override Stage</p>
-          <div className="grid grid-cols-2 gap-1.5">
-            {STAGES.map((s, i) => (
-              <button
-                key={s}
-                onClick={() => handleStageOverride(s)}
-                className={cn(
-                  "flex items-center gap-1.5 px-2.5 py-2 rounded-xl text-[11px] font-medium transition-colors text-left",
-                  s === lead.stage
-                    ? "bg-accent text-foreground font-bold ring-1 ring-primary/30"
-                    : "bg-secondary text-muted-foreground active:bg-accent"
-                )}
-              >
-                <span className={cn("h-1.5 w-1.5 rounded-full shrink-0", STAGE_COLORS[s])} />
-                <span className="truncate">{s}</span>
-              </button>
-            ))}
+        {stages.length > 0 && (
+          <div className="ios-card p-4 space-y-2">
+            <p className="text-[11px] text-muted-foreground uppercase tracking-wider font-semibold">Override Stage</p>
+            <div className="grid grid-cols-2 gap-1.5">
+              {stages.map((s) => (
+                <button
+                  key={s.id}
+                  onClick={() => handleStageOverride(s.id)}
+                  className={cn(
+                    "flex items-center gap-1.5 px-2.5 py-2 rounded-xl text-[11px] font-medium transition-colors text-left",
+                    s.id === lead.stageId
+                      ? "bg-accent text-foreground font-bold ring-1 ring-primary/30"
+                      : "bg-secondary text-muted-foreground active:bg-accent"
+                  )}
+                >
+                  <span
+                    className="h-1.5 w-1.5 rounded-full shrink-0 bg-muted-foreground/40"
+                    style={s.color ? { backgroundColor: s.color } : undefined}
+                  />
+                  <span className="truncate">{s.name}</span>
+                </button>
+              ))}
+            </div>
           </div>
-        </div>
+        )}
 
         {/* Notes */}
         <div className="ios-card p-4 space-y-2">

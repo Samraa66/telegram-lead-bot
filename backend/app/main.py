@@ -284,6 +284,85 @@ async def webhook_legacy(request: Request, db: Session = Depends(get_db)):
     return await _handle_webhook(request, db, workspace_id=1, secret=WEBHOOK_SECRET)
 
 
+class DepositWebhookPayload(BaseModel):
+    workspace_id: int
+    provider: str
+    client_id: Optional[str] = None
+    contact_id: Optional[int] = None
+    amount: Optional[float] = None
+    currency: Optional[str] = None
+    timestamp: Optional[str] = None
+    source: Optional[str] = "email_parser"
+    idempotency_key: Optional[str] = None
+
+
+def _verify_deposit_signature(secret: str, body_bytes: bytes, signature: str) -> bool:
+    import hashlib
+    import hmac as _hmac
+    if not secret or not signature:
+        return False
+    digest = _hmac.new(secret.encode(), body_bytes, hashlib.sha256).hexdigest()
+    return _hmac.compare_digest(digest, signature.lower())
+
+
+@app.post("/webhook/deposit-events")
+@limiter.limit("60/minute")
+async def deposit_event_webhook(request: Request, db: Session = Depends(get_db)):
+    """
+    Provider-agnostic deposit webhook. Authenticated via HMAC-SHA256 over the
+    raw body using the workspace's deposit_webhook_secret.
+    Header: X-Deposit-Signature: <hex digest>
+    """
+    from datetime import datetime as _dt
+    from app.database.models import Workspace
+    from app.services.deposit import process_deposit_event, find_contact_for_deposit
+
+    body_bytes = await request.body()
+    try:
+        data = json.loads(body_bytes or b"{}")
+    except Exception:
+        raise HTTPException(status_code=400, detail="invalid JSON")
+
+    payload = DepositWebhookPayload(**data)
+    ws = db.query(Workspace).filter(Workspace.id == payload.workspace_id).first()
+    if not ws:
+        raise HTTPException(status_code=404, detail="workspace not found")
+
+    sig = request.headers.get("X-Deposit-Signature", "")
+    if not ws.deposit_webhook_secret or not _verify_deposit_signature(
+        ws.deposit_webhook_secret, body_bytes, sig,
+    ):
+        raise HTTPException(status_code=401, detail="bad signature")
+
+    contact = find_contact_for_deposit(
+        db, payload.workspace_id,
+        contact_id=payload.contact_id, puprime_client_id=payload.client_id,
+    )
+    if not contact:
+        raise HTTPException(status_code=404, detail="contact not found for client_id")
+
+    occurred = _dt.fromisoformat(payload.timestamp) if payload.timestamp else _dt.utcnow()
+    idem = payload.idempotency_key or (
+        f"{payload.provider}:{payload.client_id or contact.id}:{occurred.isoformat()}:{payload.amount or 0}"
+    )
+    result = process_deposit_event(
+        db,
+        workspace_id=payload.workspace_id,
+        contact=contact,
+        provider=payload.provider,
+        source=payload.source or "email_parser",
+        idempotency_key=idem,
+        amount=payload.amount,
+        currency=payload.currency,
+        occurred_at=occurred,
+        provider_client_id=payload.client_id,
+        raw_payload=body_bytes.decode("utf-8", errors="replace"),
+    )
+    return {
+        "ok": True, "deposit_event_id": result.deposit_event_id, "deduped": result.dedup,
+    }
+
+
 @app.post("/webhook/{workspace_id}")
 async def webhook(request: Request, workspace_id: int, db: Session = Depends(get_db)):
     """
@@ -582,6 +661,111 @@ def _record_login_success(username: str) -> None:
         _login_locks.pop(key, None)
 
 
+class OrgSignupRequest(BaseModel):
+    full_name: str
+    email: str
+    password: str
+    org_name: str
+    niche: Optional[str] = None
+    language: Optional[str] = None
+    timezone: Optional[str] = None
+    country: Optional[str] = None
+    main_channel_url: Optional[str] = None
+    sales_telegram_username: Optional[str] = None
+    meta_pixel_id: Optional[str] = None
+    meta_ad_account_id: Optional[str] = None
+    meta_access_token: Optional[str] = None
+
+
+@app.post("/auth/signup/organization", status_code=201)
+@limiter.limit("5/minute")
+def signup_organization(request: Request, req: OrgSignupRequest, db: Session = Depends(get_db)):
+    """Public. Creates Organization + root Workspace + Admin Account, seeds default pipeline."""
+    from app.database.models import Account, Organization, Workspace
+    from app.database import seed_workspace_defaults
+    from app.auth import hash_password as _hash, create_access_token as _tok
+    from sqlalchemy.exc import IntegrityError
+
+    email = (req.email or "").strip().lower()
+    if "@" not in email or len(email) < 4:
+        raise HTTPException(status_code=400, detail="invalid email")
+    if len(req.password) < 8:
+        raise HTTPException(status_code=400, detail="password must be at least 8 characters")
+    if not req.full_name.strip():
+        raise HTTPException(status_code=400, detail="full_name is required")
+    if not req.org_name.strip():
+        raise HTTPException(status_code=400, detail="org_name is required")
+
+    if db.query(Account).filter(Account.email == email).first():
+        raise HTTPException(status_code=409, detail="email already in use")
+
+    try:
+        org = Organization(name=req.org_name.strip())
+        db.add(org); db.flush()
+
+        ws = Workspace(
+            name=req.org_name.strip(),
+            org_id=org.id,
+            parent_workspace_id=None,
+            root_workspace_id=None,
+            workspace_role="owner",
+            niche=req.niche,
+            language=req.language,
+            timezone=req.timezone,
+            country=req.country,
+            main_channel_url=req.main_channel_url,
+            sales_telegram_username=req.sales_telegram_username,
+            meta_pixel_id=req.meta_pixel_id,
+            meta_ad_account_id=req.meta_ad_account_id,
+            meta_access_token=req.meta_access_token or None,
+            onboarding_complete=False,
+        )
+        db.add(ws); db.flush()
+        ws.root_workspace_id = ws.id
+
+        acct = Account(
+            workspace_id=ws.id,
+            org_id=org.id,
+            email=email,
+            full_name=req.full_name.strip(),
+            password_hash=_hash(req.password),
+            role="admin",
+            org_role="org_owner",
+        )
+        db.add(acct); db.commit(); db.refresh(acct); db.refresh(ws)
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="email already in use")
+
+    # Seed pipeline + keywords + templates + quick replies for the new workspace
+    seed_workspace_defaults(ws.id, db)
+
+    from app.services.audit import log_audit
+    log_audit(
+        db, action="signup.organization",
+        actor={"username": email, "role": "admin"},
+        target_type="account", target_id=acct.id,
+        workspace_id=ws.id, request=request,
+        detail=f"org={org.name}",
+    )
+
+    token = _tok(
+        acct.email, acct.role,
+        workspace_id=ws.id, org_id=org.id, org_role="org_owner",
+        account_id=acct.id,
+    )
+    return {
+        "access_token": token,
+        "role": acct.role,
+        "username": acct.email,
+        "workspace_id": ws.id,
+        "org_id": org.id,
+        "org_role": "org_owner",
+        "account_id": acct.id,
+        "onboarding_complete": False,
+    }
+
+
 @app.post("/auth/login")
 @limiter.limit("5/minute")
 def login(request: Request, req: LoginRequest, db: Session = Depends(get_db)):
@@ -604,28 +788,36 @@ def login(request: Request, req: LoginRequest, db: Session = Depends(get_db)):
     _record_login_success(req.username)
     log_audit(db, action="login.success", actor=user, request=request)
 
-    ws_id = user.get("workspace_id", 1)
-
-    # Resolve org context from the workspace the user belongs to
+    # Resolve workspace / org context
     from app.database.models import Workspace as WsModel, Affiliate as AffModel
     org_id = 1
     org_role = "member"
 
-    if user["role"] in ("developer", "admin"):
-        org_role = "org_owner"
+    if user.get("account_id"):
+        # Account rows already carry the correct workspace/org/org_role — use directly
+        ws_id = user["workspace_id"]
+        org_id = user["org_id"]
+        org_role = user["org_role"]
+    else:
+        ws_id = user.get("workspace_id", 1)
 
-    # For affiliates: scope to their own provisioned workspace, not the parent's
-    if user["role"] == "affiliate" and user.get("affiliate_id"):
-        aff = db.query(AffModel).filter(AffModel.id == user["affiliate_id"]).first()
-        if aff:
-            # affiliate_workspace_id = their own CRM workspace
-            # workspace_id = their parent's workspace (fallback for legacy affiliates)
-            ws_id = aff.affiliate_workspace_id or aff.workspace_id or ws_id
-            org_role = "workspace_owner"
+        if user["role"] in ("developer", "admin"):
+            org_role = "org_owner"
+
+        # For affiliates: scope to their own provisioned workspace, not the parent's
+        if user["role"] == "affiliate" and user.get("affiliate_id"):
+            aff = db.query(AffModel).filter(AffModel.id == user["affiliate_id"]).first()
+            if aff:
+                # affiliate_workspace_id = their own CRM workspace
+                # workspace_id = their parent's workspace (fallback for legacy affiliates)
+                ws_id = aff.affiliate_workspace_id or aff.workspace_id or ws_id
+                org_role = "workspace_owner"
+
+        ws = db.query(WsModel).filter(WsModel.id == ws_id).first()
+        if ws and ws.org_id:
+            org_id = ws.org_id
 
     ws = db.query(WsModel).filter(WsModel.id == ws_id).first()
-    if ws and ws.org_id:
-        org_id = ws.org_id
 
     token = create_access_token(
         user["username"], user["role"],
@@ -633,6 +825,7 @@ def login(request: Request, req: LoginRequest, db: Session = Depends(get_db)):
         org_id=org_id,
         org_role=org_role,
         affiliate_id=user.get("affiliate_id"),
+        account_id=user.get("account_id"),
     )
     return {
         "access_token": token,
@@ -642,6 +835,7 @@ def login(request: Request, req: LoginRequest, db: Session = Depends(get_db)):
         "org_id": org_id,
         "org_role": org_role,
         "onboarding_complete": (bool(ws.onboarding_complete) if ws else True) if user["role"] == "affiliate" else True,
+        "account_id": user.get("account_id"),
     }
 
 
@@ -1501,9 +1695,12 @@ def list_campaigns(
     for c in campaigns:
         leads = db.query(Contact).filter(Contact.source == c.source_tag).count()
         deposits = (
-            db.query(StageHistory)
-            .join(Contact, Contact.id == StageHistory.contact_id)
-            .filter(Contact.source == c.source_tag, StageHistory.to_stage == 7)
+            db.query(Contact)
+            .filter(
+                Contact.source == c.source_tag,
+                Contact.workspace_id == workspace_id,
+                Contact.deposit_status == "deposited",
+            )
             .count()
         )
         link = f"https://t.me/{BOT_USERNAME}?start={c.source_tag}" if BOT_USERNAME else None
@@ -1671,7 +1868,7 @@ class SendMessageRequest(BaseModel):
 
 
 class ManualStageRequest(BaseModel):
-    stage: conint(ge=1, le=8)
+    stage_id: int
 
 
 class NotesRequest(BaseModel):
@@ -1748,11 +1945,11 @@ def set_contact_stage(contact_id: int, req: ManualStageRequest, db: Session = De
             contact.stage_entered_at = now
         db.commit()
 
-    set_stage_manual(contact, req.stage)
+    set_stage_manual(contact, req.stage_id)
 
     # Cancel stale follow-ups and schedule new ones for the new stage
-    from app.services.scheduler import schedule_follow_ups
-    schedule_follow_ups(contact_id, req.stage, contact.stage_entered_at)
+    from app.services.scheduler import schedule_follow_ups_for_stage_id
+    schedule_follow_ups_for_stage_id(contact_id, req.stage_id, contact.stage_entered_at)
 
     return {"ok": True}
 
@@ -1781,26 +1978,80 @@ def escalate_contact(contact_id: int, db: Session = Depends(get_db), workspace_i
     return {"ok": True}
 
 
+class DepositRequest(BaseModel):
+    amount: Optional[float] = None
+    currency: Optional[str] = None
+    occurred_at: Optional[str] = None  # ISO timestamp
+
+
+@app.post("/contacts/{contact_id}/deposit")
+def record_contact_deposit(
+    contact_id: int,
+    req: DepositRequest,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_roles("developer", "admin", "operator", "vip_manager")),
+):
+    """Manually record a deposit for a contact. Idempotent per (contact, day)."""
+    from datetime import datetime as _dt
+    from app.services.deposit import process_deposit_event
+    workspace_id: int = current_user.get("workspace_id", 1)
+    contact = db.query(User).filter(
+        User.id == contact_id, User.workspace_id == workspace_id,
+    ).first()
+    if not contact:
+        raise HTTPException(status_code=404, detail="contact not found")
+
+    occurred = (_dt.fromisoformat(req.occurred_at) if req.occurred_at
+                else _dt.utcnow())
+    idem = f"manual:{contact_id}:{occurred.strftime('%Y%m%d')}"
+    result = process_deposit_event(
+        db,
+        workspace_id=workspace_id,
+        contact=contact,
+        provider="manual",
+        source="manual",
+        idempotency_key=idem,
+        amount=req.amount,
+        currency=req.currency,
+        occurred_at=occurred,
+    )
+    return {
+        "ok": True,
+        "deposit_event_id": result.deposit_event_id,
+        "deduped": result.dedup,
+        "moved_to_stage_id": result.moved_to_stage_id,
+    }
+
+
+# Backwards compat alias — old frontend builds still POST here
 @app.post("/contacts/{contact_id}/deposit-confirm")
-def confirm_deposit(
+def deposit_confirm_legacy(
     contact_id: int,
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_roles("developer", "admin", "operator", "vip_manager")),
 ):
-    """Mark deposit as confirmed and auto-promote contact to stage 8."""
-    from datetime import datetime, date
+    return record_contact_deposit(contact_id, DepositRequest(), db, current_user)
+
+
+class PuPrimeIdRequest(BaseModel):
+    puprime_client_id: str
+
+
+@app.post("/contacts/{contact_id}/puprime-id")
+def set_contact_puprime_id(
+    contact_id: int, req: PuPrimeIdRequest,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_roles("developer", "admin", "operator")),
+):
+    """Store the PuPrime account number for a contact (used by deposit matching)."""
     workspace_id: int = current_user.get("workspace_id", 1)
-    contact = db.query(User).filter(User.id == contact_id, User.workspace_id == workspace_id).first()
+    contact = db.query(User).filter(
+        User.id == contact_id, User.workspace_id == workspace_id,
+    ).first()
     if not contact:
         raise HTTPException(status_code=404, detail="contact not found")
-    contact.deposit_confirmed = True
-    contact.deposit_date = date.today()
-    if (contact.current_stage or 1) < 8:
-        set_stage_manual(contact, 8, moved_by="system", db=db)
-        from app.services.scheduler import schedule_follow_ups
-        schedule_follow_ups(contact_id, 8, datetime.utcnow())
-    else:
-        db.commit()
+    contact.puprime_client_id = req.puprime_client_id.strip()
+    db.commit()
     return {"ok": True}
 
 
@@ -1902,10 +2153,10 @@ class UpdateChecklistRequest(BaseModel):
 @app.get("/affiliates/performance")
 def affiliate_performance(
     db: Session = Depends(get_db),
-    _=Depends(require_roles("developer", "admin")),
+    current_user: dict = Depends(require_roles("developer", "admin")),
 ):
     """Affiliate leaderboard with attributed leads, deposits, and commission earned."""
-    return get_affiliate_performance(db)
+    return get_affiliate_performance(db, workspace_id=current_user["workspace_id"])
 
 
 @app.get("/affiliates")
@@ -2170,6 +2421,177 @@ def invite_accept(token: str, req: AcceptInviteRequest, request: Request, db: Se
     }
 
 
+# ---------------------------------------------------------------------------
+# AffiliateInvite endpoints — token-based invite flow (Task 6.4)
+# URL prefix /auth/affiliate-invites avoids collision with legacy /invite/{token}
+# ---------------------------------------------------------------------------
+
+class AffiliateInviteCreateRequest(BaseModel):
+    email: Optional[str] = None
+    expires_in_days: int = 14
+
+
+class AffiliateInviteAcceptRequest(BaseModel):
+    full_name: str
+    email: str
+    password: str
+    affiliate_username: Optional[str] = None  # Telegram @handle (optional)
+
+
+@app.post("/auth/affiliate-invites", status_code=201)
+def issue_affiliate_invite(
+    req: AffiliateInviteCreateRequest,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_workspace_owner),
+):
+    import secrets as _secrets
+    from datetime import datetime, timedelta
+    from app.database.models import AffiliateInvite
+    from app.services.audit import log_audit
+
+    token = _secrets.token_urlsafe(32)
+    inv = AffiliateInvite(
+        workspace_id=current_user["workspace_id"],
+        invited_by_account_id=current_user.get("account_id"),
+        email=(req.email or "").strip() or None,
+        invite_token=token,
+        status="pending",
+        expires_at=datetime.utcnow() + timedelta(days=req.expires_in_days),
+    )
+    db.add(inv); db.commit(); db.refresh(inv)
+    log_audit(db, action="affiliate_invite.issued", actor=current_user,
+              target_type="affiliate_invite", target_id=inv.id,
+              workspace_id=current_user["workspace_id"],
+              detail=f"email={inv.email or '—'}")
+    from app.config import APP_BASE_URL
+    base = (APP_BASE_URL or "").rstrip("/")
+    return {
+        "invite_token": token,
+        "invite_url": f"{base}/affiliate-invite/{token}" if base else f"/affiliate-invite/{token}",
+        "expires_at": inv.expires_at.isoformat(),
+    }
+
+
+@app.get("/auth/affiliate-invites/{token}")
+def lookup_affiliate_invite(token: str, db: Session = Depends(get_db)):
+    from datetime import datetime
+    from app.database.models import AffiliateInvite, Workspace, Account
+    inv = db.query(AffiliateInvite).filter(AffiliateInvite.invite_token == token).first()
+    if not inv or inv.status != "pending":
+        raise HTTPException(status_code=404, detail="Invite not found or already used")
+    if inv.expires_at < datetime.utcnow():
+        raise HTTPException(status_code=410, detail="Invite expired")
+    ws = db.query(Workspace).filter(Workspace.id == inv.workspace_id).first()
+    inviter = (db.query(Account).filter(Account.id == inv.invited_by_account_id).first()
+               if inv.invited_by_account_id else None)
+    return {
+        "workspace_name": ws.name if ws else "Unknown",
+        "inviter_name": inviter.full_name if inviter else None,
+        "expires_at": inv.expires_at.isoformat(),
+    }
+
+
+@app.post("/auth/affiliate-invites/{token}/accept")
+@limiter.limit("5/minute")
+def accept_affiliate_invite(
+    request: Request, token: str, req: AffiliateInviteAcceptRequest,
+    db: Session = Depends(get_db),
+):
+    """Public. Creates Account + Affiliate + child Workspace; consumes invite."""
+    from datetime import datetime
+    import re, uuid
+    from sqlalchemy.exc import IntegrityError
+    from app.database.models import (
+        AffiliateInvite, Workspace, Affiliate, Account,
+    )
+    from app.auth import hash_password as _hash, create_access_token as _tok
+    from app.database import seed_workspace_defaults
+    from app.services.audit import log_audit
+
+    inv = db.query(AffiliateInvite).filter(AffiliateInvite.invite_token == token).first()
+    if not inv or inv.status != "pending":
+        raise HTTPException(status_code=404, detail="Invite not found or already used")
+    if inv.expires_at < datetime.utcnow():
+        raise HTTPException(status_code=410, detail="Invite expired")
+
+    email = (req.email or "").strip().lower()
+    if "@" not in email or len(email) < 4:
+        raise HTTPException(status_code=400, detail="invalid email")
+    if len(req.password) < 8:
+        raise HTTPException(status_code=400, detail="password must be at least 8 characters")
+    if not req.full_name.strip():
+        raise HTTPException(status_code=400, detail="full_name is required")
+    if db.query(Account).filter(Account.email == email).first():
+        raise HTTPException(status_code=409, detail="email already in use")
+
+    parent = db.query(Workspace).filter(Workspace.id == inv.workspace_id).first()
+    if not parent:
+        raise HTTPException(status_code=404, detail="parent workspace gone")
+
+    base_slug = re.sub(r"[^a-z0-9]+", ".", req.full_name.strip().lower()).strip(".")
+    if not base_slug:
+        base_slug = "affiliate"
+    referral_tag = f"{base_slug[:16]}-{uuid.uuid4().hex[:4]}"
+
+    try:
+        child = Workspace(
+            name=req.full_name.strip(),
+            org_id=parent.org_id, parent_workspace_id=parent.id,
+            root_workspace_id=parent.root_workspace_id or parent.id,
+            workspace_role="affiliate", onboarding_complete=False,
+        )
+        db.add(child); db.flush()
+
+        aff = Affiliate(
+            workspace_id=parent.id,
+            name=req.full_name.strip(),
+            username=(req.affiliate_username or "").strip() or None,
+            referral_tag=referral_tag,
+            affiliate_workspace_id=child.id,
+        )
+        db.add(aff); db.flush()
+
+        acct = Account(
+            workspace_id=child.id, org_id=parent.org_id,
+            email=email, full_name=req.full_name.strip(),
+            password_hash=_hash(req.password),
+            role="affiliate", org_role="workspace_owner",
+            affiliate_id=aff.id,
+        )
+        db.add(acct)
+
+        inv.status = "accepted"
+        inv.accepted_at = datetime.utcnow()
+        db.commit(); db.refresh(acct); db.refresh(child); db.refresh(aff)
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="email already in use")
+
+    seed_workspace_defaults(child.id, db)
+
+    log_audit(db, action="affiliate.invite_accepted",
+              actor={"username": email, "role": "affiliate"},
+              target_type="affiliate", target_id=aff.id,
+              workspace_id=child.id, request=request)
+
+    token_jwt = _tok(
+        email, "affiliate",
+        workspace_id=child.id, org_id=parent.org_id, org_role="workspace_owner",
+        affiliate_id=aff.id, account_id=acct.id,
+    )
+    return {
+        "access_token": token_jwt,
+        "role": "affiliate",
+        "username": email,
+        "workspace_id": child.id,
+        "org_id": parent.org_id,
+        "org_role": "workspace_owner",
+        "account_id": acct.id,
+        "affiliate_id": aff.id,
+        "onboarding_complete": False,
+    }
+
+
 @app.patch("/affiliates/{affiliate_id}/lots")
 def update_affiliate_lots(
     affiliate_id: int,
@@ -2196,7 +2618,7 @@ def _cascade_delete_workspace(ws_id: int, db: Session) -> None:
     from app.database.models import (
         Workspace, Contact, Message, StageHistory, FollowUpQueue,
         FollowUpTemplate, StageKeyword, StageLabel, QuickReply, TeamMember,
-        Campaign, PendingChannel,
+        Campaign, PendingChannel, Account,
     )
 
     # Stop Telethon client if running (fire-and-forget)
@@ -2217,6 +2639,9 @@ def _cascade_delete_workspace(ws_id: int, db: Session) -> None:
         db.query(Message).filter(Message.contact_id.in_(contact_ids)).delete(synchronize_session=False)
         db.query(StageHistory).filter(StageHistory.contact_id.in_(contact_ids)).delete(synchronize_session=False)
         db.query(FollowUpQueue).filter(FollowUpQueue.contact_id.in_(contact_ids)).delete(synchronize_session=False)
+
+    # Delete Account rows before Affiliate rows (Account.affiliate_id FKs into affiliates)
+    db.query(Account).filter(Account.workspace_id == ws_id).delete(synchronize_session=False)
 
     for model in (Contact, FollowUpTemplate, StageKeyword, StageLabel, QuickReply, TeamMember, Campaign, PendingChannel):
         db.query(model).filter(model.workspace_id == ws_id).delete(synchronize_session=False)
@@ -2369,6 +2794,20 @@ def purge_orphaned_workspaces(
     return {"deleted": len(orphans)}
 
 
+@app.post("/workspaces/{workspace_id}/backfill-telegram-history")
+async def trigger_backfill(
+    workspace_id: int,
+    limit_per_dialog: int = 200,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_roles("developer", "admin")),
+):
+    """Pull past Telegram DMs for the workspace and replay them through advance_stage."""
+    if current_user.get("workspace_id") != workspace_id and current_user["role"] != "developer":
+        raise HTTPException(status_code=403, detail="cross-workspace backfill not allowed")
+    from app.services.backfill import backfill_workspace_history
+    return await backfill_workspace_history(workspace_id, limit_per_dialog=min(limit_per_dialog, 500))
+
+
 @app.patch("/affiliates/{affiliate_id}/checklist")
 def update_affiliate_checklist(
     affiliate_id: int,
@@ -2419,9 +2858,11 @@ def affiliate_me(
         .scalar() or 0
     )
     deposits = (
-        db.query(func.count(func.distinct(StageHistory.contact_id)))
-        .join(Contact, Contact.id == StageHistory.contact_id)
-        .filter(Contact.source == aff.referral_tag, StageHistory.to_stage == 7)
+        db.query(func.count(Contact.id))
+        .filter(
+            Contact.source == aff.referral_tag,
+            Contact.deposit_status == "deposited",
+        )
         .scalar() or 0
     )
     conversion_rate = round(deposits / leads * 100, 1) if leads > 0 else 0.0
@@ -2795,21 +3236,22 @@ SETTINGS_ROLES = Depends(require_roles("developer", "admin"))
 
 class KeywordCreateRequest(BaseModel):
     keyword: str
-    target_stage: conint(ge=1, le=8)
+    target_stage_id: int
 
 
 class KeywordUpdateRequest(BaseModel):
     keyword: Optional[str] = None
-    target_stage: Optional[conint(ge=1, le=8)] = None
+    target_stage_id: Optional[int] = None
     is_active: Optional[bool] = None
 
 
 class FollowUpUpdateRequest(BaseModel):
     message_text: str
+    hours_offset: Optional[float] = None
 
 
 class QuickReplyCreateRequest(BaseModel):
-    stage_num: conint(ge=1, le=8)
+    stage_id: int
     label: str
     text: str
     sort_order: int = 0
@@ -2826,6 +3268,306 @@ class StageLabelUpdateRequest(BaseModel):
     label: str
 
 
+# --- Workspace metadata ---
+
+class WorkspacePatchRequest(BaseModel):
+    name: Optional[str] = None
+    niche: Optional[str] = None
+    language: Optional[str] = None
+    timezone: Optional[str] = None
+    country: Optional[str] = None
+    main_channel_url: Optional[str] = None
+    sales_telegram_username: Optional[str] = None
+    landing_page_url: Optional[str] = None
+
+
+@app.patch("/settings/workspace")
+def patch_workspace(
+    req: WorkspacePatchRequest,
+    db: Session = Depends(get_db),
+    workspace_id: int = Depends(get_workspace_id),
+    _=Depends(require_workspace_owner),
+):
+    """Update workspace metadata (org info, channel URLs)."""
+    from app.database.models import Workspace
+    ws = db.query(Workspace).filter(Workspace.id == workspace_id).first()
+    if not ws:
+        raise HTTPException(status_code=404, detail="workspace not found")
+    for k, v in req.dict(exclude_none=True).items():
+        setattr(ws, k, v)
+    db.commit()
+    return {"ok": True}
+
+
+# --- Pipeline CRUD ---
+
+class PipelineStageCreateRequest(BaseModel):
+    name: str
+    description: Optional[str] = None
+    color: Optional[str] = None
+    is_deposit_stage: bool = False
+    is_member_stage: bool = False
+    is_conversion_stage: bool = False
+    end_action: str = "cold"
+    revert_to_stage_id: Optional[int] = None
+
+
+class PipelineStageUpdateRequest(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    color: Optional[str] = None
+    is_deposit_stage: Optional[bool] = None
+    is_member_stage: Optional[bool] = None
+    is_conversion_stage: Optional[bool] = None
+    end_action: Optional[str] = None
+    revert_to_stage_id: Optional[int] = None
+
+
+class PipelineReorderRequest(BaseModel):
+    ordered_ids: list[int]
+
+
+class PipelineFlagsRequest(BaseModel):
+    deposited_stage_id: Optional[int] = None
+    member_stage_id: Optional[int] = None
+    conversion_stage_id: Optional[int] = None
+    vip_marker_phrases: Optional[list[str]] = None
+
+
+def _stage_dto(s):
+    return {
+        "id": s.id, "position": s.position, "name": s.name,
+        "description": s.description, "color": s.color,
+        "is_deposit_stage": s.is_deposit_stage,
+        "is_member_stage": s.is_member_stage,
+        "is_conversion_stage": s.is_conversion_stage,
+        "end_action": s.end_action,
+        "revert_to_stage_id": s.revert_to_stage_id,
+    }
+
+
+@app.get("/settings/pipeline")
+def get_pipeline(
+    db: Session = Depends(get_db),
+    workspace_id: int = Depends(get_workspace_id),
+):
+    from app.database.models import PipelineStage, Workspace
+    import json as _json
+    stages = (db.query(PipelineStage)
+              .filter(PipelineStage.workspace_id == workspace_id)
+              .order_by(PipelineStage.position).all())
+    ws = db.query(Workspace).filter(Workspace.id == workspace_id).first()
+    markers: list = []
+    if ws and ws.vip_marker_phrases:
+        try:
+            markers = _json.loads(ws.vip_marker_phrases) or []
+        except Exception:
+            markers = []
+    return {
+        "stages": [_stage_dto(s) for s in stages],
+        "deposited_stage_id": ws.deposited_stage_id if ws else None,
+        "member_stage_id": ws.member_stage_id if ws else None,
+        "conversion_stage_id": ws.conversion_stage_id if ws else None,
+        "vip_marker_phrases": markers,
+    }
+
+
+@app.post("/settings/pipeline/stages", status_code=201)
+def create_pipeline_stage(
+    req: PipelineStageCreateRequest,
+    db: Session = Depends(get_db),
+    workspace_id: int = Depends(get_workspace_id),
+    _=Depends(require_workspace_owner),
+):
+    from app.database.models import PipelineStage
+    last = (db.query(PipelineStage)
+            .filter(PipelineStage.workspace_id == workspace_id)
+            .order_by(PipelineStage.position.desc()).first())
+    next_pos = (last.position if last else 0) + 1
+    stage = PipelineStage(
+        workspace_id=workspace_id, position=next_pos, name=req.name.strip(),
+        description=req.description, color=req.color,
+        is_deposit_stage=req.is_deposit_stage,
+        is_member_stage=req.is_member_stage,
+        is_conversion_stage=req.is_conversion_stage,
+        end_action=req.end_action,
+        revert_to_stage_id=req.revert_to_stage_id,
+    )
+    db.add(stage)
+    db.commit()
+    db.refresh(stage)
+    return _stage_dto(stage)
+
+
+@app.patch("/settings/pipeline/stages/{stage_id}")
+def update_pipeline_stage(
+    stage_id: int, req: PipelineStageUpdateRequest,
+    db: Session = Depends(get_db),
+    workspace_id: int = Depends(get_workspace_id),
+    _=Depends(require_workspace_owner),
+):
+    from app.database.models import PipelineStage
+    s = db.query(PipelineStage).filter(
+        PipelineStage.id == stage_id,
+        PipelineStage.workspace_id == workspace_id,
+    ).first()
+    if not s:
+        raise HTTPException(status_code=404, detail="stage not found")
+    for k, v in req.dict(exclude_none=True).items():
+        setattr(s, k, v)
+    db.commit()
+    db.refresh(s)
+    return _stage_dto(s)
+
+
+@app.delete("/settings/pipeline/stages/{stage_id}")
+def delete_pipeline_stage(
+    stage_id: int,
+    move_contacts_to: Optional[int] = None,
+    db: Session = Depends(get_db),
+    workspace_id: int = Depends(get_workspace_id),
+    _=Depends(require_workspace_owner),
+):
+    from app.database.models import PipelineStage, Contact, Workspace
+    s = db.query(PipelineStage).filter(
+        PipelineStage.id == stage_id,
+        PipelineStage.workspace_id == workspace_id,
+    ).first()
+    if not s:
+        raise HTTPException(status_code=404, detail="stage not found")
+
+    ws = db.query(Workspace).filter(Workspace.id == workspace_id).first()
+    if ws and stage_id in (ws.deposited_stage_id, ws.member_stage_id):
+        raise HTTPException(
+            status_code=400,
+            detail="cannot delete a stage marked as deposit or member; reassign the flag first",
+        )
+
+    occupied = db.query(Contact).filter(
+        Contact.workspace_id == workspace_id,
+        Contact.current_stage_id == stage_id,
+    ).count()
+    if occupied:
+        if move_contacts_to is None:
+            raise HTTPException(
+                status_code=409,
+                detail=f"{occupied} contacts in this stage; pass ?move_contacts_to=<stage_id>",
+            )
+        target = db.query(PipelineStage).filter(
+            PipelineStage.id == move_contacts_to,
+            PipelineStage.workspace_id == workspace_id,
+        ).first()
+        if not target:
+            raise HTTPException(status_code=400, detail="move target stage not found")
+        db.query(Contact).filter(
+            Contact.workspace_id == workspace_id,
+            Contact.current_stage_id == stage_id,
+        ).update({
+            Contact.current_stage_id: target.id,
+            Contact.current_stage: target.position,
+        })
+
+    db.delete(s)
+    db.flush()
+    # Re-densify positions so they remain 1..N contiguous.
+    # Use raw SQL two-pass to avoid UNIQUE(workspace_id, position) collision.
+    from sqlalchemy import text
+    rest = (db.query(PipelineStage)
+            .filter(PipelineStage.workspace_id == workspace_id)
+            .order_by(PipelineStage.position).all())
+    for row in rest:
+        db.execute(
+            text("UPDATE pipeline_stages SET position = :neg WHERE id = :id"),
+            {"neg": -(row.id), "id": row.id},
+        )
+    db.flush()
+    for i, row in enumerate(rest, start=1):
+        db.execute(
+            text("UPDATE pipeline_stages SET position = :pos WHERE id = :id"),
+            {"pos": i, "id": row.id},
+        )
+    db.commit()
+    db.expire_all()
+    return {"ok": True}
+
+
+@app.post("/settings/pipeline/reorder")
+def reorder_pipeline(
+    req: PipelineReorderRequest,
+    db: Session = Depends(get_db),
+    workspace_id: int = Depends(get_workspace_id),
+    _=Depends(require_workspace_owner),
+):
+    from sqlalchemy import text
+    from app.database.models import PipelineStage
+    stages = (db.query(PipelineStage)
+              .filter(PipelineStage.workspace_id == workspace_id).all())
+    if {s.id for s in stages} != set(req.ordered_ids):
+        raise HTTPException(
+            status_code=400,
+            detail="ordered_ids must contain exactly the workspace's stage ids",
+        )
+    # Two-pass to avoid UNIQUE(workspace_id, position) collisions:
+    # Pass 1 — move all rows to large negative positions so none clash.
+    for s in stages:
+        db.execute(
+            text("UPDATE pipeline_stages SET position = :neg WHERE id = :id"),
+            {"neg": -(s.id), "id": s.id},
+        )
+    db.flush()
+    # Pass 2 — assign real positions.
+    for i, sid in enumerate(req.ordered_ids, start=1):
+        db.execute(
+            text("UPDATE pipeline_stages SET position = :pos WHERE id = :id"),
+            {"pos": i, "id": sid},
+        )
+    db.commit()
+    db.expire_all()
+    return {"ok": True}
+
+
+@app.patch("/settings/pipeline/flags")
+def update_pipeline_flags(
+    req: PipelineFlagsRequest,
+    db: Session = Depends(get_db),
+    workspace_id: int = Depends(get_workspace_id),
+    _=Depends(require_workspace_owner),
+):
+    import json as _json
+    from app.database.models import Workspace, PipelineStage
+    ws = db.query(Workspace).filter(Workspace.id == workspace_id).first()
+    if not ws:
+        raise HTTPException(status_code=404, detail="workspace not found")
+
+    def _validate(stage_id):
+        if stage_id is None:
+            return None
+        s = db.query(PipelineStage).filter(
+            PipelineStage.id == stage_id,
+            PipelineStage.workspace_id == workspace_id,
+        ).first()
+        if not s:
+            raise HTTPException(status_code=400, detail=f"stage {stage_id} not in workspace")
+        return stage_id
+
+    if req.deposited_stage_id is not None:
+        ws.deposited_stage_id = _validate(req.deposited_stage_id)
+    if req.member_stage_id is not None:
+        ws.member_stage_id = _validate(req.member_stage_id)
+    if req.conversion_stage_id is not None:
+        ws.conversion_stage_id = _validate(req.conversion_stage_id)
+    if req.vip_marker_phrases is not None:
+        ws.vip_marker_phrases = _json.dumps([p for p in req.vip_marker_phrases if p])
+
+    db.commit()
+    return {
+        "ok": True,
+        "deposited_stage_id": ws.deposited_stage_id,
+        "member_stage_id": ws.member_stage_id,
+        "conversion_stage_id": ws.conversion_stage_id,
+    }
+
+
 # --- Keywords ---
 
 @app.get("/settings/keywords")
@@ -2838,35 +3580,54 @@ def settings_list_keywords(db: Session = Depends(get_db), _=SETTINGS_ROLES, work
         .all()
     )
     return [
-        {"id": r.id, "keyword": r.keyword, "target_stage": r.target_stage, "is_active": r.is_active}
+        {"id": r.id, "keyword": r.keyword, "target_stage": r.target_stage,
+         "target_stage_id": r.target_stage_id, "is_active": r.is_active}
         for r in rows
     ]
 
 
 @app.post("/settings/keywords", status_code=201)
 def settings_create_keyword(req: KeywordCreateRequest, db: Session = Depends(get_db), _=SETTINGS_ROLES, workspace_id: int = Depends(get_workspace_id)):
-    from app.database.models import StageKeyword
-    kw = StageKeyword(workspace_id=workspace_id, keyword=req.keyword.strip(), target_stage=req.target_stage)
+    from app.database.models import StageKeyword, PipelineStage
+    stage = db.query(PipelineStage).filter(
+        PipelineStage.id == req.target_stage_id,
+        PipelineStage.workspace_id == workspace_id,
+    ).first()
+    if not stage:
+        raise HTTPException(status_code=400, detail=f"stage {req.target_stage_id} not in workspace")
+    kw = StageKeyword(
+        workspace_id=workspace_id, keyword=req.keyword.strip(),
+        target_stage_id=req.target_stage_id, target_stage=stage.position,
+    )
     db.add(kw)
     db.commit()
     db.refresh(kw)
-    return {"id": kw.id, "keyword": kw.keyword, "target_stage": kw.target_stage, "is_active": kw.is_active}
+    return {"id": kw.id, "keyword": kw.keyword, "target_stage": kw.target_stage,
+            "target_stage_id": kw.target_stage_id, "is_active": kw.is_active}
 
 
 @app.patch("/settings/keywords/{kw_id}")
 def settings_update_keyword(kw_id: int, req: KeywordUpdateRequest, db: Session = Depends(get_db), _=SETTINGS_ROLES, workspace_id: int = Depends(get_workspace_id)):
-    from app.database.models import StageKeyword
+    from app.database.models import StageKeyword, PipelineStage
     kw = db.query(StageKeyword).filter(StageKeyword.id == kw_id, StageKeyword.workspace_id == workspace_id).first()
     if not kw:
         raise HTTPException(status_code=404, detail="keyword not found")
     if req.keyword is not None:
         kw.keyword = req.keyword.strip()
-    if req.target_stage is not None:
-        kw.target_stage = req.target_stage
+    if req.target_stage_id is not None:
+        stage = db.query(PipelineStage).filter(
+            PipelineStage.id == req.target_stage_id,
+            PipelineStage.workspace_id == workspace_id,
+        ).first()
+        if not stage:
+            raise HTTPException(status_code=400, detail=f"stage {req.target_stage_id} not in workspace")
+        kw.target_stage_id = req.target_stage_id
+        kw.target_stage = stage.position
     if req.is_active is not None:
         kw.is_active = req.is_active
     db.commit()
-    return {"id": kw.id, "keyword": kw.keyword, "target_stage": kw.target_stage, "is_active": kw.is_active}
+    return {"id": kw.id, "keyword": kw.keyword, "target_stage": kw.target_stage,
+            "target_stage_id": kw.target_stage_id, "is_active": kw.is_active}
 
 
 @app.delete("/settings/keywords/{kw_id}")
@@ -2892,7 +3653,8 @@ def settings_list_templates(db: Session = Depends(get_db), _=SETTINGS_ROLES, wor
         .all()
     )
     return [
-        {"id": r.id, "stage": r.stage, "sequence_num": r.sequence_num, "message_text": r.message_text}
+        {"id": r.id, "stage": r.stage, "sequence_num": r.sequence_num,
+         "message_text": r.message_text, "hours_offset": r.hours_offset}
         for r in rows
     ]
 
@@ -2904,8 +3666,11 @@ def settings_update_template(tmpl_id: int, req: FollowUpUpdateRequest, db: Sessi
     if not tmpl:
         raise HTTPException(status_code=404, detail="template not found")
     tmpl.message_text = req.message_text.strip()
+    if req.hours_offset is not None:
+        tmpl.hours_offset = req.hours_offset
     db.commit()
-    return {"id": tmpl.id, "stage": tmpl.stage, "sequence_num": tmpl.sequence_num, "message_text": tmpl.message_text}
+    return {"id": tmpl.id, "stage": tmpl.stage, "sequence_num": tmpl.sequence_num,
+            "message_text": tmpl.message_text, "hours_offset": tmpl.hours_offset}
 
 
 # --- Quick Replies ---
@@ -2920,19 +3685,30 @@ def settings_list_quick_replies(db: Session = Depends(get_db), _=SETTINGS_ROLES,
         .all()
     )
     return [
-        {"id": r.id, "stage_num": r.stage_num, "label": r.label, "text": r.text, "sort_order": r.sort_order, "is_active": r.is_active}
+        {"id": r.id, "stage_num": r.stage_num, "stage_id": r.stage_id,
+         "label": r.label, "text": r.text, "sort_order": r.sort_order, "is_active": r.is_active}
         for r in rows
     ]
 
 
 @app.post("/settings/quick-replies", status_code=201)
 def settings_create_quick_reply(req: QuickReplyCreateRequest, db: Session = Depends(get_db), _=SETTINGS_ROLES, workspace_id: int = Depends(get_workspace_id)):
-    from app.database.models import QuickReply
-    qr = QuickReply(workspace_id=workspace_id, stage_num=req.stage_num, label=req.label.strip(), text=req.text.strip(), sort_order=req.sort_order)
+    from app.database.models import QuickReply, PipelineStage
+    stage = db.query(PipelineStage).filter(
+        PipelineStage.id == req.stage_id,
+        PipelineStage.workspace_id == workspace_id,
+    ).first()
+    if not stage:
+        raise HTTPException(status_code=400, detail=f"stage {req.stage_id} not in workspace")
+    qr = QuickReply(
+        workspace_id=workspace_id, stage_id=req.stage_id, stage_num=stage.position,
+        label=req.label.strip(), text=req.text.strip(), sort_order=req.sort_order,
+    )
     db.add(qr)
     db.commit()
     db.refresh(qr)
-    return {"id": qr.id, "stage_num": qr.stage_num, "label": qr.label, "text": qr.text, "sort_order": qr.sort_order, "is_active": qr.is_active}
+    return {"id": qr.id, "stage_num": qr.stage_num, "stage_id": qr.stage_id,
+            "label": qr.label, "text": qr.text, "sort_order": qr.sort_order, "is_active": qr.is_active}
 
 
 @app.patch("/settings/quick-replies/{qr_id}")
@@ -2950,7 +3726,8 @@ def settings_update_quick_reply(qr_id: int, req: QuickReplyUpdateRequest, db: Se
     if req.is_active is not None:
         qr.is_active = req.is_active
     db.commit()
-    return {"id": qr.id, "stage_num": qr.stage_num, "label": qr.label, "text": qr.text, "sort_order": qr.sort_order, "is_active": qr.is_active}
+    return {"id": qr.id, "stage_num": qr.stage_num, "stage_id": qr.stage_id,
+            "label": qr.label, "text": qr.text, "sort_order": qr.sort_order, "is_active": qr.is_active}
 
 
 @app.delete("/settings/quick-replies/{qr_id}")

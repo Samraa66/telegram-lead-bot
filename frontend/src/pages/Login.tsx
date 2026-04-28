@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, Link } from "react-router-dom";
 import { fetchAuthConfig, login, loginWithTelegram, TelegramAuthData } from "../api/auth";
 
 const LogoMark = ({ size = 36 }: { size?: number }) => (
@@ -227,6 +227,11 @@ export default function Login() {
               {loading ? "Signing in…" : "Sign in"}
             </button>
           </form>
+
+          <p className="text-center text-xs text-muted-foreground">
+            Don't have an account?{" "}
+            <Link to="/signup" className="text-primary hover:underline">Sign up</Link>
+          </p>
 
           <p className="text-center text-[10px] text-muted-foreground/60 tracking-[0.2em] uppercase">
             Authorized access only

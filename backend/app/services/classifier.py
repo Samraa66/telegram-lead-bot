@@ -1,19 +1,21 @@
 """
-Contact classifier: determines the lead type based on pipeline stage and flags.
+Contact classifier: determines the lead type based on pipeline stage flags and deposit status.
 
 Classifications (stored as VARCHAR, never ENUM):
-  new_lead   — in DB, stage 1 (just arrived, pipeline not yet started)
-  warm_lead  — in DB, stage 2-6, no deposit
-  vip        — in DB, stage 7-8 OR deposit confirmed
+  new_lead   — no stage assigned, or stage at position 1
+  warm_lead  — in pipeline at position >= 2, no deposit, not a member stage
+  vip        — deposit_status="deposited" OR current stage has is_member_stage=True
   affiliate  — manually tagged (is_affiliate=True)
   noise      — manually tagged by operator (not automatic)
 
 Priority order: affiliate > noise > vip > warm_lead > new_lead
 
-NOTE: noise is MANUAL ONLY. @WalidxBullish_Support is a personal Telegram
-account — Telegram never auto-sends /start for personal accounts, so we
-cannot use /start to distinguish leads from random DMs. All new DMs default
-to new_lead; the operator marks spam as noise from the dashboard.
+NOTE: noise is MANUAL ONLY. All new DMs default to new_lead; the operator
+marks spam as noise from the dashboard.
+
+VIP and warm_lead are determined purely by PipelineStage flags (is_member_stage,
+position) and Contact.deposit_status. The legacy deposit_confirmed boolean and
+integer current_stage field are no longer consulted.
 """
 
 from __future__ import annotations
@@ -27,19 +29,22 @@ from app.database.models import Contact
 
 def classify_contact(
     db: Session,
-    user_id: int,
+    contact_id: int,
     source: Optional[str],
     *,
     existing: Optional[Contact] = None,
 ) -> str:
     """
-    Return the classification string for a contact based on their current stage.
+    Return the classification string for a contact based on deposit_status and
+    their current PipelineStage flags.
 
     Called after every stage transition to keep classification in sync.
     Never call this on a brand-new contact before flush() — use the
     initial classification set in telethon_client instead.
     """
-    contact = existing or db.query(Contact).filter(Contact.id == user_id).first()
+    from app.database.models import PipelineStage
+
+    contact = existing or db.query(Contact).filter(Contact.id == contact_id).first()
 
     if not contact:
         return "new_lead"
@@ -52,15 +57,17 @@ def classify_contact(
     if contact.classification == "noise":
         return "noise"
 
-    stage = contact.current_stage or 1
-
-    # VIP: deposit confirmed OR stage 7-8
-    if contact.deposit_confirmed or stage >= 7:
+    # Deposited contacts are always VIP, regardless of which stage they currently sit in.
+    if contact.deposit_status == "deposited":
         return "vip"
 
-    # Warm lead: in pipeline, stages 2-6, no deposit
-    if stage >= 2:
-        return "warm_lead"
+    # Members (people in the explicit member-stage) are VIP too.
+    if contact.current_stage_id:
+        stage = db.query(PipelineStage).filter(PipelineStage.id == contact.current_stage_id).first()
+        if stage:
+            if stage.is_member_stage:
+                return "vip"
+            if stage.position >= 2:
+                return "warm_lead"
 
-    # New lead: stage 1 — just arrived, pipeline not yet advanced
     return "new_lead"

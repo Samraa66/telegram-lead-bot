@@ -1,17 +1,21 @@
-import { Lead, Message, backendStageToUi } from "../data/crmData";
+import { Lead, Message } from "../data/crmData";
 import { getToken, clearAuth } from "./auth";
+import { fetchPipeline, PipelineStage } from "./pipeline";
 
 type ContactDto = {
   id: number;
   username: string | null;
   first_name: string | null;
   last_name: string | null;
-  current_stage: number;
+  current_stage: number | null;        // legacy mirror, may still be returned
+  current_stage_id: number | null;
   classification: string;
   notes: string;
   stage_entered_at: string | null;
   last_message_at: string | null;
   escalated: boolean | null;
+  deposit_status?: "none" | "pending" | "deposited";
+  deposited_at?: string | null;
 };
 
 type MessageDto = {
@@ -73,16 +77,24 @@ function avatarFor(displayName: string): string {
 
 export async function fetchContacts(includeNoise = false): Promise<Lead[]> {
   const path = includeNoise ? "/contacts?include_noise=true" : "/contacts";
-  const contacts = (await apiFetch(path)) as ContactDto[];
+  const [contacts, pipeline] = await Promise.all([
+    apiFetch(path) as Promise<ContactDto[]>,
+    fetchPipeline().catch(() => null),
+  ]);
+  const stageById = new Map<number, PipelineStage>((pipeline?.stages || []).map((s: PipelineStage) => [s.id, s]));
   return contacts.map((c) => {
     const username = c.username ? `@${String(c.username).replace(/^@/, "")}` : null;
     const lastTs = c.last_message_at || new Date().toISOString();
     const displayName = buildDisplayName(c.first_name, c.last_name, c.username, c.id);
+    const stageId = c.current_stage_id ?? (c.current_stage ?? null);
+    const stage = stageId ? stageById.get(stageId) : undefined;
     return {
       id: String(c.id),
       name: displayName,
       username: username ?? `@user_${c.id}`,
-      stage: backendStageToUi(c.current_stage || 1),
+      stageId: stageId,
+      stageName: stage?.name ?? "—",
+      stagePosition: stage?.position ?? null,
       stageEnteredAt: c.stage_entered_at || lastTs,
       classification: c.classification || "new_lead",
       notes: c.notes || "",
@@ -90,6 +102,7 @@ export async function fetchContacts(includeNoise = false): Promise<Lead[]> {
       lastMessageAt: lastTs,
       unread: 0,
       escalated: c.escalated ?? false,
+      depositStatus: (c.deposit_status as "none" | "pending" | "deposited") ?? "none",
     };
   });
 }
@@ -113,11 +126,11 @@ export async function sendMessageToContact(contactId: string, message: string): 
   });
 }
 
-export async function setContactStage(contactId: string, stage: number): Promise<void> {
+export async function setContactStage(contactId: string, stageId: number): Promise<void> {
 
   await apiFetch(`/contacts/${contactId}/stage`, {
     method: "POST",
-    body: JSON.stringify({ stage }),
+    body: JSON.stringify({ stage_id: stageId }),
   });
 }
 
@@ -147,5 +160,8 @@ export async function markAsNoise(contactId: string): Promise<void> {
 
 export async function confirmDeposit(contactId: string): Promise<void> {
 
-  await apiFetch(`/contacts/${contactId}/deposit-confirm`, { method: "POST" });
+  await apiFetch(`/contacts/${contactId}/deposit`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
 }

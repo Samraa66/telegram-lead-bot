@@ -115,6 +115,24 @@ def authenticate_user(username: str, password: str, db=None) -> Optional[dict]:
     if db is None:
         return None
 
+    # DB-backed Account (email-based login) — checked before TeamMember/Affiliate
+    from app.database.models import Account
+    acct = (
+        db.query(Account)
+        .filter(func.lower(Account.email) == username_lc, Account.is_active.is_(True))
+        .first()
+    )
+    if acct and verify_password(password, acct.password_hash or ""):
+        return {
+            "username": acct.email,
+            "role": acct.role,
+            "account_id": acct.id,
+            "workspace_id": acct.workspace_id,
+            "org_id": acct.org_id,
+            "org_role": acct.org_role,
+            "affiliate_id": acct.affiliate_id,
+        }
+
     # Team member (DB-backed: operator / vip_manager / admin)
     from app.database.models import TeamMember
     member = (
@@ -149,6 +167,7 @@ def create_access_token(
     org_id: int = 1,
     org_role: str = "member",
     affiliate_id: Optional[int] = None,
+    account_id: Optional[int] = None,
 ) -> str:
     expire = datetime.utcnow() + timedelta(hours=TOKEN_EXPIRE_HOURS)
     payload = {
@@ -161,6 +180,8 @@ def create_access_token(
     }
     if affiliate_id is not None:
         payload["affiliate_id"] = affiliate_id
+    if account_id is not None:
+        payload["account_id"] = account_id
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 
 
@@ -182,6 +203,8 @@ def get_current_user(
         }
         if "affiliate_id" in payload:
             result["affiliate_id"] = payload["affiliate_id"]
+        if "account_id" in payload:
+            result["account_id"] = payload["account_id"]
         return result
     except JWTError:
         raise HTTPException(status_code=401, detail="Invalid or expired token")

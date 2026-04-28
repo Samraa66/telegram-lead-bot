@@ -13,7 +13,7 @@ import { LeadDrawer } from "../components/crm/LeadDrawer";
 import AnalyticsDashboard from "./AnalyticsDashboard";
 import MembersDashboard from "./MembersDashboard";
 import AffiliatesDashboard from "./AffiliatesDashboard";
-import { Lead, uiStageToBackend } from "../data/crmData";
+import { Lead } from "../data/crmData";
 import {
   fetchContacts,
   sendMessageToContact,
@@ -107,11 +107,13 @@ export default function CRMDashboard() {
 
   const handleUpdateLead = useCallback(async (updated: Lead) => {
     setLeads((prev) => prev.map((l) => (l.id === updated.id ? updated : l)));
-    try {
-      await setContactStage(updated.id, uiStageToBackend(updated.stage));
-      await loadContacts(true);
-    } catch (e: any) {
-      setError(e?.message || "Failed to update stage");
+    if (updated.stageId !== null) {
+      try {
+        await setContactStage(updated.id, updated.stageId);
+        await loadContacts(true);
+      } catch (e: any) {
+        setError(e?.message || "Failed to update stage");
+      }
     }
   }, [loadContacts]);
 

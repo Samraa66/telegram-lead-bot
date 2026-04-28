@@ -13,7 +13,7 @@ User = Contact alias kept so existing code that imports User continues to work.
 
 from datetime import date, datetime
 
-from sqlalchemy import BigInteger, Boolean, Column, Date, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import BigInteger, Boolean, Column, Date, DateTime, Float, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.orm import relationship
 from sqlalchemy.ext.declarative import declarative_base
 
@@ -64,6 +64,15 @@ class Contact(Base):
 
     deposit_confirmed = Column(Boolean, nullable=False, default=False)
     deposit_date = Column(Date, nullable=True)
+    # New deposit semantics — supersede deposit_confirmed/deposit_date.
+    # Old columns kept until phase-1 backfill confirms parity, then removed in phase 4.
+    current_stage_id = Column(Integer, ForeignKey("pipeline_stages.id"), nullable=True)
+    deposit_status = Column(String(20), nullable=False, default="none")  # none|pending|deposited
+    deposited_at = Column(DateTime, nullable=True)
+    deposit_amount = Column(Numeric(precision=18, scale=4), nullable=True)
+    deposit_currency = Column(String(8), nullable=True)
+    deposit_source = Column(String(20), nullable=True)  # manual|email|api
+    puprime_client_id = Column(String(255), nullable=True, index=True)
 
     is_affiliate = Column(Boolean, nullable=False, default=False)
     escalated = Column(Boolean, nullable=False, default=False)
@@ -118,6 +127,8 @@ class StageHistory(Base):
 
     from_stage = Column(Integer, nullable=True)
     to_stage = Column(Integer, nullable=False)
+    from_stage_id = Column(Integer, ForeignKey("pipeline_stages.id"), nullable=True)
+    to_stage_id = Column(Integer, ForeignKey("pipeline_stages.id"), nullable=True)
     moved_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     moved_by = Column(String(20), nullable=False, default="system")  # system / manual / talal
     trigger_keyword = Column(String(255), nullable=True)
@@ -137,6 +148,7 @@ class FollowUpQueue(Base):
     contact_id = Column(BigInteger, ForeignKey("contacts.id"), nullable=False)
 
     stage = Column(Integer, nullable=False)
+    stage_id = Column(Integer, ForeignKey("pipeline_stages.id"), nullable=True)
     sequence_num = Column(Integer, nullable=False)  # position in the follow-up sequence
     scheduled_at = Column(DateTime, nullable=False)
     fired_at = Column(DateTime, nullable=True)
@@ -155,6 +167,8 @@ class FollowUpTemplate(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     workspace_id = Column(Integer, nullable=False, default=1)
     stage = Column(Integer, nullable=False)
+    stage_id = Column(Integer, ForeignKey("pipeline_stages.id"), nullable=True)
+    hours_offset = Column(Float, nullable=False, default=24.0)
     sequence_num = Column(Integer, nullable=False)
     message_text = Column(Text, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -204,6 +218,132 @@ class Workspace(Base):
     telethon_session = Column(EncryptedText, nullable=True)
     # Affiliate onboarding — flipped to True once wizard is completed
     onboarding_complete = Column(Boolean, default=False)
+    # Org metadata (filled during signup / onboarding)
+    niche = Column(String(255), nullable=True)
+    language = Column(String(16), nullable=True)
+    timezone = Column(String(64), nullable=True)
+    country = Column(String(64), nullable=True)
+    main_channel_url = Column(Text, nullable=True)
+    sales_telegram_username = Column(String(255), nullable=True)
+    # Pipeline pointers — null until pipeline stages are created
+    deposited_stage_id = Column(Integer, ForeignKey("pipeline_stages.id"), nullable=True)
+    member_stage_id = Column(Integer, ForeignKey("pipeline_stages.id"), nullable=True)
+    conversion_stage_id = Column(Integer, ForeignKey("pipeline_stages.id"), nullable=True)
+    # JSON-encoded list of substrings — if any appear in a contact's first/last name,
+    # the contact is auto-promoted to member_stage_id at first sight (replaces the
+    # hardcoded 'vip' substring check in handlers/leads.py:_vip_stage_from_name).
+    vip_marker_phrases = Column(Text, nullable=True)  # JSON: ["vip", "premium", ...]
+    # HMAC secret for POST /webhook/deposit-events
+    deposit_webhook_secret = Column(EncryptedText, nullable=True)
+
+
+class PipelineStage(Base):
+    """
+    Per-workspace pipeline stage definition. Replaces hardcoded 1..8 stages.
+
+    Flags:
+      is_deposit_stage    — landing here marks the contact as deposited
+      is_member_stage     — landing here marks the contact as a paying member (VIP)
+      is_conversion_stage — used by analytics for "converted" cohort metrics
+
+    end_action drives scheduler behavior after the last follow-up in this stage:
+      "cold"     — stop following up
+      "revert"   — move contact back to revert_to_stage_id
+      "weekly"   — keep following up every 168h
+      "monthly"  — keep following up every 720h
+    """
+
+    __tablename__ = "pipeline_stages"
+    __table_args__ = (UniqueConstraint("workspace_id", "position", name="uq_workspace_position"),)
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    workspace_id = Column(Integer, nullable=False, index=True)
+    position = Column(Integer, nullable=False)
+    name = Column(String(255), nullable=False)
+    description = Column(Text, nullable=True)
+    color = Column(String(32), nullable=True)
+    is_member_stage = Column(Boolean, default=False, nullable=False)
+    is_deposit_stage = Column(Boolean, default=False, nullable=False)
+    is_conversion_stage = Column(Boolean, default=False, nullable=False)
+    end_action = Column(String(20), nullable=False, default="cold")
+    revert_to_stage_id = Column(Integer, ForeignKey("pipeline_stages.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class DepositEvent(Base):
+    """
+    Append-only log of deposit events. Created by process_deposit_event() from
+    any input source (manual button, email webhook, future PuPrime API).
+    Idempotency_key dedupes — same key from same provider is a no-op.
+    """
+
+    __tablename__ = "deposit_events"
+    __table_args__ = (
+        UniqueConstraint("workspace_id", "provider", "idempotency_key",
+                         name="uq_deposit_idempotency"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    workspace_id = Column(Integer, nullable=False, index=True)
+    contact_id = Column(BigInteger, ForeignKey("contacts.id"), nullable=False, index=True)
+    provider = Column(String(50), nullable=False)              # manual | puprime | other
+    provider_client_id = Column(String(255), nullable=True)    # e.g. PuPrime account #
+    amount = Column(Numeric(precision=18, scale=4), nullable=True)
+    currency = Column(String(8), nullable=True)
+    occurred_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    source = Column(String(20), nullable=False)                # manual | email_parser | api
+    idempotency_key = Column(String(255), nullable=False)
+    raw_payload = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class Account(Base):
+    """
+    User accounts with email-based login. Distinct from:
+      TeamMember — workspace-internal team accounts (operator/vip_manager/admin)
+      Affiliate  — affiliate-specific record with referral_tag and channel checklist
+      static env users (developer/admin) — kept for backward compat
+
+    role: "admin" (org owner / workspace owner) or "affiliate".
+    org_role: "org_owner" | "workspace_owner" | "member" — written into the JWT.
+    """
+
+    __tablename__ = "accounts"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    workspace_id = Column(Integer, nullable=False, index=True)
+    org_id = Column(Integer, nullable=False, index=True)
+    email = Column(String(255), nullable=False, unique=True, index=True)
+    full_name = Column(String(255), nullable=False)
+    password_hash = Column(String(255), nullable=False)
+    role = Column(String(50), nullable=False)              # admin | affiliate
+    org_role = Column(String(50), nullable=False, default="member")  # org_owner | workspace_owner | member
+    affiliate_id = Column(Integer, ForeignKey("affiliates.id"), nullable=True)
+    email_verified = Column(Boolean, default=False, nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    last_login_at = Column(DateTime, nullable=True)
+
+
+class AffiliateInvite(Base):
+    """
+    Pre-creates an invite without creating an Affiliate row yet.
+    On accept, the invite_token is consumed and Affiliate + Account + child
+    Workspace are all created in one transaction.
+    """
+
+    __tablename__ = "affiliate_invites"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    workspace_id = Column(Integer, nullable=False, index=True)
+    invited_by_account_id = Column(Integer, ForeignKey("accounts.id"), nullable=True)
+    invite_token = Column(String(64), nullable=False, unique=True, index=True)
+    email = Column(String(255), nullable=True)
+    status = Column(String(20), nullable=False, default="pending")  # pending|accepted|expired
+    expires_at = Column(DateTime, nullable=False)
+    accepted_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
 
 class StageKeyword(Base):
@@ -219,6 +359,7 @@ class StageKeyword(Base):
     workspace_id = Column(Integer, nullable=False, default=1)
     keyword = Column(String(500), nullable=False)
     target_stage = Column(Integer, nullable=False)
+    target_stage_id = Column(Integer, ForeignKey("pipeline_stages.id"), nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -243,6 +384,7 @@ class QuickReply(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     workspace_id = Column(Integer, nullable=False, default=1)
     stage_num = Column(Integer, nullable=False)
+    stage_id = Column(Integer, ForeignKey("pipeline_stages.id"), nullable=True)
     label = Column(String(255), nullable=False)
     text = Column(Text, nullable=False)
     sort_order = Column(Integer, nullable=False, default=0)

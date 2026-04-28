@@ -11,14 +11,11 @@ import { Input } from "../ui/input";
 import { useState } from "react";
 import {
   Lead,
-  Stage,
-  STAGES,
-  STAGE_COLORS,
-  STAGE_TEXT_COLORS,
   formatTimeInStage,
   classificationLabel,
   classificationColor,
 } from "../../data/crmData";
+import { useWorkspaceStages } from "../../hooks/useWorkspaceStages";
 import { cn } from "../../lib/utils";
 
 interface LeadListProps {
@@ -44,7 +41,7 @@ type ClassificationFilter =
   | "affiliate"
   | "noise"
   | "escalated";
-type StageFilter = "all" | Stage;
+type StageFilter = "all" | number;
 type SortMode = "waiting" | "active" | "newest";
 
 const CLASSIFICATION_FILTERS: { key: ClassificationFilter; label: string }[] = [
@@ -67,6 +64,7 @@ export function LeadList({
   selectedLeadId,
   onSelectLead,
 }: LeadListProps) {
+  const pipeline = useWorkspaceStages();
   const [search, setSearch] = useState("");
   const [classFilter, setClassFilter] = useState<ClassificationFilter>("all");
   const [stageFilter, setStageFilter] = useState<StageFilter>("all");
@@ -89,7 +87,7 @@ export function LeadList({
         if (classFilter !== "all" && l.classification !== classFilter)
           return false;
       }
-      if (stageFilter !== "all" && l.stage !== stageFilter) return false;
+      if (stageFilter !== "all" && l.stageId !== stageFilter) return false;
       if (
         search &&
         !l.name.toLowerCase().includes(search.toLowerCase()) &&
@@ -122,11 +120,30 @@ export function LeadList({
     (l) => getUrgencyLevel(l.stageEnteredAt) !== "normal",
   ).length;
   const depositedCount = leads.filter(
-    (l) =>
-      l.stage === "Deposited" ||
-      l.stage === "VIP Member" ||
-      l.classification === "vip",
+    (l) => l.depositStatus === "deposited" || l.classification === "vip",
   ).length;
+
+  // Stage color for the dot — use API color if available, else a neutral fallback
+  function stageDotColor(lead: Lead): string {
+    if (!pipeline) return "bg-secondary";
+    const stage = pipeline.stages.find(s => s.id === lead.stageId);
+    if (stage?.color) return ""; // handled via style
+    return "bg-muted-foreground/40";
+  }
+
+  function stageDotStyle(lead: Lead): React.CSSProperties {
+    if (!pipeline) return {};
+    const stage = pipeline.stages.find(s => s.id === lead.stageId);
+    if (stage?.color) return { backgroundColor: stage.color };
+    return {};
+  }
+
+  function stageTextStyle(lead: Lead): React.CSSProperties {
+    if (!pipeline) return {};
+    const stage = pipeline.stages.find(s => s.id === lead.stageId);
+    if (stage?.color) return { color: stage.color };
+    return {};
+  }
 
   return (
     <div className="bg-background">
@@ -221,18 +238,18 @@ export function LeadList({
             >
               All Stages
             </button>
-            {STAGES.map((stage) => (
+            {(pipeline?.stages || []).map((stage) => (
               <button
-                key={stage}
-                onClick={() => setStageFilter(stage)}
+                key={stage.id}
+                onClick={() => setStageFilter(stage.id)}
                 className={cn(
                   "px-3 py-1 rounded-full text-[11px] font-semibold whitespace-nowrap transition-all",
-                  stageFilter === stage
+                  stageFilter === stage.id
                     ? "bg-foreground text-background"
                     : "bg-secondary text-muted-foreground active:bg-accent",
                 )}
               >
-                {stage}
+                {stage.name}
               </button>
             ))}
           </div>
@@ -333,17 +350,21 @@ export function LeadList({
                       <span
                         className={cn(
                           "h-2 w-2 rounded-full shrink-0",
-                          STAGE_COLORS[lead.stage],
+                          stageDotColor(lead),
                         )}
+                        style={stageDotStyle(lead)}
                       />
                       <span
-                        className={cn(
-                          "text-[12px] font-medium truncate",
-                          STAGE_TEXT_COLORS[lead.stage],
-                        )}
+                        className="text-[12px] font-medium truncate text-muted-foreground"
+                        style={stageTextStyle(lead)}
                       >
-                        {lead.stage}
+                        {lead.stageName}
                       </span>
+                      {lead.depositStatus === "deposited" && (
+                        <span className="shrink-0 px-1.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-500 text-[10px] font-bold">
+                          Deposited
+                        </span>
+                      )}
                     </div>
                     <span
                       className={cn(

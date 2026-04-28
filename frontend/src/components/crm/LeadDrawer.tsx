@@ -1,12 +1,13 @@
 import { X, ChevronRight, AlertTriangle, StickyNote, Star, VolumeX, MessageSquare, Zap } from "lucide-react";
 import { useState, useEffect } from "react";
-import { Lead, Stage, STAGES, STAGE_COLORS, STAGE_TEXT_COLORS, ESCALATION_CONTACT_NAME, formatTimeInStage, classificationLabel, classificationColor } from "../../data/crmData";
+import { Lead, ESCALATION_CONTACT_NAME, formatTimeInStage, classificationLabel, classificationColor } from "../../data/crmData";
+import { useWorkspaceStages } from "../../hooks/useWorkspaceStages";
 import { Button } from "../ui/button";
 import { Textarea } from "../ui/textarea";
 import { cn } from "../../lib/utils";
 import { getStoredUser, canManageAffiliates } from "../../api/auth";
 
-// Stage-contextual quick reply templates.
+// Stage-contextual quick reply templates (keyed by stage position 1..n).
 // Each text string MUST contain the keyword phrase that triggers stage detection
 // in the backend pipeline (pipeline.py STAGE_KEYWORDS).
 const STAGE_TEMPLATES: Record<number, { label: string; text: string }[]> = {
@@ -38,7 +39,6 @@ const STAGE_TEMPLATES: Record<number, { label: string; text: string }[]> = {
     { label: "Welcome", text: "Really happy to have you here with us! Here's what to expect going forward 🙌" },
     { label: "Onboard", text: "I'm really happy to have you here — let's make sure you're getting the most out of everything!" },
   ],
-  8: [],
 };
 
 interface LeadDrawerProps {
@@ -66,6 +66,7 @@ export function LeadDrawer({
   onToggleAffiliate,
   onConfirmDeposit,
 }: LeadDrawerProps) {
+  const pipeline = useWorkspaceStages();
   const [notes, setNotes] = useState(lead?.notes ?? "");
   const [escalated, setEscalated] = useState(false);
   const [sendingTemplate, setSendingTemplate] = useState<string | null>(null);
@@ -85,19 +86,35 @@ export function LeadDrawer({
 
   if (!lead) return null;
 
-  const currentIdx = STAGES.indexOf(lead.stage);
-  const stageNum = currentIdx + 1;
-  const templates = STAGE_TEMPLATES[stageNum] ?? [];
+  const stages = pipeline?.stages || [];
+  const currentStageObj = stages.find(s => s.id === lead.stageId);
+  const currentIdx = currentStageObj ? stages.indexOf(currentStageObj) : -1;
+  const stagePosition = lead.stagePosition ?? (currentIdx + 1);
+  const templates = STAGE_TEMPLATES[stagePosition] ?? [];
 
-  const handleStageOverride = (stage: Stage) => {
-    if (stage !== lead.stage) {
-      onUpdateLead({ ...lead, stage, stageEnteredAt: new Date().toISOString() });
+  const handleStageOverride = (stageId: number) => {
+    if (stageId !== lead.stageId) {
+      const s = stages.find(st => st.id === stageId);
+      onUpdateLead({
+        ...lead,
+        stageId,
+        stageName: s?.name ?? "—",
+        stagePosition: s?.position ?? null,
+        stageEnteredAt: new Date().toISOString(),
+      });
     }
   };
 
   const moveToNext = () => {
-    if (currentIdx < STAGES.length - 1) {
-      onUpdateLead({ ...lead, stage: STAGES[currentIdx + 1], stageEnteredAt: new Date().toISOString() });
+    if (currentIdx >= 0 && currentIdx < stages.length - 1) {
+      const nextStage = stages[currentIdx + 1];
+      onUpdateLead({
+        ...lead,
+        stageId: nextStage.id,
+        stageName: nextStage.name,
+        stagePosition: nextStage.position,
+        stageEnteredAt: new Date().toISOString(),
+      });
     }
   };
 
@@ -121,6 +138,14 @@ export function LeadDrawer({
       setSendingTemplate(null);
     }
   };
+
+  // Stage dot color from API
+  const stageDotStyle: React.CSSProperties = currentStageObj?.color
+    ? { backgroundColor: currentStageObj.color }
+    : {};
+  const stageTextStyle: React.CSSProperties = currentStageObj?.color
+    ? { color: currentStageObj.color }
+    : {};
 
   return (
     <>
@@ -183,19 +208,27 @@ export function LeadDrawer({
               </span>
             </div>
             <div className="flex items-center gap-2">
-              <span className={cn("h-2.5 w-2.5 rounded-full shrink-0", STAGE_COLORS[lead.stage])} />
-              <span className={cn("text-sm font-bold", STAGE_TEXT_COLORS[lead.stage])}>
-                {stageNum} — {lead.stage}
+              <span
+                className="h-2.5 w-2.5 rounded-full shrink-0 bg-muted-foreground/40"
+                style={stageDotStyle}
+              />
+              <span className="text-sm font-bold text-muted-foreground" style={stageTextStyle}>
+                {stagePosition > 0 ? `${stagePosition} — ` : ""}{lead.stageName}
               </span>
             </div>
             {/* Pipeline bar */}
-            <div className="flex items-center gap-0.5 mt-1">
-              {STAGES.map((s, i) => (
-                <div key={s} className="flex-1">
-                  <div className={cn("h-1.5 rounded-full", i <= currentIdx ? STAGE_COLORS[s] : "bg-secondary")} />
-                </div>
-              ))}
-            </div>
+            {stages.length > 0 && (
+              <div className="flex items-center gap-0.5 mt-1">
+                {stages.map((s, i) => (
+                  <div key={s.id} className="flex-1">
+                    <div
+                      className={cn("h-1.5 rounded-full", i <= currentIdx ? "" : "bg-secondary")}
+                      style={i <= currentIdx && s.color ? { backgroundColor: s.color } : undefined}
+                    />
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* Quick Reply Templates */}
@@ -243,12 +276,12 @@ export function LeadDrawer({
             <p className="text-[11px] text-muted-foreground uppercase tracking-wider font-semibold">Actions</p>
             <Button
               onClick={moveToNext}
-              disabled={currentIdx >= STAGES.length - 1}
+              disabled={currentIdx < 0 || currentIdx >= stages.length - 1}
               className="w-full rounded-xl"
               size="sm"
             >
               <ChevronRight className="h-4 w-4 mr-1" />
-              Move to {currentIdx < STAGES.length - 1 ? STAGES[currentIdx + 1] : "—"}
+              Move to {currentIdx >= 0 && currentIdx < stages.length - 1 ? stages[currentIdx + 1].name : "—"}
             </Button>
             <Button
               variant="outline"
@@ -260,7 +293,7 @@ export function LeadDrawer({
               <AlertTriangle className="h-3 w-3 mr-1" />
               {escalated ? `Escalated to ${ESCALATION_CONTACT_NAME} ✓` : `Escalate to ${ESCALATION_CONTACT_NAME}`}
             </Button>
-            {!depositConfirmed && lead.classification !== "noise" && (
+            {!depositConfirmed && lead.depositStatus !== "deposited" && lead.classification !== "noise" && (
               <Button
                 variant="outline"
                 size="sm"
@@ -271,7 +304,7 @@ export function LeadDrawer({
                 Confirm Deposit → VIP
               </Button>
             )}
-            {depositConfirmed && (
+            {(depositConfirmed || lead.depositStatus === "deposited") && (
               <p className="text-center text-[11px] text-stage-qualified font-semibold">Deposit confirmed ✓ — moved to Members</p>
             )}
             {lead.classification !== "noise" && (
@@ -304,26 +337,31 @@ export function LeadDrawer({
           </div>
 
           {/* Manual stage override */}
-          <div className="ios-card p-4 space-y-2">
-            <p className="text-[11px] text-muted-foreground uppercase tracking-wider font-semibold">Override Stage</p>
-            <div className="grid grid-cols-2 gap-1.5">
-              {STAGES.map((s, i) => (
-                <button
-                  key={s}
-                  onClick={() => handleStageOverride(s)}
-                  className={cn(
-                    "flex items-center gap-1.5 px-2.5 py-2 rounded-xl text-[11px] font-medium transition-colors text-left",
-                    s === lead.stage
-                      ? "bg-accent text-foreground font-bold ring-1 ring-primary/30"
-                      : "bg-secondary text-muted-foreground active:bg-accent"
-                  )}
-                >
-                  <span className={cn("h-1.5 w-1.5 rounded-full shrink-0", STAGE_COLORS[s])} />
-                  <span className="truncate">{s}</span>
-                </button>
-              ))}
+          {stages.length > 0 && (
+            <div className="ios-card p-4 space-y-2">
+              <p className="text-[11px] text-muted-foreground uppercase tracking-wider font-semibold">Override Stage</p>
+              <div className="grid grid-cols-2 gap-1.5">
+                {stages.map((s) => (
+                  <button
+                    key={s.id}
+                    onClick={() => handleStageOverride(s.id)}
+                    className={cn(
+                      "flex items-center gap-1.5 px-2.5 py-2 rounded-xl text-[11px] font-medium transition-colors text-left",
+                      s.id === lead.stageId
+                        ? "bg-accent text-foreground font-bold ring-1 ring-primary/30"
+                        : "bg-secondary text-muted-foreground active:bg-accent"
+                    )}
+                  >
+                    <span
+                      className="h-1.5 w-1.5 rounded-full shrink-0 bg-muted-foreground/40"
+                      style={s.color ? { backgroundColor: s.color } : undefined}
+                    />
+                    <span className="truncate">{s.name}</span>
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
+          )}
 
           {/* Notes */}
           <div className="ios-card p-4 space-y-2">
@@ -342,6 +380,21 @@ export function LeadDrawer({
                 Save Notes
               </Button>
             )}
+          </div>
+
+          {/* Classification */}
+          <div className="ios-card p-4 space-y-2">
+            <p className="text-[11px] text-muted-foreground uppercase tracking-wider font-semibold">Classification</p>
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className={cn("px-2.5 py-0.5 rounded-full text-[11px] font-semibold", classificationColor(lead.classification))}>
+                {classificationLabel(lead.classification)}
+              </span>
+              {lead.depositStatus === "deposited" && (
+                <span className="px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-500/15 text-emerald-500">
+                  Deposited
+                </span>
+              )}
+            </div>
           </div>
 
         </div>
