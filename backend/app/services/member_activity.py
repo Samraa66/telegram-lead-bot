@@ -34,12 +34,12 @@ RE_ENGAGEMENT_TEMPLATE = (
 # Status computation
 # ---------------------------------------------------------------------------
 
-def compute_activity_status(last_inbound_at: Optional[datetime], stage: int) -> str:
+def compute_activity_status(last_inbound_at: Optional[datetime], *, is_member: bool) -> str:
     """
-    Derive activity status from last inbound message timestamp and stage.
-    Stage 8 always = high_value regardless of activity.
+    Derive activity status from last inbound message timestamp and member flag.
+    is_member=True always = high_value regardless of activity.
     """
-    if stage == 8:
+    if is_member:
         return "high_value"
     if last_inbound_at is None:
         return "churned"
@@ -69,15 +69,27 @@ def _last_inbound_at(db: Session, contact_id: int) -> Optional[datetime]:
 
 def get_vip_members(db: Session, workspace_id: int = 1) -> list:
     """
-    Return all VIP contacts (Stage 7 or 8, non-noise) with their computed
-    activity status and days since last activity.
+    Return all VIP contacts (deposited or in member/deposit stage, non-noise)
+    with their computed activity status and days since last activity.
     """
+    from app.database.models import Workspace
+    from sqlalchemy import or_
+    ws = db.query(Workspace).filter(Workspace.id == workspace_id).first()
+    member_stage_id = ws.member_stage_id if ws else None
+    deposit_stage_id = ws.deposited_stage_id if ws else None
+
+    or_clauses = [Contact.deposit_status == "deposited"]
+    if member_stage_id:
+        or_clauses.append(Contact.current_stage_id == member_stage_id)
+    if deposit_stage_id:
+        or_clauses.append(Contact.current_stage_id == deposit_stage_id)
+
     contacts = (
         db.query(Contact)
         .filter(
             Contact.workspace_id == workspace_id,
-            Contact.current_stage.in_([7, 8]),
             Contact.classification != "noise",
+            or_(*or_clauses),
         )
         .order_by(Contact.stage_entered_at.desc())
         .all()
@@ -86,7 +98,8 @@ def get_vip_members(db: Session, workspace_id: int = 1) -> list:
     result = []
     for c in contacts:
         last_at = _last_inbound_at(db, c.id)
-        status = compute_activity_status(last_at, c.current_stage or 7)
+        is_member = (c.current_stage_id == member_stage_id) or (c.deposit_status == "deposited")
+        status = compute_activity_status(last_at, is_member=is_member)
         days_inactive = None
         if last_at:
             days_inactive = round((datetime.utcnow() - last_at).total_seconds() / 86400, 1)
@@ -104,11 +117,13 @@ def get_vip_members(db: Session, workspace_id: int = 1) -> list:
             "name": display_name,
             "username": f"@{c.username}" if c.username else f"@user_{c.id}",
             "avatar": avatar,
-            "stage": c.current_stage,
+            "stage": c.current_stage,         # legacy mirror
+            "stage_id": c.current_stage_id,
             "activity_status": status,
             "days_inactive": days_inactive,
             "last_activity_at": last_at.isoformat() if last_at else None,
-            "deposit_date": c.deposit_date.isoformat() if c.deposit_date else None,
+            "deposit_date": c.deposit_date.isoformat() if c.deposit_date else None,  # legacy mirror
+            "deposited_at": c.deposited_at.isoformat() if c.deposited_at else None,
             "notes": c.notes or "",
             "classification": c.classification or "",
         })
@@ -149,19 +164,68 @@ def refresh_activity_statuses() -> None:
     """
     db = SessionLocal()
     try:
+        from app.database.models import Workspace
+        from sqlalchemy import or_
+
+        # Collect all workspace IDs that have VIP contacts to look up stage pointers
+        ws_rows = db.query(Workspace).all()
+        ws_map = {w.id: w for w in ws_rows}
+
+        def _vip_filter_for_ws(workspace_id):
+            ws = ws_map.get(workspace_id)
+            member_stage_id = ws.member_stage_id if ws else None
+            deposit_stage_id = ws.deposited_stage_id if ws else None
+            clauses = [Contact.deposit_status == "deposited"]
+            if member_stage_id:
+                clauses.append(Contact.current_stage_id == member_stage_id)
+            if deposit_stage_id:
+                clauses.append(Contact.current_stage_id == deposit_stage_id)
+            return or_(*clauses)
+
+        # Build a single query across all workspaces
+        # First, gather all workspace IDs that exist
+        all_ws_ids = list(ws_map.keys())
+        if not all_ws_ids:
+            return
+
+        # Build per-workspace OR clauses — union into a single query
+        all_ws_clauses = []
+        for ws_id in all_ws_ids:
+            ws = ws_map[ws_id]
+            member_stage_id = ws.member_stage_id
+            deposit_stage_id = ws.deposited_stage_id
+            sub_clauses = [
+                (Contact.workspace_id == ws_id) & (Contact.deposit_status == "deposited")
+            ]
+            if member_stage_id:
+                sub_clauses.append(
+                    (Contact.workspace_id == ws_id) & (Contact.current_stage_id == member_stage_id)
+                )
+            if deposit_stage_id:
+                sub_clauses.append(
+                    (Contact.workspace_id == ws_id) & (Contact.current_stage_id == deposit_stage_id)
+                )
+            all_ws_clauses.extend(sub_clauses)
+
+        if not all_ws_clauses:
+            return
+
         contacts = (
             db.query(Contact)
             .filter(
-                Contact.current_stage.in_([7, 8]),
                 Contact.classification != "noise",
+                or_(*all_ws_clauses),
             )
             .all()
         )
 
         counts = {"active": 0, "at_risk": 0, "churned": 0, "high_value": 0}
         for c in contacts:
+            ws = ws_map.get(c.workspace_id)
+            member_stage_id = ws.member_stage_id if ws else None
             last_at = _last_inbound_at(db, c.id)
-            status = compute_activity_status(last_at, c.current_stage or 7)
+            is_member = (c.current_stage_id == member_stage_id) or (c.deposit_status == "deposited")
+            status = compute_activity_status(last_at, is_member=is_member)
             c.activity_status = status
             counts[status] += 1
 

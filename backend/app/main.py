@@ -1975,10 +1975,10 @@ class UpdateChecklistRequest(BaseModel):
 @app.get("/affiliates/performance")
 def affiliate_performance(
     db: Session = Depends(get_db),
-    _=Depends(require_roles("developer", "admin")),
+    current_user: dict = Depends(require_roles("developer", "admin")),
 ):
     """Affiliate leaderboard with attributed leads, deposits, and commission earned."""
-    return get_affiliate_performance(db)
+    return get_affiliate_performance(db, workspace_id=current_user["workspace_id"])
 
 
 @app.get("/affiliates")

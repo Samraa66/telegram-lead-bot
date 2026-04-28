@@ -14,6 +14,12 @@ from sqlalchemy.orm import Session
 from app.database.models import AdCampaign, AdCreative, Affiliate, Contact, Message, StageHistory
 
 
+def _deposit_stage_id(db: Session, workspace_id: int) -> Optional[int]:
+    from app.database.models import Workspace
+    ws = db.query(Workspace).filter(Workspace.id == workspace_id).first()
+    return ws.deposited_stage_id if ws else None
+
+
 def get_today_stats(db: Session, workspace_id: int = 1) -> dict:
     today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
     users_today = (
@@ -87,30 +93,6 @@ def _date_filters(q, timestamp_col, from_dt: Optional[datetime], to_dt: Optional
     return q
 
 
-def _entries_at_stage(
-    db: Session,
-    stage: int,
-    total_non_noise: int,
-    workspace_id: int = 1,
-    from_dt: Optional[datetime] = None,
-    to_dt: Optional[datetime] = None,
-) -> int:
-    ws_filter = Contact.workspace_id == workspace_id
-    if stage == 1:
-        if from_dt is None and to_dt is None:
-            return total_non_noise
-        q = db.query(func.count(Contact.id)).filter(ws_filter, Contact.classification != "noise")
-        q = _date_filters(q, Contact.first_seen, from_dt, to_dt)
-        return q.scalar() or 0
-    q = (
-        db.query(func.count(func.distinct(StageHistory.contact_id)))
-        .join(Contact, Contact.id == StageHistory.contact_id)
-        .filter(ws_filter, Contact.classification != "noise", StageHistory.to_stage == stage)
-    )
-    q = _date_filters(q, StageHistory.moved_at, from_dt, to_dt)
-    return q.scalar() or 0
-
-
 def get_overview(
     db: Session,
     workspace_id: int = 1,
@@ -123,100 +105,75 @@ def get_overview(
     ws_filter = Contact.workspace_id == workspace_id
 
     total_non_noise = db.query(Contact).filter(ws_filter, Contact.classification != "noise").count()
+    new_today = db.query(Contact).filter(
+        ws_filter, Contact.classification != "noise", Contact.first_seen >= today_start,
+    ).count()
+    new_this_week = db.query(Contact).filter(
+        ws_filter, Contact.classification != "noise", Contact.first_seen >= week_start,
+    ).count()
 
-    new_today = (
-        db.query(Contact)
-        .filter(ws_filter, Contact.classification != "noise", Contact.first_seen >= today_start)
-        .count()
+    dep_q = db.query(Contact).filter(
+        ws_filter, Contact.classification != "noise",
+        Contact.deposit_status == "deposited",
     )
-    new_this_week = (
-        db.query(Contact)
-        .filter(ws_filter, Contact.classification != "noise", Contact.first_seen >= week_start)
-        .count()
-    )
+    if from_dt:
+        dep_q = dep_q.filter(Contact.deposited_at >= from_dt)
+    if to_dt:
+        dep_q = dep_q.filter(Contact.deposited_at <= to_dt)
+    dep_rows = dep_q.all()
+    total_deposited = len(dep_rows)
 
-    stage1_in_range = _entries_at_stage(db, 1, total_non_noise, workspace_id, from_dt, to_dt)
-    stage7_q = (
-        db.query(func.count(func.distinct(StageHistory.contact_id)))
-        .join(Contact, Contact.id == StageHistory.contact_id)
-        .filter(
-            ws_filter,
-            Contact.classification != "noise",
-            StageHistory.to_stage == 7,
-            StageHistory.trigger_keyword != "vip_name_detected",
-        )
-    )
-    stage7_q = _date_filters(stage7_q, StageHistory.moved_at, from_dt, to_dt)
-    stage7_in_range = stage7_q.scalar() or 0
-    overall_conversion = round(stage7_in_range / stage1_in_range * 100, 1) if stage1_in_range > 0 else 0.0
+    avg_days = None
+    deltas = [(c.deposited_at - c.first_seen).total_seconds() / 86400
+              for c in dep_rows if c.deposited_at and c.first_seen]
+    if deltas:
+        avg_days = round(sum(deltas) / len(deltas), 1)
 
-    avg_days_to_deposit: Optional[float] = None
-    try:
-        q = (
-            db.query(StageHistory.moved_at, Contact.first_seen)
-            .join(Contact, Contact.id == StageHistory.contact_id)
-            .filter(
-                ws_filter,
-                Contact.classification != "noise",
-                StageHistory.to_stage == 7,
-                StageHistory.trigger_keyword != "vip_name_detected",
-            )
-        )
-        q = _date_filters(q, StageHistory.moved_at, from_dt, to_dt)
-        rows = q.all()
-        if rows:
-            deltas = [(r.moved_at - r.first_seen).total_seconds() / 86400 for r in rows if r.moved_at and r.first_seen]
-            avg_days_to_deposit = round(sum(deltas) / len(deltas), 1) if deltas else None
-    except Exception:
-        pass
+    overall_conversion = round(total_deposited / total_non_noise * 100, 1) if total_non_noise else 0.0
 
     return {
-        "total_leads": stage1_in_range,
+        "total_leads": total_non_noise,
         "new_today": new_today,
         "new_this_week": new_this_week,
-        "total_deposited": stage7_in_range,
+        "total_deposited": total_deposited,
         "overall_conversion": overall_conversion,
-        "avg_days_to_deposit": avg_days_to_deposit,
+        "avg_days_to_deposit": avg_days,
     }
 
 
-def _cohort_conversion(
+def _cohort_conversion_id(
     db: Session,
-    from_stage: int,
-    to_stage: int,
+    from_id: Optional[int],
+    to_id: Optional[int],
     workspace_id: int,
     from_dt: Optional[datetime],
     to_dt: Optional[datetime],
 ) -> tuple[int, int, Optional[float]]:
+    """
+    Return (cohort_size, converted, rate%) for contacts who reached `from_id`
+    AND later reached `to_id` (StageHistory entries).
+    """
     ws_filter = Contact.workspace_id == workspace_id
-    if from_stage == 1:
-        q = db.query(Contact.id).filter(ws_filter, Contact.classification != "noise")
-        q = _date_filters(q, Contact.first_seen, from_dt, to_dt)
-    else:
-        q = (
-            db.query(func.distinct(StageHistory.contact_id).label("contact_id"))
-            .join(Contact, Contact.id == StageHistory.contact_id)
-            .filter(ws_filter, Contact.classification != "noise", StageHistory.to_stage == from_stage)
-        )
-        q = _date_filters(q, StageHistory.moved_at, from_dt, to_dt)
-
-    cohort_subq = q.subquery()
-    cohort_size = db.query(func.count()).select_from(cohort_subq).scalar() or 0
+    if from_id is None or to_id is None:
+        return 0, 0, None
+    q = (
+        db.query(func.distinct(StageHistory.contact_id).label("contact_id"))
+        .join(Contact, Contact.id == StageHistory.contact_id)
+        .filter(ws_filter, Contact.classification != "noise",
+                StageHistory.to_stage_id == from_id)
+    )
+    q = _date_filters(q, StageHistory.moved_at, from_dt, to_dt)
+    cohort = q.subquery()
+    cohort_size = db.query(func.count()).select_from(cohort).scalar() or 0
     if cohort_size == 0:
         return 0, 0, None
-
     converted = (
         db.query(func.count(func.distinct(StageHistory.contact_id)))
-        .filter(
-            StageHistory.contact_id.in_(db.query(cohort_subq)),
-            StageHistory.to_stage == to_stage,
-            StageHistory.trigger_keyword != "vip_name_detected",
-        )
+        .filter(StageHistory.contact_id.in_(db.query(cohort)),
+                StageHistory.to_stage_id == to_id)
         .scalar() or 0
     )
-
-    rate = round(converted / cohort_size * 100, 1)
-    return cohort_size, converted, rate
+    return cohort_size, converted, round(converted / cohort_size * 100, 1)
 
 
 def get_conversion_metrics(
@@ -225,32 +182,51 @@ def get_conversion_metrics(
     from_dt: Optional[datetime] = None,
     to_dt: Optional[datetime] = None,
 ) -> list:
-    f1, t2, r12 = _cohort_conversion(db, 1, 2, workspace_id, from_dt, to_dt)
-    f2, t4, r24 = _cohort_conversion(db, 2, 4, workspace_id, from_dt, to_dt)
-    f4, t5, r45 = _cohort_conversion(db, 4, 5, workspace_id, from_dt, to_dt)
-    f5, t7, r57 = _cohort_conversion(db, 5, 7, workspace_id, from_dt, to_dt)
-    f1b, t7b, r17 = _cohort_conversion(db, 1, 7, workspace_id, from_dt, to_dt)
+    from app.database.models import PipelineStage, Workspace
+    stages = (db.query(PipelineStage)
+              .filter(PipelineStage.workspace_id == workspace_id)
+              .order_by(PipelineStage.position).all())
+    if not stages:
+        return []
+    ws = db.query(Workspace).filter(Workspace.id == workspace_id).first()
+    deposit_id = ws.deposited_stage_id if ws else None
 
-    return [
-        {"label": "Stage 1 → 2", "from_entries": f1,  "to_entries": t2,  "rate": r12, "target": 40},
-        {"label": "Stage 2 → 4", "from_entries": f2,  "to_entries": t4,  "rate": r24, "target": 50},
-        {"label": "Stage 4 → 5", "from_entries": f4,  "to_entries": t5,  "rate": r45, "target": 60},
-        {"label": "Stage 5 → 7", "from_entries": f5,  "to_entries": t7,  "rate": r57, "target": 60},
-        {"label": "Overall 1 → 7", "from_entries": f1b, "to_entries": t7b, "rate": r17, "target": 10},
-    ]
+    # Adjacent-position cohorts plus first→deposit
+    cohorts: list[tuple] = [(stages[i], stages[i + 1]) for i in range(len(stages) - 1)]
+    if deposit_id:
+        first = stages[0]
+        deposit = next((s for s in stages if s.id == deposit_id), None)
+        if deposit and deposit.id != first.id:
+            cohorts.append((first, deposit))
+
+    out = []
+    for src, dst in cohorts:
+        f, t, rate = _cohort_conversion_id(db, src.id, dst.id, workspace_id, from_dt, to_dt)
+        out.append({
+            "label": f"{src.name} → {dst.name}",
+            "from_entries": f, "to_entries": t, "rate": rate, "target": None,
+        })
+    return out
 
 
 def get_stage_distribution(db: Session, workspace_id: int = 1) -> list:
-    current_rows = (
-        db.query(Contact.current_stage, func.count(Contact.id).label("cnt"))
-        .filter(Contact.workspace_id == workspace_id, Contact.classification != "noise", Contact.current_stage.isnot(None))
-        .group_by(Contact.current_stage)
-        .all()
+    from app.database.models import PipelineStage
+    stages = (db.query(PipelineStage)
+              .filter(PipelineStage.workspace_id == workspace_id)
+              .order_by(PipelineStage.position).all())
+    counts = dict(
+        db.query(Contact.current_stage_id, func.count(Contact.id))
+        .filter(Contact.workspace_id == workspace_id,
+                Contact.classification != "noise",
+                Contact.current_stage_id.isnot(None))
+        .group_by(Contact.current_stage_id).all()
     )
-    current_map: dict[int, int] = {stage: cnt for stage, cnt in current_rows}
     return [
-        {"stage": i, "label": STAGE_LABELS[i - 1], "count": current_map.get(i, 0)}
-        for i in range(1, 9)
+        {"stage_id": s.id, "position": s.position, "name": s.name,
+         "is_deposit_stage": s.is_deposit_stage,
+         "is_member_stage": s.is_member_stage,
+         "count": counts.get(s.id, 0)}
+        for s in stages
     ]
 
 
@@ -291,21 +267,24 @@ def get_day_of_week(
     )
     lq = _date_filters(lq, Contact.first_seen, from_dt, to_dt)
 
-    dq = (
-        db.query(StageHistory.moved_at)
-        .join(Contact, Contact.id == StageHistory.contact_id)
-        .filter(ws_filter, Contact.classification != "noise", StageHistory.to_stage == 7, StageHistory.moved_at.isnot(None))
-    )
-    dq = _date_filters(dq, StageHistory.moved_at, from_dt, to_dt)
+    deposit_id = _deposit_stage_id(db, workspace_id)
 
     leads_by_day = [0] * 7
     deposits_by_day = [0] * 7
     for (ts,) in lq.all():
         if ts:
             leads_by_day[(ts + timedelta(hours=4)).weekday()] += 1
-    for (ts,) in dq.all():
-        if ts:
-            deposits_by_day[(ts + timedelta(hours=4)).weekday()] += 1
+    if deposit_id is not None:
+        dq = (
+            db.query(StageHistory.moved_at)
+            .join(Contact, Contact.id == StageHistory.contact_id)
+            .filter(ws_filter, Contact.classification != "noise",
+                    StageHistory.to_stage_id == deposit_id, StageHistory.moved_at.isnot(None))
+        )
+        dq = _date_filters(dq, StageHistory.moved_at, from_dt, to_dt)
+        for (ts,) in dq.all():
+            if ts:
+                deposits_by_day[(ts + timedelta(hours=4)).weekday()] += 1
 
     return [{"day": DAY_NAMES[i], "leads": leads_by_day[i], "deposits": deposits_by_day[i]} for i in range(7)]
 
@@ -486,6 +465,8 @@ def get_affiliate_performance(db: Session, workspace_id: int = 1) -> list:
     from app.config import BOT_USERNAME
     from app.database.models import Workspace
 
+    dep_stage_id = _deposit_stage_id(db, workspace_id)
+
     affiliates = (
         db.query(Affiliate)
         .filter(Affiliate.workspace_id == workspace_id, Affiliate.is_active.is_(True))
@@ -514,16 +495,28 @@ def get_affiliate_performance(db: Session, workspace_id: int = 1) -> list:
             )
             .scalar() or 0
         )
-        deposits = (
-            db.query(func.count(func.distinct(StageHistory.contact_id)))
-            .join(Contact, Contact.id == StageHistory.contact_id)
+        dep_q = (
+            db.query(func.count(Contact.id))
             .filter(
                 Contact.workspace_id == workspace_id,
                 Contact.source == aff.referral_tag,
-                StageHistory.to_stage == 7,
+                Contact.classification != "noise",
+                Contact.deposit_status == "deposited",
             )
-            .scalar() or 0
         )
+        if dep_stage_id is not None:
+            deposits = (
+                db.query(func.count(func.distinct(StageHistory.contact_id)))
+                .join(Contact, Contact.id == StageHistory.contact_id)
+                .filter(
+                    Contact.workspace_id == workspace_id,
+                    Contact.source == aff.referral_tag,
+                    StageHistory.to_stage_id == dep_stage_id,
+                )
+                .scalar() or 0
+            )
+        else:
+            deposits = dep_q.scalar() or 0
         conversion_rate = round(deposits / leads * 100, 1) if leads > 0 else 0.0
         commission_earned = round(aff.lots_traded * aff.commission_rate, 2)
         referral_link = (
