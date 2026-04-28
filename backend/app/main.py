@@ -667,6 +667,111 @@ def _record_login_success(username: str) -> None:
         _login_locks.pop(key, None)
 
 
+class OrgSignupRequest(BaseModel):
+    full_name: str
+    email: str
+    password: str
+    org_name: str
+    niche: Optional[str] = None
+    language: Optional[str] = None
+    timezone: Optional[str] = None
+    country: Optional[str] = None
+    main_channel_url: Optional[str] = None
+    sales_telegram_username: Optional[str] = None
+    meta_pixel_id: Optional[str] = None
+    meta_ad_account_id: Optional[str] = None
+    meta_access_token: Optional[str] = None
+
+
+@app.post("/auth/signup/organization", status_code=201)
+@limiter.limit("5/minute")
+def signup_organization(request: Request, req: OrgSignupRequest, db: Session = Depends(get_db)):
+    """Public. Creates Organization + root Workspace + Admin Account, seeds default pipeline."""
+    from app.database.models import Account, Organization, Workspace
+    from app.database import seed_workspace_defaults
+    from app.auth import hash_password as _hash, create_access_token as _tok
+    from sqlalchemy.exc import IntegrityError
+
+    email = (req.email or "").strip().lower()
+    if "@" not in email or len(email) < 4:
+        raise HTTPException(status_code=400, detail="invalid email")
+    if len(req.password) < 8:
+        raise HTTPException(status_code=400, detail="password must be at least 8 characters")
+    if not req.full_name.strip():
+        raise HTTPException(status_code=400, detail="full_name is required")
+    if not req.org_name.strip():
+        raise HTTPException(status_code=400, detail="org_name is required")
+
+    if db.query(Account).filter(Account.email == email).first():
+        raise HTTPException(status_code=409, detail="email already in use")
+
+    try:
+        org = Organization(name=req.org_name.strip())
+        db.add(org); db.flush()
+
+        ws = Workspace(
+            name=req.org_name.strip(),
+            org_id=org.id,
+            parent_workspace_id=None,
+            root_workspace_id=None,
+            workspace_role="owner",
+            niche=req.niche,
+            language=req.language,
+            timezone=req.timezone,
+            country=req.country,
+            main_channel_url=req.main_channel_url,
+            sales_telegram_username=req.sales_telegram_username,
+            meta_pixel_id=req.meta_pixel_id,
+            meta_ad_account_id=req.meta_ad_account_id,
+            meta_access_token=req.meta_access_token or None,
+            onboarding_complete=False,
+        )
+        db.add(ws); db.flush()
+        ws.root_workspace_id = ws.id
+
+        acct = Account(
+            workspace_id=ws.id,
+            org_id=org.id,
+            email=email,
+            full_name=req.full_name.strip(),
+            password_hash=_hash(req.password),
+            role="admin",
+            org_role="org_owner",
+        )
+        db.add(acct); db.commit(); db.refresh(acct); db.refresh(ws)
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="email already in use")
+
+    # Seed pipeline + keywords + templates + quick replies for the new workspace
+    seed_workspace_defaults(ws.id, db)
+
+    from app.services.audit import log_audit
+    log_audit(
+        db, action="signup.organization",
+        actor={"username": email, "role": "admin"},
+        target_type="account", target_id=acct.id,
+        workspace_id=ws.id, request=request,
+        detail=f"org={org.name}",
+    )
+
+    token = _tok(
+        acct.email, acct.role,
+        workspace_id=ws.id, org_id=org.id, org_role="org_owner",
+        account_id=acct.id,
+    )
+    return {
+        "access_token": token,
+        "role": acct.role,
+        "username": acct.email,
+        "workspace_id": ws.id,
+        "org_id": org.id,
+        "org_role": "org_owner",
+        "account_id": acct.id,
+        "onboarding_complete": False,
+    }
+
+
 @app.post("/auth/login")
 @limiter.limit("5/minute")
 def login(request: Request, req: LoginRequest, db: Session = Depends(get_db)):
