@@ -17,6 +17,7 @@ from unittest.mock import patch, MagicMock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ["DATABASE_URL"] = "sqlite:///:memory:"
+os.environ.setdefault("APP_ENV", "development")
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
