@@ -437,40 +437,6 @@ def _seed_settings() -> None:
 # Public API
 # ---------------------------------------------------------------------------
 
-def _promote_vip_names() -> None:
-    """
-    One-time migration: contacts whose name contains 'VIP' (case-insensitive)
-    but are below stage 7 are promoted to stage 7.
-    """
-    from app.database.models import Contact, StageHistory
-    db = SessionLocal()
-    try:
-        contacts = db.query(Contact).filter(Contact.current_stage < 7).all()
-        now = __import__("datetime").datetime.utcnow()
-        promoted = 0
-        for c in contacts:
-            full = f"{c.first_name or ''} {c.last_name or ''}".lower()
-            if "vip" in full:
-                old_stage = c.current_stage or 1
-                c.current_stage = 7
-                c.stage_entered_at = now
-                db.add(StageHistory(
-                    contact_id=c.id,
-                    from_stage=old_stage,
-                    to_stage=7,
-                    moved_at=now,
-                    moved_by="system",
-                    trigger_keyword="vip_name_detected",
-                ))
-                promoted += 1
-        if promoted:
-            db.commit()
-    except Exception:
-        db.rollback()
-    finally:
-        db.close()
-
-
 def _sync_classifications() -> None:
     """
     Re-classify all contacts based on current stage and flags.
@@ -521,10 +487,6 @@ def init_db() -> None:
         _seed_organization()
         _seed_workspace()
         _seed_settings()
-    except Exception:
-        pass
-    try:
-        _promote_vip_names()
     except Exception:
         pass
     try:

@@ -69,8 +69,11 @@ def ensure_contact(
             contact.source = source
 
         # Initialise missing defaults (rows created before CRM columns existed)
-        if contact.current_stage is None:
-            contact.current_stage = 1
+        if contact.current_stage_id is None:
+            sid, spos, _ = _initial_stage_for_contact(db, workspace_id, contact.first_name, contact.last_name, now)
+            if sid is not None:
+                contact.current_stage_id = sid
+                contact.current_stage = spos  # legacy mirror
         if contact.stage_entered_at is None:
             contact.stage_entered_at = now
 
@@ -84,7 +87,7 @@ def ensure_contact(
 
     # New contact
     classification = classify_contact(db, user_id, source)
-    stage, entered_at = _vip_stage_from_name(first_name, last_name, now)
+    sid, spos, entered_at = _initial_stage_for_contact(db, workspace_id, first_name, last_name, now)
     contact = Contact(
         id=user_id,
         workspace_id=workspace_id,
@@ -95,31 +98,71 @@ def ensure_contact(
         first_seen=now,
         last_seen=now,
         classification=classification,
-        current_stage=stage,
+        current_stage=spos,            # legacy mirror
+        current_stage_id=sid,
         stage_entered_at=entered_at,
+        deposit_status="none",
     )
     db.add(contact)
     db.commit()
     db.refresh(contact)
-    if stage == 1:
+
+    # Schedule follow-ups only when we landed at the very first stage
+    # (member-stage starts skip the lead-nurturing sequence).
+    if sid is not None and spos == 1:
         try:
-            from app.services.scheduler import schedule_follow_ups
-            schedule_follow_ups(user_id, 1, now)
+            from app.services.scheduler import schedule_follow_ups_for_stage_id
+            schedule_follow_ups_for_stage_id(user_id, sid, now)
         except Exception:
             pass
+
     return contact
 
 
-def _vip_stage_from_name(
+def _initial_stage_for_contact(
+    db,
+    workspace_id: int,
     first_name: Optional[str],
     last_name: Optional[str],
     now: datetime,
-) -> tuple[int, datetime]:
-    """Return (stage, stage_entered_at) — stage 7 if name contains 'VIP', else stage 1."""
+) -> tuple[Optional[int], Optional[int], datetime]:
+    """
+    Returns (stage_id, stage_position, stage_entered_at).
+
+    If the contact's first+last name contains any of the workspace's
+    `vip_marker_phrases`, start them in `member_stage_id`. Otherwise start at
+    the lowest-position PipelineStage. If no stages exist yet, returns (None,
+    None, now) and the caller writes raw legacy columns.
+    """
+    import json
+    from app.database.models import PipelineStage, Workspace
+
     full = f"{first_name or ''} {last_name or ''}".lower()
-    if "vip" in full:
-        return 7, now
-    return 1, now
+    ws = db.query(Workspace).filter(Workspace.id == workspace_id).first()
+    markers: list[str] = []
+    if ws and ws.vip_marker_phrases:
+        try:
+            markers = json.loads(ws.vip_marker_phrases) or []
+        except Exception:
+            markers = []
+
+    if any(m for m in markers if m and m.lower() in full):
+        if ws and ws.member_stage_id:
+            stage = db.query(PipelineStage).filter(
+                PipelineStage.id == ws.member_stage_id,
+            ).first()
+            if stage:
+                return stage.id, stage.position, now
+
+    first_stage = (
+        db.query(PipelineStage)
+        .filter(PipelineStage.workspace_id == workspace_id)
+        .order_by(PipelineStage.position)
+        .first()
+    )
+    if first_stage:
+        return first_stage.id, first_stage.position, now
+    return None, None, now
 
 
 # Keep the old name as an alias so any external callers still work
