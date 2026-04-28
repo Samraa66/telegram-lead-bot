@@ -911,7 +911,7 @@ class ForwardingConfigRequest(BaseModel):
 
 
 @app.patch("/settings/forwarding/config")
-def set_forwarding_config(
+async def set_forwarding_config(
     req: ForwardingConfigRequest,
     workspace_id: int = Depends(get_workspace_id),
     _=Depends(require_workspace_owner),
@@ -924,12 +924,22 @@ def set_forwarding_config(
     if not ws:
         raise HTTPException(status_code=404, detail="Workspace not found")
 
+    source_changed = False
     if req.source_channel_id is not None:
         ws.source_channel_id = req.source_channel_id.strip() or None
+        source_changed = True
     if req.destination_channel_ids is not None:
         cleaned = ",".join(x.strip() for x in req.destination_channel_ids.split(",") if x.strip())
         ws.destination_channel_ids = cleaned or None
     db.commit()
+
+    # Cycle Telethon client so the new source_channel_id takes effect immediately
+    if source_changed and ws.telethon_session:
+        from app.services.telethon_client import stop_workspace_client, start_workspace_client
+        from app.config import TELEGRAM_API_ID, TELEGRAM_API_HASH
+        await stop_workspace_client(workspace_id)
+        await start_workspace_client(workspace_id, ws.telethon_session, TELEGRAM_API_ID, TELEGRAM_API_HASH)
+
     return {"ok": True}
 
 
