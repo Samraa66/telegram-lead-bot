@@ -857,15 +857,13 @@ def forwarding_status(
     db: Session = Depends(get_db),
 ):
     """Return signal forwarding health: bot token set, source set, destinations configured."""
-    from app.services.forwarding import get_all_destination_channels, get_effective_source_channel_id
-    from app.config import BOT_TOKEN
+    from app.services.forwarding import get_destinations_for_org
     from app.database.models import Workspace
 
     ws = db.query(Workspace).filter(Workspace.id == workspace_id).first()
-    bot_token = (ws.bot_token if ws else None) or (BOT_TOKEN if workspace_id == 1 else None)
-
-    source_id = get_effective_source_channel_id(workspace_id)
-    destinations = get_all_destination_channels()
+    bot_token = ws.bot_token if ws else None
+    source_id = ws.source_channel_id if ws else None
+    destinations = get_destinations_for_org(workspace_id, db)
     destination_count = len(destinations)
     bot_configured = bool(bot_token)
     source_configured = bool(source_id)
@@ -884,26 +882,28 @@ def get_forwarding_config(
     _=Depends(require_workspace_owner),
     db: Session = Depends(get_db),
 ):
-    """Return source + destination channel config for the workspace, plus env fallbacks."""
-    from app.services.forwarding import get_static_destination_channels, get_effective_source_channel_id
-    from app.config import SOURCE_CHANNEL_ID, DESTINATION_CHANNEL_IDS
+    """Return source + destination channel config for this workspace."""
+    from app.services.forwarding import get_destinations_for_org
     from app.database.models import Workspace, Affiliate
 
     ws = db.query(Workspace).filter(Workspace.id == workspace_id).first()
 
     affiliate_channels = (
         db.query(Affiliate.id, Affiliate.name, Affiliate.vip_channel_id)
-        .filter(Affiliate.is_active.is_(True), Affiliate.vip_channel_id.isnot(None))
+        .join(Workspace, Affiliate.affiliate_workspace_id == Workspace.id)
+        .filter(
+            Workspace.root_workspace_id == workspace_id,
+            Affiliate.is_active.is_(True),
+            Affiliate.vip_channel_id.isnot(None),
+        )
         .all()
     )
 
     return {
         "source_channel_id": ws.source_channel_id if ws else None,
         "destination_channel_ids": ws.destination_channel_ids if ws else None,
-        "effective_source_channel_id": get_effective_source_channel_id(workspace_id),
-        "effective_static_destinations": get_static_destination_channels(workspace_id),
-        "env_source_channel_id": SOURCE_CHANNEL_ID if workspace_id == 1 else "",
-        "env_destination_channel_ids": list(DESTINATION_CHANNEL_IDS) if workspace_id == 1 else [],
+        "effective_source_channel_id": ws.source_channel_id if ws else None,
+        "effective_destinations": get_destinations_for_org(workspace_id, db),
         "affiliate_destinations": [
             {"id": a.id, "name": a.name, "vip_channel_id": a.vip_channel_id}
             for a in affiliate_channels
@@ -1480,15 +1480,15 @@ def health_workspace(
     which integrations are up, degraded, or down.
     """
     from app.database.models import Workspace, Affiliate
-    from app.services.forwarding import get_all_destination_channels, get_effective_source_channel_id
+    from app.services.forwarding import get_destinations_for_org
     from app.services.telethon_client import get_client
-    from app.config import BOT_TOKEN, APP_BASE_URL
+    from app.config import APP_BASE_URL
 
     ws = db.query(Workspace).filter(Workspace.id == workspace_id).first()
     checks: list[dict] = []
 
     # 1. Bot token + webhook
-    token = (ws.bot_token if ws and ws.bot_token else None) or (BOT_TOKEN if workspace_id == 1 else None)
+    token = ws.bot_token if ws and ws.bot_token else None
     if not token:
         checks.append({"id": "bot", "label": "Telegram Bot", "status": "error",
                        "detail": "Bot token not set — leads cannot reach your CRM.",
@@ -1531,8 +1531,8 @@ def health_workspace(
                        "action": "Settings → Telegram → Operator Account"})
 
     # 3. Signal forwarding (source + destinations)
-    source_id = get_effective_source_channel_id(workspace_id)
-    destinations = get_all_destination_channels()
+    source_id = ws.source_channel_id if ws else None
+    destinations = get_destinations_for_org(workspace_id, db)
     if source_id and destinations and token:
         checks.append({"id": "forwarding", "label": "Signal Forwarding", "status": "ok",
                        "detail": f"Copying from source → {len(destinations)} channel{'s' if len(destinations) != 1 else ''}."})
