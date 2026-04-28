@@ -290,6 +290,85 @@ async def webhook_legacy(request: Request, db: Session = Depends(get_db)):
     return await _handle_webhook(request, db, workspace_id=1, secret=WEBHOOK_SECRET)
 
 
+class DepositWebhookPayload(BaseModel):
+    workspace_id: int
+    provider: str
+    client_id: Optional[str] = None
+    contact_id: Optional[int] = None
+    amount: Optional[float] = None
+    currency: Optional[str] = None
+    timestamp: Optional[str] = None
+    source: Optional[str] = "email_parser"
+    idempotency_key: Optional[str] = None
+
+
+def _verify_deposit_signature(secret: str, body_bytes: bytes, signature: str) -> bool:
+    import hashlib
+    import hmac as _hmac
+    if not secret or not signature:
+        return False
+    digest = _hmac.new(secret.encode(), body_bytes, hashlib.sha256).hexdigest()
+    return _hmac.compare_digest(digest, signature.lower())
+
+
+@app.post("/webhook/deposit-events")
+@limiter.limit("60/minute")
+async def deposit_event_webhook(request: Request, db: Session = Depends(get_db)):
+    """
+    Provider-agnostic deposit webhook. Authenticated via HMAC-SHA256 over the
+    raw body using the workspace's deposit_webhook_secret.
+    Header: X-Deposit-Signature: <hex digest>
+    """
+    from datetime import datetime as _dt
+    from app.database.models import Workspace
+    from app.services.deposit import process_deposit_event, find_contact_for_deposit
+
+    body_bytes = await request.body()
+    try:
+        data = json.loads(body_bytes or b"{}")
+    except Exception:
+        raise HTTPException(status_code=400, detail="invalid JSON")
+
+    payload = DepositWebhookPayload(**data)
+    ws = db.query(Workspace).filter(Workspace.id == payload.workspace_id).first()
+    if not ws:
+        raise HTTPException(status_code=404, detail="workspace not found")
+
+    sig = request.headers.get("X-Deposit-Signature", "")
+    if not ws.deposit_webhook_secret or not _verify_deposit_signature(
+        ws.deposit_webhook_secret, body_bytes, sig,
+    ):
+        raise HTTPException(status_code=401, detail="bad signature")
+
+    contact = find_contact_for_deposit(
+        db, payload.workspace_id,
+        contact_id=payload.contact_id, puprime_client_id=payload.client_id,
+    )
+    if not contact:
+        raise HTTPException(status_code=404, detail="contact not found for client_id")
+
+    occurred = _dt.fromisoformat(payload.timestamp) if payload.timestamp else _dt.utcnow()
+    idem = payload.idempotency_key or (
+        f"{payload.provider}:{payload.client_id or contact.id}:{occurred.isoformat()}:{payload.amount or 0}"
+    )
+    result = process_deposit_event(
+        db,
+        workspace_id=payload.workspace_id,
+        contact=contact,
+        provider=payload.provider,
+        source=payload.source or "email_parser",
+        idempotency_key=idem,
+        amount=payload.amount,
+        currency=payload.currency,
+        occurred_at=occurred,
+        provider_client_id=payload.client_id,
+        raw_payload=body_bytes.decode("utf-8", errors="replace"),
+    )
+    return {
+        "ok": True, "deposit_event_id": result.deposit_event_id, "deduped": result.dedup,
+    }
+
+
 @app.post("/webhook/{workspace_id}")
 async def webhook(request: Request, workspace_id: int, db: Session = Depends(get_db)):
     """
