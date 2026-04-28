@@ -3194,6 +3194,37 @@ class StageLabelUpdateRequest(BaseModel):
     label: str
 
 
+# --- Workspace metadata ---
+
+class WorkspacePatchRequest(BaseModel):
+    name: Optional[str] = None
+    niche: Optional[str] = None
+    language: Optional[str] = None
+    timezone: Optional[str] = None
+    country: Optional[str] = None
+    main_channel_url: Optional[str] = None
+    sales_telegram_username: Optional[str] = None
+    landing_page_url: Optional[str] = None
+
+
+@app.patch("/settings/workspace")
+def patch_workspace(
+    req: WorkspacePatchRequest,
+    db: Session = Depends(get_db),
+    workspace_id: int = Depends(get_workspace_id),
+    _=Depends(require_workspace_owner),
+):
+    """Update workspace metadata (org info, channel URLs)."""
+    from app.database.models import Workspace
+    ws = db.query(Workspace).filter(Workspace.id == workspace_id).first()
+    if not ws:
+        raise HTTPException(status_code=404, detail="workspace not found")
+    for k, v in req.dict(exclude_none=True).items():
+        setattr(ws, k, v)
+    db.commit()
+    return {"ok": True}
+
+
 # --- Pipeline CRUD ---
 
 class PipelineStageCreateRequest(BaseModel):
