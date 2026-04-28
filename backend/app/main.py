@@ -646,9 +646,32 @@ def login(request: Request, req: LoginRequest, db: Session = Depends(get_db)):
 
 
 @app.get("/auth/me")
-def me(current_user: dict = Depends(get_current_user)):
+def me(current_user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
     """Return the current user's info."""
-    return current_user
+    data = dict(current_user)
+
+    # Resolve the tenant's bot username for sub-affiliate onboarding UI.
+    # Org owners themselves don't need it (their wizard branches to source-channel).
+    parent_bot_username = None
+    if current_user.get("org_role") != "workspace_owner":
+        from app.database.models import Workspace
+        ws = db.query(Workspace).filter(Workspace.id == current_user.get("workspace_id")).first()
+        if ws and ws.parent_workspace_id:
+            parent = db.query(Workspace).filter(Workspace.id == ws.parent_workspace_id).first()
+            if parent and parent.bot_token:
+                import requests as _r
+                try:
+                    r = _r.get(
+                        f"https://api.telegram.org/bot{parent.bot_token}/getMe",
+                        timeout=5,
+                    )
+                    if r.status_code == 200:
+                        parent_bot_username = r.json().get("result", {}).get("username")
+                except Exception:
+                    pass
+
+    data["parent_bot_username"] = parent_bot_username
+    return data
 
 
 @app.get("/auth/config")

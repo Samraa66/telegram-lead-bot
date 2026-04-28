@@ -13,6 +13,7 @@ export interface AuthUser {
   org_id?: number;
   org_role?: string;
   onboarding_complete?: boolean;
+  parent_bot_username?: string | null;
 }
 
 const TOKEN_KEY = "crm_token";
@@ -28,6 +29,7 @@ export function saveAuth(user: AuthUser): void {
     org_id: user.org_id ?? 1,
     org_role: user.org_role ?? "member",
     onboarding_complete: user.onboarding_complete ?? true,
+    parent_bot_username: user.parent_bot_username ?? null,
   }));
 }
 
@@ -49,12 +51,12 @@ export function getToken(): string | null {
   return localStorage.getItem(TOKEN_KEY);
 }
 
-export function getStoredUser(): { username: string; role: Role; workspace_id: number; workspace_name: string | null; org_id: number; org_role: string; onboarding_complete: boolean } | null {
+export function getStoredUser(): { username: string; role: Role; workspace_id: number; workspace_name: string | null; org_id: number; org_role: string; onboarding_complete: boolean; parent_bot_username: string | null } | null {
   const raw = localStorage.getItem(USER_KEY);
   if (!raw) return null;
   try {
     const parsed = JSON.parse(raw);
-    return { workspace_id: 1, workspace_name: null, org_id: 1, org_role: "member", onboarding_complete: true, ...parsed };
+    return { workspace_id: 1, workspace_name: null, org_id: 1, org_role: "member", onboarding_complete: true, parent_bot_username: null, ...parsed };
   } catch { return null; }
 }
 
@@ -88,6 +90,7 @@ export async function loginWithTelegram(data: TelegramAuthData): Promise<AuthUse
   const user: AuthUser = {
     username: json.username, role: json.role, token: json.access_token,
     workspace_id: json.workspace_id ?? 1, org_id: json.org_id ?? 1, org_role: json.org_role ?? "member",
+    parent_bot_username: json.parent_bot_username ?? null,
   };
   saveAuth(user);
   return user;
@@ -110,6 +113,7 @@ export async function login(username: string, password: string): Promise<AuthUse
     username: data.username, role: data.role, token: data.access_token,
     workspace_id: data.workspace_id ?? 1, org_id: data.org_id ?? 1, org_role: data.org_role ?? "member",
     onboarding_complete: data.onboarding_complete ?? true,
+    parent_bot_username: data.parent_bot_username ?? null,
   };
   saveAuth(user);
   return user;
