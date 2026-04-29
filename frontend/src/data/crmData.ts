@@ -20,6 +20,10 @@ export interface Lead {
   unread: number;
   escalated: boolean;
   depositStatus: DepositStatus;
+  // Source attribution — populated by /start parser today, by Spec B's
+  // invite-link claim flow once that ships. Both are nullable for now.
+  sourceTag?: string | null;
+  entryPath?: string | null;
 }
 
 export function classificationLabel(c: string): string {
