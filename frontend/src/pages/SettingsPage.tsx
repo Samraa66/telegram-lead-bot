@@ -1065,6 +1065,12 @@ function SignalForwardingTab() {
   );
 }
 
+type BackfillSummary = {
+  contacts_created: number;
+  messages_replayed: number;
+  skipped: number;
+};
+
 function TelegramTab() {
   const [connected, setConnected] = useState<boolean | null>(null);
   const [step, setStep] = useState<TelethonStep>("idle");
@@ -1074,13 +1080,71 @@ function TelegramTab() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [disconnecting, setDisconnecting] = useState(false);
+  const [lastBackfillAt, setLastBackfillAt] = useState<string | null>(null);
+  const [lastBackfillSummary, setLastBackfillSummary] = useState<BackfillSummary | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [syncMessage, setSyncMessage] = useState<{ kind: "success" | "error"; text: string } | null>(null);
+
+  function applyStatus(d: { connected: boolean; last_backfill_at?: string | null; last_backfill_summary?: BackfillSummary | null }) {
+    setConnected(d.connected);
+    setStep(d.connected ? "connected" : "idle");
+    setLastBackfillAt(d.last_backfill_at ?? null);
+    setLastBackfillSummary(d.last_backfill_summary ?? null);
+  }
 
   useEffect(() => {
     fetch(`${API_BASE}/settings/telethon/status`, { headers: authHeaders() })
       .then(r => r.json())
-      .then(d => { setConnected(d.connected); setStep(d.connected ? "connected" : "idle"); })
+      .then(applyStatus)
       .catch(() => setConnected(false));
   }, []);
+
+  async function handleSyncBackfill() {
+    if (syncing) return;
+    setSyncing(true);
+    setSyncMessage(null);
+    try {
+      const stored = JSON.parse(localStorage.getItem("crm_user") || "{}");
+      const workspaceId = stored.workspace_id ?? 1;
+      const ctrl = new AbortController();
+      const timeout = setTimeout(() => ctrl.abort(), 5 * 60 * 1000);
+      let res: Response;
+      try {
+        res = await fetch(
+          `${API_BASE}/workspaces/${workspaceId}/backfill-telegram-history?limit_per_dialog=500`,
+          { method: "POST", headers: authHeaders(), signal: ctrl.signal },
+        );
+      } finally {
+        clearTimeout(timeout);
+      }
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setSyncMessage({ kind: "error", text: `Sync failed: ${body.detail || res.status}` });
+        return;
+      }
+      if (body.error) {
+        setSyncMessage({ kind: "error", text: body.error });
+        return;
+      }
+      setSyncMessage({
+        kind: "success",
+        text: `Synced: ${body.contacts_created} contacts, ${body.messages_replayed} messages, ${body.skipped} skipped`,
+      });
+      // Refresh status so "Last run" updates
+      const fresh = await fetch(`${API_BASE}/settings/telethon/status`, { headers: authHeaders() }).then(r => r.json());
+      applyStatus(fresh);
+    } catch (e: unknown) {
+      const name = e && typeof e === "object" && "name" in e ? (e as { name: string }).name : "";
+      if (name === "AbortError") {
+        setSyncMessage({ kind: "error", text: "Sync took too long — check status manually." });
+      } else {
+        const msg = e instanceof Error ? e.message : String(e);
+        setSyncMessage({ kind: "error", text: `Sync failed: ${msg}` });
+      }
+    } finally {
+      setSyncing(false);
+    }
+  }
 
   async function handleSendCode() {
     if (!phone.trim()) return;
@@ -1161,20 +1225,55 @@ function TelegramTab() {
       {connected === null ? (
         <p className="text-sm text-muted-foreground">Loading…</p>
       ) : step === "connected" ? (
-        <div className="rounded-lg border bg-green-50 border-green-200 p-4 flex items-center gap-3">
-          <div className="w-2 h-2 rounded-full bg-green-500 shrink-0" />
-          <div className="flex-1">
-            <p className="text-sm font-medium text-green-800">Operator account connected</p>
-            <p className="text-xs text-muted-foreground mt-0.5">Messages sent from the dashboard go through this account.</p>
+        <>
+          <div className="rounded-lg border bg-green-50 border-green-200 p-4 flex items-center gap-3">
+            <div className="w-2 h-2 rounded-full bg-green-500 shrink-0" />
+            <div className="flex-1">
+              <p className="text-sm font-medium text-green-800">Operator account connected</p>
+              <p className="text-xs text-muted-foreground mt-0.5">Messages sent from the dashboard go through this account.</p>
+            </div>
+            <button
+              onClick={handleDisconnect}
+              disabled={disconnecting}
+              className="text-xs px-3 py-1.5 rounded-md text-red-600 hover:bg-destructive/10 border border-red-200 transition-colors shrink-0"
+            >
+              {disconnecting ? "Disconnecting…" : "Disconnect"}
+            </button>
           </div>
-          <button
-            onClick={handleDisconnect}
-            disabled={disconnecting}
-            className="text-xs px-3 py-1.5 rounded-md text-red-600 hover:bg-destructive/10 border border-red-200 transition-colors shrink-0"
-          >
-            {disconnecting ? "Disconnecting…" : "Disconnect"}
-          </button>
-        </div>
+
+          <div className="rounded-lg border bg-card p-4">
+            <h3 className="text-sm font-semibold text-foreground">Sync Telegram history</h3>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Pull past DMs from your connected Telegram account into the CRM.
+              Replays operator messages through the keyword pipeline so historical
+              leads land at the right stage. Run after first connecting, or after
+              batch-renaming leads to add a VIP marker.
+            </p>
+            <p className="mt-2 text-xs text-muted-foreground">
+              {lastBackfillAt
+                ? `Last run: ${new Date(lastBackfillAt).toLocaleString()} — ${lastBackfillSummary?.contacts_created ?? 0} contacts, ${lastBackfillSummary?.messages_replayed ?? 0} messages, ${lastBackfillSummary?.skipped ?? 0} skipped`
+                : "Last run: never"}
+            </p>
+            <button
+              type="button"
+              onClick={handleSyncBackfill}
+              disabled={syncing}
+              className="mt-3 inline-flex items-center justify-center rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {syncing ? "Syncing…" : "Sync now"}
+            </button>
+            {syncMessage && (
+              <p
+                className={cn(
+                  "mt-2 text-xs",
+                  syncMessage.kind === "success" ? "text-green-700" : "text-destructive",
+                )}
+              >
+                {syncMessage.text}
+              </p>
+            )}
+          </div>
+        </>
       ) : step === "idle" || step === "phone" ? (
         <div className="rounded-lg border border-dashed bg-muted/30 p-4 space-y-3">
           <p className="text-xs font-medium text-muted-foreground">Enter the operator's phone number</p>
