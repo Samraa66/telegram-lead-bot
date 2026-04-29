@@ -552,6 +552,12 @@ def init_db() -> None:
     except Exception:
         pass
     try:
+        with engine.connect() as conn:
+            _run_legacy_attribution_migration_v1(conn)
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning("legacy_attribution_v1 migration failed: %s", e)
+    try:
         _seed_organization()
         _seed_workspace()
         _seed_settings()
