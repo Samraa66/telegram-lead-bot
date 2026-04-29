@@ -26,6 +26,50 @@ from app.services.classifier import classify_contact
 logger = logging.getLogger(__name__)
 
 
+# ---------------------------------------------------------------------------
+# VIP-name promotion (workspace.vip_marker_phrases)
+# ---------------------------------------------------------------------------
+
+import re as _re_module
+
+_marker_re_cache: dict = {}
+
+
+def _compile_markers(markers: tuple) -> "_re_module.Pattern":
+    """Compile a regex that matches any marker as a standalone word (case-insensitive)."""
+    if markers in _marker_re_cache:
+        return _marker_re_cache[markers]
+    escaped = [_re_module.escape(m) for m in markers if m]
+    if not escaped:
+        pat = _re_module.compile(r"(?!)")  # never matches
+    else:
+        pat = _re_module.compile(
+            r"\b(?:" + "|".join(escaped) + r")\b",
+            _re_module.IGNORECASE,
+        )
+    _marker_re_cache[markers] = pat
+    return pat
+
+
+def name_matches_vip_marker(
+    first_name: Optional[str],
+    last_name: Optional[str],
+    markers: List[str],
+) -> Optional[str]:
+    """
+    Return the matched marker (lowercased) if first+last name contains any
+    workspace VIP marker as a standalone word. Otherwise None. Pure function.
+    """
+    if not markers:
+        return None
+    text_val = f"{first_name or ''} {last_name or ''}"
+    if not text_val.strip():
+        return None
+    pat = _compile_markers(tuple(markers))
+    m = pat.search(text_val)
+    return m.group(0).lower() if m else None
+
+
 def _load_keywords(db: Session, workspace_id: int = 1) -> List[Tuple[str, int]]:
     """Return active (phrase, target_stage_id) pairs for the workspace."""
     rows = (
