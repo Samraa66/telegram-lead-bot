@@ -70,6 +70,11 @@ async def backfill_workspace_history(workspace_id: int, *, limit_per_dialog: int
                 skipped += 1
                 continue
 
+            # VIP-name re-detection — covers the case where the operator already
+            # renamed the lead (e.g. "VIP Mike") before backfill was run.
+            from app.services.pipeline import maybe_promote_to_member_stage
+            maybe_promote_to_member_stage(contact, db)
+
             async for msg in client.iter_messages(user, limit=limit_per_dialog, reverse=True):
                 if not msg.text:
                     continue
