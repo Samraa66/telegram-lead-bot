@@ -61,6 +61,12 @@ def ensure_contact(
         contact.last_seen = now
         if username is not None:
             contact.username = username
+
+        # Capture name change BEFORE assigning so we know whether to re-check the marker
+        name_changed = (
+            (first_name is not None and first_name != contact.first_name) or
+            (last_name  is not None and last_name  != contact.last_name)
+        )
         if first_name is not None:
             contact.first_name = first_name
         if last_name is not None:
@@ -78,9 +84,14 @@ def ensure_contact(
         if contact.stage_entered_at is None:
             contact.stage_entered_at = now
 
+        # Re-run the VIP-name check if the name moved
+        if name_changed:
+            from app.services.pipeline import maybe_promote_to_member_stage
+            maybe_promote_to_member_stage(contact, db)
+
         # Re-classify in case stage or deposit status changed
         contact.classification = classify_contact(
-            db, user_id, contact.source, existing=contact
+            db, user_id, contact.source_tag or contact.source, existing=contact
         )
         db.commit()
         db.refresh(contact)
