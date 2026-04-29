@@ -118,6 +118,75 @@ def _set_app_meta(conn, key: str, value: str) -> None:
     conn.commit()
 
 
+import re as _re_module
+
+_START_PAYLOAD_RE = _re_module.compile(r"^/start\s+(\S+)", _re_module.IGNORECASE)
+
+
+def _run_legacy_attribution_migration_v1(conn) -> None:
+    """
+    One-time migration. Tags all rows with NULL entry_path as
+    'legacy_pre_attribution', carries Contact.source forward into
+    Contact.source_tag, and best-effort recovers historical
+    /start <payload> from message history.
+
+    Idempotent: gated by app_meta['legacy_attribution_v1'] == 'done'.
+    Safe to retry — every step is conditional on its target column being NULL.
+    """
+    import time
+    if _get_app_meta(conn, "legacy_attribution_v1") == "done":
+        return
+
+    t0 = time.monotonic()
+
+    # Step 1: carry source forward into source_tag where source_tag is NULL
+    conn.execute(text(
+        "UPDATE contacts SET source_tag = source "
+        "WHERE source_tag IS NULL AND source IS NOT NULL"
+    ))
+
+    # Step 2: tag every row that doesn't yet have an entry_path
+    tagged = conn.execute(text(
+        "UPDATE contacts SET entry_path = 'legacy_pre_attribution' "
+        "WHERE entry_path IS NULL"
+    )).rowcount or 0
+
+    # Step 3: best-effort /start payload recovery for rows where source_tag is still NULL
+    rows = conn.execute(text(
+        "SELECT id FROM contacts WHERE source_tag IS NULL"
+    )).fetchall()
+    recovered = 0
+    for (contact_id,) in rows:
+        msgs = conn.execute(
+            text(
+                "SELECT message_text FROM messages "
+                "WHERE user_id = :id AND direction = 'inbound' "
+                "ORDER BY timestamp DESC"
+            ),
+            {"id": contact_id},
+        ).fetchall()
+        for (text_val,) in msgs:
+            if not text_val:
+                continue
+            m = _START_PAYLOAD_RE.match(text_val)
+            if m:
+                conn.execute(
+                    text("UPDATE contacts SET source_tag = :tag WHERE id = :id"),
+                    {"tag": m.group(1), "id": contact_id},
+                )
+                recovered += 1
+                break
+
+    conn.commit()
+    _set_app_meta(conn, "legacy_attribution_v1", "done")
+
+    import logging
+    logging.getLogger(__name__).info(
+        "Legacy attribution migration: tagged %d contacts, recovered %d /start payloads in %dms",
+        tagged, recovered, int((time.monotonic() - t0) * 1000),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Migration: users → contacts
 # ---------------------------------------------------------------------------
