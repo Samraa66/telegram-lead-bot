@@ -138,8 +138,8 @@ def _initial_stage_for_contact(
     """
     import json
     from app.database.models import PipelineStage, Workspace
+    from app.services.pipeline import name_matches_vip_marker
 
-    full = f"{first_name or ''} {last_name or ''}".lower()
     ws = db.query(Workspace).filter(Workspace.id == workspace_id).first()
     markers: list[str] = []
     if ws and ws.vip_marker_phrases:
@@ -148,7 +148,7 @@ def _initial_stage_for_contact(
         except Exception:
             markers = []
 
-    if any(m for m in markers if m and m.lower() in full):
+    if name_matches_vip_marker(first_name, last_name, markers):
         if ws and ws.member_stage_id:
             stage = db.query(PipelineStage).filter(
                 PipelineStage.id == ws.member_stage_id,
