@@ -86,12 +86,28 @@ async def backfill_workspace_history(workspace_id: int, *, limit_per_dialog: int
     finally:
         db.close()
 
-    logger.info(
-        "backfill ws=%s contacts_created=%s messages=%s skipped=%s",
-        workspace_id, contacts_created, messages_replayed, skipped,
-    )
-    return {
+    summary = {
         "contacts_created": contacts_created,
         "messages_replayed": messages_replayed,
         "skipped": skipped,
     }
+
+    # Persist last-run state on the workspace so the UI can render "Last run: ..."
+    import json as _json
+    from datetime import datetime
+    from app.database.models import Workspace
+    db = SessionLocal()
+    try:
+        ws = db.query(Workspace).filter(Workspace.id == workspace_id).first()
+        if ws:
+            ws.last_backfill_at = datetime.utcnow()
+            ws.last_backfill_summary = _json.dumps(summary)
+            db.commit()
+    finally:
+        db.close()
+
+    logger.info(
+        "backfill ws=%s contacts_created=%s messages=%s skipped=%s",
+        workspace_id, contacts_created, messages_replayed, skipped,
+    )
+    return summary
