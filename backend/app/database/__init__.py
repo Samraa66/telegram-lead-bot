@@ -96,6 +96,28 @@ def _add_column(table_name: str, col_name: str, col_ddl: str) -> None:
         conn.commit()
 
 
+def _get_app_meta(conn, key: str):
+    """Read a single value from the app_meta KV table. Returns None if missing."""
+    row = conn.execute(
+        text("SELECT value FROM app_meta WHERE key = :k"),
+        {"k": key},
+    ).fetchone()
+    return row[0] if row else None
+
+
+def _set_app_meta(conn, key: str, value: str) -> None:
+    """Insert or update a key in app_meta. SQLite + Postgres both speak the same upsert dialect here."""
+    conn.execute(
+        text(
+            "INSERT INTO app_meta (key, value, updated_at) "
+            "VALUES (:k, :v, CURRENT_TIMESTAMP) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP"
+        ),
+        {"k": key, "v": value},
+    )
+    conn.commit()
+
+
 # ---------------------------------------------------------------------------
 # Migration: users → contacts
 # ---------------------------------------------------------------------------
