@@ -144,8 +144,9 @@ class TTLCache:
             self._store.clear()
 
 
-_probe_cache = TTLCache(ttl_seconds=300)         # 5-minute probe cache
-_bot_self_cache = TTLCache(ttl_seconds=3600)     # bot user_id rarely changes
+_probe_cache = TTLCache(ttl_seconds=300)              # 5-minute default for most probes
+_membership_cache = TTLCache(ttl_seconds=60)          # 1-minute — destination membership refreshes fast so a fix surfaces quickly
+_bot_self_cache = TTLCache(ttl_seconds=3600)          # 1-hour — bot user_id rarely changes
 ```
 
 Successes only. A failed probe doesn't get cached — next request retries. Lost on restart, fine.
@@ -222,7 +223,7 @@ Run only if no recent observed forward. For each destination, hit `getChatMember
 bot_id = await _get_bot_user_id(token, http)  # cached 1h via _bot_self_cache
 async def probe(dest):
     cache_key = ("forwarding_membership", workspace_id, dest)
-    cached = _probe_cache.get(cache_key)
+    cached = _membership_cache.get(cache_key)
     if cached is not None:
         return cached
     try:
@@ -233,7 +234,7 @@ async def probe(dest):
         # Channels need can_post_messages specifically
         if ok and result.get("status") == "administrator":
             ok = result.get("can_post_messages", True)
-        _probe_cache.set(cache_key, ok)
+        _membership_cache.set(cache_key, ok)
         return ok
     except Exception:
         return None  # treat as inconclusive — don't cache failure
@@ -282,8 +283,8 @@ if "error" in data:
 
 perms = {p["permission"] for p in data.get("permissions", {}).get("data", []) if p.get("status") == "granted"}
 if "ads_management" not in perms:
-    return warn("Token missing ads_management — CAPI events will be rejected",
-                action="Settings → Meta Ads — regenerate token with ads_management scope")
+    return error("Token missing ads_management — CAPI events will be rejected; ads cannot optimise on conversion",
+                 action="Settings → Meta Ads — regenerate token with ads_management scope")
 
 detail = "Connected"
 if ws.landing_page_url:
@@ -294,6 +295,12 @@ return ok(detail + ".")
 ```
 
 Cache key: `("meta_me", token_hash)` TTL 5 min.
+
+Outcome states:
+- `ok` → token valid AND has `ads_management` granted. Detail mentions whether `landing_page_url` is set.
+- `error` → token valid but missing `ads_management`. Treated as critical because CAPI rejection kills conversion-based ad optimisation, and ads drive lead acquisition.
+- `error` → token rejected by Meta entirely.
+- `warn` → no token saved (existing behaviour — ads simply not connected yet).
 
 ### 5. `check_vip_channel`
 
