@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ArrowUp, ArrowDown, Plus, Trash2, Star, CreditCard } from "lucide-react";
+import { ArrowUp, ArrowDown, Plus, Trash2, Star, CreditCard, X } from "lucide-react";
 import {
   fetchPipeline, createStage, updateStage, deleteStage, reorderStages, updateFlags,
   PipelineConfig, PipelineStage,
@@ -51,6 +51,22 @@ export default function PipelineEditor() {
     }
     await reload();
     setBusy(false);
+  };
+
+  const [markerInput, setMarkerInput] = useState("");
+
+  const addMarker = () => {
+    const raw = markerInput.trim().toLowerCase();
+    if (!raw) return;
+    if (cfg.vip_marker_phrases.includes(raw)) { setMarkerInput(""); return; }
+    const next = [...cfg.vip_marker_phrases, raw];
+    setMarkerInput("");
+    return wrap(() => updateFlags({ vip_marker_phrases: next }));
+  };
+
+  const removeMarker = (m: string) => {
+    const next = cfg.vip_marker_phrases.filter((x) => x !== m);
+    return wrap(() => updateFlags({ vip_marker_phrases: next }));
   };
 
   return (
@@ -111,6 +127,42 @@ export default function PipelineEditor() {
             </button>
           </div>
         ))}
+      </div>
+
+      <div className="pt-4 border-t border-border">
+        <h3 className="text-sm font-semibold text-foreground">VIP name markers</h3>
+        <p className="text-xs text-muted-foreground mt-0.5">
+          Names containing any of these as a standalone word auto-promote to the
+          Member stage on first contact, on rename, and during Sync Telegram
+          history. Case-insensitive. Defaults: <code className="font-mono">vip</code>, <code className="font-mono">premium</code>.
+        </p>
+        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+          {cfg.vip_marker_phrases.map((m) => (
+            <span
+              key={m}
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs bg-purple-500/15 text-purple-700 border border-purple-500/30"
+            >
+              <span className="font-mono">{m}</span>
+              <button
+                type="button"
+                onClick={() => removeMarker(m)}
+                disabled={busy}
+                className="hover:bg-purple-500/20 rounded p-0.5 disabled:opacity-30"
+                title={`Remove "${m}"`}
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </span>
+          ))}
+          <input
+            value={markerInput}
+            onChange={(e) => setMarkerInput(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addMarker(); } }}
+            placeholder="Add marker… (Enter)"
+            disabled={busy}
+            className="flex-1 min-w-[140px] text-xs bg-transparent border border-border rounded-md px-2 py-1 outline-none focus:border-primary disabled:opacity-50"
+          />
+        </div>
       </div>
     </div>
   );
