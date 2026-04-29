@@ -49,7 +49,9 @@ class Contact(Base):
     username = Column(String(255), nullable=True)
     first_name = Column(String(255), nullable=True)
     last_name = Column(String(255), nullable=True)
-    source = Column(String(255), nullable=True)  # campaign tag from /start param
+    source = Column(String(255), nullable=True)  # legacy — being deprecated; mirror of source_tag
+    source_tag = Column(String(255), nullable=True)  # campaign tag (replaces source); written by /start parser today, by invite-link claim flow in Spec B
+    entry_path = Column(String(64), nullable=True)   # controlled vocab — 'legacy_pre_attribution', 'landing_page', 'public_channel', 'affiliate', 'direct', 'unknown'
 
     first_seen = Column(DateTime, default=datetime.utcnow)
     last_seen = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -235,6 +237,9 @@ class Workspace(Base):
     vip_marker_phrases = Column(Text, nullable=True)  # JSON: ["vip", "premium", ...]
     # HMAC secret for POST /webhook/deposit-events
     deposit_webhook_secret = Column(EncryptedText, nullable=True)
+    # Last "Sync Telegram history" run summary (timestamp + JSON-encoded counts)
+    last_backfill_at = Column(DateTime, nullable=True)
+    last_backfill_summary = Column(Text, nullable=True)  # JSON: {contacts_created, messages_replayed, skipped}
 
 
 class PipelineStage(Base):
@@ -564,3 +569,13 @@ class AuditLog(Base):
     target_id = Column(String(100), nullable=True)             # stringly-typed so int + telegram-id both fit
     detail = Column(Text, nullable=True)                       # short human-readable note
     ip_address = Column(String(64), nullable=True)
+
+
+class AppMeta(Base):
+    """Single-row-per-key store for one-time migration flags and similar bookkeeping."""
+
+    __tablename__ = "app_meta"
+
+    key = Column(String(64), primary_key=True)
+    value = Column(Text, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
