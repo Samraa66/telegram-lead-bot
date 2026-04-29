@@ -70,6 +70,70 @@ def name_matches_vip_marker(
     return m.group(0).lower() if m else None
 
 
+def maybe_promote_to_member_stage(
+    contact: Contact,
+    db: Session,
+    *,
+    moved_by: str = "name_marker",
+) -> bool:
+    """
+    Forward-only, promotion-only. Returns True if the contact moved to
+    member_stage, False otherwise. Idempotent: contacts already at or past
+    member_stage are no-ops.
+
+    Reads workspace.vip_marker_phrases (JSON list). Writes a StageHistory
+    row when promoted. Re-classifies the contact inline.
+    """
+    import json as _json
+
+    ws = db.query(Workspace).filter(Workspace.id == contact.workspace_id).first()
+    if not ws or not ws.member_stage_id or not ws.vip_marker_phrases:
+        return False
+
+    try:
+        markers = _json.loads(ws.vip_marker_phrases) or []
+    except Exception:
+        return False
+
+    matched = name_matches_vip_marker(contact.first_name, contact.last_name, markers)
+    if not matched:
+        return False
+
+    member = db.query(PipelineStage).filter(PipelineStage.id == ws.member_stage_id).first()
+    if not member:
+        return False
+
+    current = None
+    if contact.current_stage_id:
+        current = db.query(PipelineStage).filter(
+            PipelineStage.id == contact.current_stage_id,
+        ).first()
+    current_pos = current.position if current else 0
+
+    if current_pos >= member.position:
+        return False  # never demote, never sidestep
+
+    now = datetime.utcnow()
+    from_stage_id = contact.current_stage_id
+    contact.current_stage_id = member.id
+    contact.current_stage = member.position    # legacy mirror
+    contact.stage_entered_at = now
+
+    db.add(StageHistory(
+        contact_id=contact.id,
+        from_stage_id=from_stage_id, to_stage_id=member.id,
+        from_stage=current_pos or None, to_stage=member.position,
+        moved_at=now, moved_by=moved_by, trigger_keyword=matched,
+    ))
+    contact.classification = classify_contact(
+        db, contact.id,
+        getattr(contact, "source_tag", None) or contact.source,
+        existing=contact,
+    )
+    db.commit()
+    return True
+
+
 def _load_keywords(db: Session, workspace_id: int = 1) -> List[Tuple[str, int]]:
     """Return active (phrase, target_stage_id) pairs for the workspace."""
     rows = (
