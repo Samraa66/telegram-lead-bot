@@ -145,6 +145,8 @@ def _ensure_columns() -> None:
             ("deposit_currency", "TEXT"),
             ("deposit_source", "TEXT"),
             ("puprime_client_id", "TEXT"),
+            ("source_tag", "TEXT"),
+            ("entry_path", "TEXT"),
         ]
     else:
         contacts_needed = [
@@ -169,6 +171,8 @@ def _ensure_columns() -> None:
             ("deposit_currency", "VARCHAR(8)"),
             ("deposit_source", "VARCHAR(20)"),
             ("puprime_client_id", "VARCHAR(255)"),
+            ("source_tag", "VARCHAR(255)"),
+            ("entry_path", "VARCHAR(64)"),
         ]
 
     messages_needed = [
@@ -233,6 +237,8 @@ def _ensure_columns() -> None:
             ("conversion_stage_id", "INTEGER"),
             ("vip_marker_phrases", "TEXT"),
             ("deposit_webhook_secret", "TEXT"),
+            ("last_backfill_at", "TIMESTAMP"),
+            ("last_backfill_summary", "TEXT"),
         ]
         for col, ddl in ws_needed:
             if col not in existing_ws:
