@@ -135,7 +135,8 @@ def _make_inbound_handler(workspace_id: int):
                     username=username,
                     first_name=first_name,
                     last_name=last_name,
-                    source=source,
+                    source=source,                  # legacy mirror
+                    source_tag=source,
                     classification="new_lead",
                     current_stage_id=sid,
                     current_stage=spos,  # legacy mirror
@@ -160,10 +161,11 @@ def _make_inbound_handler(workspace_id: int):
                 if last_name is not None:
                     contact.last_name = last_name
                 contact.last_seen = now
-                if source and not contact.source:
-                    contact.source = source
+                if source and not contact.source_tag:
+                    contact.source = source           # legacy mirror
+                    contact.source_tag = source
                 contact.classification = classify_contact(
-                    db, user_id, contact.source, existing=contact
+                    db, user_id, contact.source_tag or contact.source, existing=contact
                 )
 
             db.add(Message(

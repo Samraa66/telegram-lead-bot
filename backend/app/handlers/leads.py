@@ -66,7 +66,8 @@ def ensure_contact(
         if last_name is not None:
             contact.last_name = last_name
         if source is not None:
-            contact.source = source
+            contact.source = source           # legacy mirror
+            contact.source_tag = source
 
         # Initialise missing defaults (rows created before CRM columns existed)
         if contact.current_stage_id is None:
@@ -94,7 +95,8 @@ def ensure_contact(
         username=username,
         first_name=first_name,
         last_name=last_name,
-        source=source,
+        source=source,                  # legacy mirror
+        source_tag=source,
         first_seen=now,
         last_seen=now,
         classification=classification,
