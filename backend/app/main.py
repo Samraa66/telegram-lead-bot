@@ -1056,10 +1056,25 @@ class TelethonVerifyRequest(BaseModel):
 @app.get("/settings/telethon/status")
 def telethon_status(
     workspace_id: int = Depends(get_workspace_id),
+    db: Session = Depends(get_db),
     _=Depends(require_workspace_owner),
 ):
     from app.services.telethon_client import get_client
-    return {"connected": get_client(workspace_id) is not None}
+    from app.database.models import Workspace
+    import json as _json
+
+    ws = db.query(Workspace).filter(Workspace.id == workspace_id).first()
+    last_summary = None
+    if ws and ws.last_backfill_summary:
+        try:
+            last_summary = _json.loads(ws.last_backfill_summary)
+        except Exception:
+            last_summary = None
+    return {
+        "connected": get_client(workspace_id) is not None,
+        "last_backfill_at": ws.last_backfill_at.isoformat() if ws and ws.last_backfill_at else None,
+        "last_backfill_summary": last_summary,
+    }
 
 
 @app.get("/settings/forwarding/status")
