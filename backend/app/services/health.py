@@ -180,3 +180,72 @@ async def check_telegram_bot(ws: Optional[Workspace], workspace_id: int, http) -
         "id": "bot", "label": label, "status": "ok",
         "detail": "Token saved and webhook active.",
     }
+
+
+async def check_operator_account(ws: Optional[Workspace], workspace_id: int) -> dict:
+    """
+    Verify the Telethon client is alive, connected, AND has an authorized
+    session. The previous implementation only checked dict membership; this
+    awaits is_user_authorized() so a session revoked by Telegram is detected
+    immediately (instead of after the next process restart).
+    """
+    label = "Operator Account"
+    from app.services import telethon_client as _tc
+
+    client = _tc.get_client(workspace_id)
+    has_session = bool(ws and ws.telethon_session)
+
+    if client is None:
+        if has_session:
+            return {
+                "id": "operator", "label": label, "status": "warn",
+                "detail": "Session saved but client not running — server may need a restart.",
+                "action": "Contact support if this persists",
+            }
+        return {
+            "id": "operator", "label": label, "status": "error",
+            "detail": "Not connected — you cannot DM leads from inside the CRM.",
+            "action": "Settings → Telegram → Operator Account",
+        }
+
+    try:
+        connected = client.is_connected()
+    except Exception as e:
+        return {
+            "id": "operator", "label": label, "status": "warn",
+            "detail": f"Telethon raised on is_connected(): {type(e).__name__}",
+            "action": "Restart the server if this persists",
+        }
+    if not connected:
+        return {
+            "id": "operator", "label": label, "status": "warn",
+            "detail": "Telethon socket disconnected (will reconnect automatically).",
+            "action": "If this persists for more than 5 minutes, restart the server",
+        }
+
+    try:
+        authorized = await asyncio.wait_for(client.is_user_authorized(), timeout=5.0)
+    except asyncio.TimeoutError:
+        return {
+            "id": "operator", "label": label, "status": "warn",
+            "detail": "Telethon did not respond within 5 seconds.",
+            "action": "Restart the server if this persists",
+        }
+    except Exception as e:
+        return {
+            "id": "operator", "label": label, "status": "warn",
+            "detail": f"Telethon raised: {type(e).__name__}: {str(e)[:80]}",
+            "action": "Re-link the operator account",
+        }
+
+    if not authorized:
+        return {
+            "id": "operator", "label": label, "status": "warn",
+            "detail": "Telegram rejected the session — re-link the operator account.",
+            "action": "Settings → Telegram → Operator Account → reconnect",
+        }
+
+    return {
+        "id": "operator", "label": label, "status": "ok",
+        "detail": "Telethon session connected and authorized.",
+    }
