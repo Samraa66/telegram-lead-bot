@@ -45,11 +45,12 @@ async def resolve_attribution_channel(
     - Reads from cached `Workspace.attribution_channel_id` when set.
     - Otherwise resolves `main_channel_url` via Telethon, persists the result,
       and returns it.
-    - Returns None when `main_channel_url` is unset or Telethon resolution fails.
+    - Returns None when `main_channel_url` is unset, `client` is None, or
+      Telethon resolution fails.
     """
     if ws is None:
         return None
-    if ws.attribution_channel_id:
+    if ws.attribution_channel_id is not None:
         return int(ws.attribution_channel_id)
 
     url = (ws.main_channel_url or "").strip() if ws.main_channel_url else ""
@@ -61,11 +62,11 @@ async def resolve_attribution_channel(
     try:
         entity = await client.get_entity(url)
     except Exception as exc:
-        logger.warning("attribution: failed to resolve %s: %s", url, exc)
+        logger.warning("attribution: failed to resolve %s: %s", url, exc, exc_info=True)
         return None
 
     chan_id = getattr(entity, "id", None)
-    if not chan_id:
+    if chan_id is None:
         return None
     chan_id = int(chan_id)
 

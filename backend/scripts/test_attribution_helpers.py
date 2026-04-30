@@ -114,6 +114,15 @@ def test_resolve_returns_none_on_telethon_failure():
     return check(f"returns None (got {got!r})", got is None)
 
 
+def test_resolve_returns_none_when_client_is_none():
+    print("\n=== Test 10: resolve returns None when client arg is None ===")
+    import asyncio
+    from app.services.attribution import resolve_attribution_channel
+    ws = _make_ws(main_url="t.me/+abc", attribution_channel_id=None)
+    got = asyncio.run(resolve_attribution_channel(ws, db=None, client=None))
+    return check(f"returns None (got {got!r})", got is None)
+
+
 def main():
     results = [
         test_extract_hash_https_form(),
@@ -125,6 +134,7 @@ def main():
         test_resolve_uses_telethon_when_unset(),
         test_resolve_returns_none_on_missing_url(),
         test_resolve_returns_none_on_telethon_failure(),
+        test_resolve_returns_none_when_client_is_none(),
     ]
     passed = sum(results); total = len(results)
     print(f"\n{'='*45}")
