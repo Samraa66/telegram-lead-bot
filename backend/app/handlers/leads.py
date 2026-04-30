@@ -93,6 +93,14 @@ def ensure_contact(
         contact.classification = classify_contact(
             db, user_id, contact.source_tag or contact.source, existing=contact
         )
+
+        # Spec B: claim pending attribution for an existing contact who has no tag yet.
+        if source is None and contact.source_tag is None:
+            from app.services.attribution import claim_pending_attribution
+            claim_pending_attribution(
+                contact, telegram_user_id=user_id, db=db, workspace_id=workspace_id,
+            )
+
         db.commit()
         db.refresh(contact)
         return contact
@@ -119,6 +127,16 @@ def ensure_contact(
     db.add(contact)
     db.commit()
     db.refresh(contact)
+
+    # Spec B: claim a pending channel-join attribution if /start carried no tag.
+    if source is None and contact.source_tag is None:
+        from app.services.attribution import claim_pending_attribution
+        claimed = claim_pending_attribution(
+            contact, telegram_user_id=user_id, db=db, workspace_id=workspace_id,
+        )
+        if claimed:
+            db.commit()
+            db.refresh(contact)
 
     # Schedule follow-ups only when we landed at the very first stage
     # (member-stage starts skip the lead-nurturing sequence).

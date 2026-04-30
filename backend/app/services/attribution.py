@@ -200,5 +200,38 @@ async def handle_channel_join(event, db: Session) -> None:
     db.commit()
 
 
-# claim_pending_attribution — Task 9
+def claim_pending_attribution(
+    contact: Contact, *, telegram_user_id: int, db: Session, workspace_id: int,
+) -> Optional[str]:
+    """
+    Look up the most recent unclaimed, attributed ChannelJoinEvent for this
+    user in this workspace and copy its source_tag onto the contact.
+
+    Returns the claimed source_tag (string) on success, or None if there's
+    nothing to claim.
+
+    Caller (ensure_contact) is responsible for committing.
+    """
+    pending = (
+        db.query(ChannelJoinEvent)
+          .filter(
+              ChannelJoinEvent.workspace_id == workspace_id,
+              ChannelJoinEvent.telegram_user_id == telegram_user_id,
+              ChannelJoinEvent.source_tag.isnot(None),
+              ChannelJoinEvent.claimed_contact_id.is_(None),
+          )
+          .order_by(ChannelJoinEvent.joined_at.desc())
+          .first()
+    )
+    if not pending:
+        return None
+
+    contact.source_tag = pending.source_tag
+    contact.source = pending.source_tag       # legacy mirror
+    contact.entry_path = "public_channel"
+    pending.claimed_contact_id = contact.id
+    pending.claimed_at = datetime.utcnow()
+    return pending.source_tag
+
+
 # cleanup_old_join_events — Task 10
