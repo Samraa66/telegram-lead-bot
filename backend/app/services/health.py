@@ -112,11 +112,71 @@ async def _check_bot_in_chat(
 
 
 # ---------------------------------------------------------------------------
-# Per-check functions — added in subsequent tasks
+# Per-check functions
 # ---------------------------------------------------------------------------
-# (check_telegram_bot in Task 7)
-# (check_operator_account in Task 8)
-# (check_signal_forwarding in Task 9)
-# (check_meta in Task 10)
-# (check_vip_channel in Task 11)
-# (run_all_checks in Task 12)
+
+async def check_telegram_bot(ws: Optional[Workspace], workspace_id: int, http) -> dict:
+    """
+    Verify the Bot API webhook is registered, points at our backend, and isn't
+    backed up. Distinguishes 'no token', 'wrong URL', 'queue backlog', 'recent
+    delivery error', and 'API unreachable'.
+    """
+    label = "Telegram Bot"
+    token = ws.bot_token if ws and ws.bot_token else None
+    if not token:
+        return {
+            "id": "bot", "label": label, "status": "error",
+            "detail": "Bot token not set — leads cannot reach your CRM.",
+            "action": "Settings → Telegram → Telegram Bot",
+        }
+
+    expected = f"{APP_BASE_URL}/webhook/{workspace_id}" if APP_BASE_URL else None
+    cache_key = ("bot_webhook", workspace_id)
+    info = _probe_cache.get(cache_key)
+    if info is None:
+        try:
+            r = await http.get(f"https://api.telegram.org/bot{token}/getWebhookInfo")
+            info = r.json().get("result", {})
+            _probe_cache.set(cache_key, info)
+        except (httpx.TimeoutException, httpx.NetworkError, httpx.HTTPError):
+            return {
+                "id": "bot", "label": label, "status": "warn",
+                "detail": "Could not reach Telegram API right now (will retry).",
+                "action": "If this persists more than 5 minutes, check VPS network/DNS",
+            }
+
+    webhook_url = info.get("url") or None
+    pending = info.get("pending_update_count", 0) or 0
+    last_err_date = info.get("last_error_date")
+    last_err_msg = (info.get("last_error_message") or "")[:120]
+
+    if not webhook_url:
+        return {
+            "id": "bot", "label": label, "status": "warn",
+            "detail": "Token saved but webhook not registered.",
+            "action": "Settings → Telegram → Telegram Bot → Register Webhook",
+        }
+    if expected and webhook_url != expected:
+        return {
+            "id": "bot", "label": label, "status": "warn",
+            "detail": f"Webhook points to {webhook_url} (expected {expected}).",
+            "action": "Settings → Telegram → Telegram Bot → Re-register Webhook",
+        }
+    if pending > 100:
+        return {
+            "id": "bot", "label": label, "status": "warn",
+            "detail": f"{pending} updates queued — bot may be slow.",
+            "action": "Investigate slow webhook handler",
+        }
+    if last_err_date:
+        age = (datetime.utcnow() - datetime.utcfromtimestamp(last_err_date)).total_seconds()
+        if age < 3600:
+            return {
+                "id": "bot", "label": label, "status": "warn",
+                "detail": f"Telegram reported a delivery error: {last_err_msg}",
+                "action": "Check VPS logs",
+            }
+    return {
+        "id": "bot", "label": label, "status": "ok",
+        "detail": "Token saved and webhook active.",
+    }
