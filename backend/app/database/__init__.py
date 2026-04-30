@@ -331,6 +331,7 @@ def _ensure_columns() -> None:
             ("last_backfill_at", "TIMESTAMP"),
             ("last_backfill_summary", "TEXT"),
             ("last_signal_forwarded_at", "TIMESTAMP"),
+            ("attribution_channel_id", "BIGINT"),
         ]
         for col, ddl in ws_needed:
             if col not in existing_ws:

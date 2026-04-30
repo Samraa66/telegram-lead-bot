@@ -244,6 +244,10 @@ class Workspace(Base):
     # least one destination. Read by services/health.py:check_signal_forwarding
     # for the observed-success bypass.
     last_signal_forwarded_at = Column(DateTime, nullable=True)
+    # Numeric channel ID for the public channel used in per-campaign invite-link
+    # attribution (Spec B). Lazily resolved from main_channel_url by
+    # services/attribution.py:resolve_attribution_channel on first use.
+    attribution_channel_id = Column(BigInteger, nullable=True)
 
 
 class PipelineStage(Base):
