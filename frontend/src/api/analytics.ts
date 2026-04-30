@@ -118,6 +118,8 @@ export type TrackedCampaign = {
   deposits: number;
   is_active?: boolean;
   created_at: string;
+  invite_link: string | null;     // NEW
+  channel_join_count: number;     // NEW
 };
 
 function rangeParams(range: DateRange): string {

@@ -9,6 +9,8 @@ import {
   Overview, ConversionMetric, StageCount, HourCount, DayCount, DayOfWeek, DateRange,
   CampaignMetric, CampaignFlag, CreativeMetric, AdAlert, TrackedCampaign,
 } from "../api/analytics";
+import { getStoredUser } from "../api/auth";
+import { CampaignLinkModal } from "../components/CampaignLinkModal";
 import { cn } from "../lib/utils";
 
 // ---------------------------------------------------------------------------
@@ -310,6 +312,7 @@ export default function AnalyticsDashboard() {
   const [newCampaignMetaId, setNewCampaignMetaId] = useState("");
   const [creatingCampaign, setCreatingCampaign] = useState(false);
   const [copiedTag, setCopiedTag] = useState<string | null>(null);
+  const [linkModalCampaign, setLinkModalCampaign] = useState<TrackedCampaign | null>(null);
 
   const load = useCallback((r: DateRange) => {
     setLoading(true);
@@ -350,6 +353,7 @@ export default function AnalyticsDashboard() {
     try {
       const created = await createTrackedCampaign(newCampaignName.trim(), newCampaignMetaId.trim() || undefined);
       setTrackedCampaigns((prev) => [created, ...prev]);
+      setLinkModalCampaign(created);
       setNewCampaignName("");
       setNewCampaignMetaId("");
     } catch (e: any) {
@@ -388,6 +392,7 @@ export default function AnalyticsDashboard() {
   if (error) return <div className="flex-1 flex items-center justify-center text-destructive text-sm">{error}</div>;
 
   return (
+    <>
     <div className="flex-1 overflow-y-auto px-4 pb-8 space-y-4 pt-3">
 
       {/* Date range picker */}
@@ -698,7 +703,15 @@ export default function AnalyticsDashboard() {
               <div key={c.source_tag} className="py-2.5 space-y-1.5">
                 <div className="flex items-center justify-between gap-2">
                   <p className="text-[12px] font-semibold text-foreground truncate">{c.name}</p>
-                  <span className="text-[10px] text-muted-foreground shrink-0">{c.leads}L · {c.deposits}D</span>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <span className="text-[10px] text-muted-foreground">{c.leads}L · {c.deposits}D · {c.channel_join_count}J</span>
+                    <button
+                      onClick={() => setLinkModalCampaign(c)}
+                      className="text-[10px] text-blue-600 hover:underline"
+                    >
+                      Show links
+                    </button>
+                  </div>
                 </div>
 
                 {/* Landing page URL — paste this into the Meta ad */}
@@ -747,5 +760,14 @@ export default function AnalyticsDashboard() {
       </div>
 
     </div>
+
+    {linkModalCampaign && (
+      <CampaignLinkModal
+        campaign={linkModalCampaign}
+        workspaceId={getStoredUser()?.workspace_id ?? 1}
+        onClose={() => setLinkModalCampaign(null)}
+      />
+    )}
+    </>
   );
 }
