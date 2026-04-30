@@ -1751,134 +1751,20 @@ def health():
 
 
 @app.get("/health/workspace")
-def health_workspace(
+async def health_workspace(
     db: Session = Depends(get_db),
     workspace_id: int = Depends(get_workspace_id),
     _=Depends(require_roles("developer", "admin", "operator", "vip_manager", "affiliate")),
 ):
     """
     Aggregated health for the current workspace — one card worth of info showing
-    which integrations are up, degraded, or down.
+    which integrations are up, degraded, or down. Logic lives in
+    services/health.py so each check is independently testable.
     """
-    from app.database.models import Workspace, Affiliate
-    from app.services.forwarding import get_destinations_for_org
-    from app.services.telethon_client import get_client
-    from app.config import APP_BASE_URL
-
+    from app.services import health
+    from app.database.models import Workspace
     ws = db.query(Workspace).filter(Workspace.id == workspace_id).first()
-    checks: list[dict] = []
-
-    # 1. Bot token + webhook
-    token = ws.bot_token if ws and ws.bot_token else None
-    if not token:
-        checks.append({"id": "bot", "label": "Telegram Bot", "status": "error",
-                       "detail": "Bot token not set — leads cannot reach your CRM.",
-                       "action": "Settings → Telegram → Telegram Bot"})
-    else:
-        webhook_url = None
-        expected = f"{APP_BASE_URL}/webhook/{workspace_id}" if APP_BASE_URL else None
-        try:
-            url = f"https://api.telegram.org/bot{token}/getWebhookInfo"
-            with urllib.request.urlopen(url, timeout=5) as r:
-                info = json.loads(r.read()).get("result", {})
-            webhook_url = info.get("url") or None
-        except Exception:
-            pass
-        if not webhook_url:
-            checks.append({"id": "bot", "label": "Telegram Bot", "status": "warn",
-                           "detail": "Token saved but webhook not registered.",
-                           "action": "Settings → Telegram → Telegram Bot → Register Webhook"})
-        elif expected and webhook_url != expected:
-            checks.append({"id": "bot", "label": "Telegram Bot", "status": "warn",
-                           "detail": f"Webhook points to {webhook_url} (expected {expected}).",
-                           "action": "Settings → Telegram → Telegram Bot → Re-register Webhook"})
-        else:
-            checks.append({"id": "bot", "label": "Telegram Bot", "status": "ok",
-                           "detail": "Token saved and webhook active."})
-
-    # 2. Operator account (Telethon)
-    connected = get_client(workspace_id) is not None
-    has_session = bool(ws and ws.telethon_session)
-    if connected:
-        checks.append({"id": "operator", "label": "Operator Account", "status": "ok",
-                       "detail": "Telethon session connected."})
-    elif has_session:
-        checks.append({"id": "operator", "label": "Operator Account", "status": "warn",
-                       "detail": "Session saved but not currently connected — server may need a restart.",
-                       "action": "Contact support if this persists"})
-    else:
-        checks.append({"id": "operator", "label": "Operator Account", "status": "error",
-                       "detail": "Not connected — you cannot DM leads from inside the CRM.",
-                       "action": "Settings → Telegram → Operator Account"})
-
-    # 3. Signal forwarding (source + destinations)
-    source_id = ws.source_channel_id if ws else None
-    destinations = get_destinations_for_org(workspace_id, db)
-    if source_id and destinations and token:
-        checks.append({"id": "forwarding", "label": "Signal Forwarding", "status": "ok",
-                       "detail": f"Copying from source → {len(destinations)} channel{'s' if len(destinations) != 1 else ''}."})
-    elif not source_id:
-        checks.append({"id": "forwarding", "label": "Signal Forwarding", "status": "error",
-                       "detail": "Source channel not configured — nothing to mirror.",
-                       "action": "Settings → Telegram → Signal Forwarding"})
-    elif not destinations:
-        checks.append({"id": "forwarding", "label": "Signal Forwarding", "status": "warn",
-                       "detail": "Source set, but no destination channels yet.",
-                       "action": "Settings → Telegram → Signal Forwarding"})
-    else:
-        checks.append({"id": "forwarding", "label": "Signal Forwarding", "status": "warn",
-                       "detail": "Bot token missing — cannot deliver to destinations.",
-                       "action": "Settings → Telegram → Telegram Bot"})
-
-    # 4. Meta Ads
-    meta_token = ws.meta_access_token if ws else None
-    if not meta_token:
-        checks.append({"id": "meta", "label": "Meta Ads", "status": "warn",
-                       "detail": "Not connected — campaign analytics and CAPI events won't run.",
-                       "action": "Settings → Meta Ads"})
-    else:
-        # Verify token still works — ping /me
-        token_ok = True
-        token_error: Optional[str] = None
-        try:
-            url = f"{GRAPH_BASE}/me?access_token={urllib.parse.quote(meta_token)}"
-            with urllib.request.urlopen(url, timeout=5) as r:
-                resp = json.loads(r.read())
-            if "error" in resp:
-                token_ok = False
-                token_error = resp["error"].get("message", "Token rejected by Meta")
-        except Exception as e:
-            token_ok = False
-            token_error = str(e)[:80]
-        if token_ok:
-            detail = "Connected"
-            if ws and ws.landing_page_url:
-                detail += " · landing page set"
-            else:
-                detail += " · no landing page URL yet"
-            checks.append({"id": "meta", "label": "Meta Ads", "status": "ok", "detail": detail + "."})
-        else:
-            checks.append({"id": "meta", "label": "Meta Ads", "status": "error",
-                           "detail": f"Meta rejected the access token: {token_error}",
-                           "action": "Settings → Meta Ads — regenerate token"})
-
-    # 5. VIP channel (affiliate-specific signal; still useful for owners as sanity)
-    aff = db.query(Affiliate).filter(Affiliate.affiliate_workspace_id == workspace_id).first()
-    if aff:
-        if aff.vip_channel_id:
-            checks.append({"id": "vip_channel", "label": "VIP Channel", "status": "ok",
-                           "detail": f"Linked: {aff.vip_channel_id}"})
-        else:
-            checks.append({"id": "vip_channel", "label": "VIP Channel", "status": "warn",
-                           "detail": "Not linked — VIP members won't receive signals.",
-                           "action": "Dashboard checklist → VIP Channel"})
-
-    # Overall
-    has_error = any(c["status"] == "error" for c in checks)
-    has_warn  = any(c["status"] == "warn"  for c in checks)
-    overall = "critical" if has_error else ("degraded" if has_warn else "healthy")
-
-    return {"overall": overall, "checks": checks}
+    return await health.run_all_checks(ws, workspace_id, db)
 
 
 # -----------------------------
