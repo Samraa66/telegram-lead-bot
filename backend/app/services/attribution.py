@@ -148,6 +148,57 @@ async def mint_invite_link(
     return row
 
 
-# handle_channel_join — Task 7
+async def handle_channel_join(event, db: Session) -> None:
+    """
+    Process a Telethon ChatAction join event. Pure async function — does not
+    depend on a live Telethon instance, so tests can call it with synthetic
+    event objects.
+
+    Records a ChannelJoinEvent row for any join into a workspace's attribution
+    channel. Organic joins (no invite link) are recorded with source_tag=NULL
+    so we keep channel-growth analytics; attributed joins resolve the campaign
+    via invite_link_hash → CampaignInviteLink.source_tag.
+    """
+    chat_id = getattr(event, "chat_id", None)
+    user_id = getattr(event, "user_id", None)
+    if not chat_id or not user_id:
+        return
+
+    ws = db.query(Workspace).filter(
+        Workspace.attribution_channel_id == int(chat_id)
+    ).first()
+    if not ws:
+        return  # not our attribution channel for any workspace
+
+    invite_link_hash = None
+    source_tag = None
+
+    action_message = getattr(event, "action_message", None)
+    action = getattr(action_message, "action", None) if action_message else None
+    invite = getattr(action, "invite", None) if action else None
+    link = getattr(invite, "link", None) if invite else None
+
+    if link:
+        invite_link_hash = _extract_hash(link)
+        if invite_link_hash:
+            row = (
+                db.query(CampaignInviteLink)
+                  .filter_by(workspace_id=ws.id, invite_link_hash=invite_link_hash)
+                  .first()
+            )
+            if row:
+                source_tag = row.source_tag
+
+    db.add(ChannelJoinEvent(
+        workspace_id=ws.id,
+        telegram_user_id=int(user_id),
+        channel_id=int(chat_id),
+        source_tag=source_tag,
+        invite_link_hash=invite_link_hash,
+        joined_at=datetime.utcnow(),
+    ))
+    db.commit()
+
+
 # claim_pending_attribution — Task 9
 # cleanup_old_join_events — Task 10
