@@ -1767,6 +1767,81 @@ async def health_workspace(
     return await health.run_all_checks(ws, workspace_id, db)
 
 
+def _origin_allowed_for_workspace(origin: str, landing_page_url: Optional[str]) -> bool:
+    """True if `origin` matches the host parsed from `landing_page_url` (or its www. variant)."""
+    if not origin or not landing_page_url:
+        return False
+    try:
+        from urllib.parse import urlparse
+        lp_host = (urlparse(landing_page_url).hostname or "").lower()
+        og_host = (urlparse(origin).hostname or "").lower()
+    except Exception:
+        return False
+    if not lp_host or not og_host:
+        return False
+    return og_host == lp_host or og_host == f"www.{lp_host}" or lp_host == f"www.{og_host}"
+
+
+def _attribution_error(origin: str, code: str, status: int):
+    return _JSONResponse(
+        {"error": code},
+        status_code=status,
+        headers={"Access-Control-Allow-Origin": origin} if origin else {},
+    )
+
+
+@app.get("/attribution/invite")
+@limiter.limit("30/minute")
+async def attribution_invite(
+    request: Request,
+    workspace_id: int,
+    src: str,
+    db: Session = Depends(get_db),
+):
+    """
+    Public, CORS-allowlisted, IP-rate-limited.
+    Returns the campaign-specific invite link for (workspace_id, src).
+    """
+    from app.database.models import Campaign, Workspace
+    from app.services import attribution as _attr
+    from app.services.telethon_client import get_client
+
+    origin = request.headers.get("origin", "")
+
+    ws = db.query(Workspace).filter(Workspace.id == workspace_id).first()
+    if not ws or not _origin_allowed_for_workspace(origin, ws.landing_page_url):
+        return _JSONResponse({"error": "origin_not_allowed"}, status_code=403)
+
+    campaign = (
+        db.query(Campaign)
+          .filter(Campaign.source_tag == src, Campaign.is_active == True)  # noqa: E712
+          .first()
+    )
+    if not campaign:
+        return _attribution_error(origin, "unknown_campaign", 404)
+
+    client = get_client(workspace_id)
+    channel_id = await _attr.resolve_attribution_channel(ws, db, client)
+    if not channel_id:
+        return _attribution_error(origin, "channel_unreachable", 502)
+
+    row = await _attr.mint_invite_link(ws, campaign, db, client, channel_id=channel_id)
+    if row is None:
+        return _attribution_error(origin, "channel_unreachable", 502)
+
+    return _JSONResponse(
+        {
+            "invite_link": row.invite_link,
+            "campaign": campaign.source_tag,
+            "channel_id": channel_id,
+        },
+        headers={
+            "Access-Control-Allow-Origin": origin,
+            "Cache-Control": "private, max-age=600",
+        },
+    )
+
+
 # -----------------------------
 # CRM Phase 1 API endpoints
 # -----------------------------
