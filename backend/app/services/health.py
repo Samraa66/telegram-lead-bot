@@ -494,3 +494,55 @@ async def check_meta(ws: Optional[Workspace], http) -> dict:
         "id": "meta", "label": label, "status": "ok",
         "detail": detail + ".",
     }
+
+
+async def check_vip_channel(
+    ws: Optional[Workspace], workspace_id: int, db: Session, http,
+) -> Optional[dict]:
+    """
+    Affiliate-specific check. Verifies (a) the affiliate row has a
+    vip_channel_id set AND (b) the bot is actually a member of that channel
+    with post permission.
+
+    Returns None for workspaces with no Affiliate row — the orchestrator drops
+    None entries so non-affiliate workspaces don't see a "VIP Channel" row.
+    """
+    label = "VIP Channel"
+    aff = db.query(Affiliate).filter(Affiliate.affiliate_workspace_id == workspace_id).first()
+    if not aff:
+        return None
+
+    if not aff.vip_channel_id:
+        return {
+            "id": "vip_channel", "label": label, "status": "warn",
+            "detail": "Not linked — VIP members won't receive signals.",
+            "action": "Dashboard checklist → VIP Channel",
+        }
+
+    token = ws.bot_token if ws and ws.bot_token else None
+    if not token:
+        return {
+            "id": "vip_channel", "label": label, "status": "warn",
+            "detail": f"Linked: {aff.vip_channel_id}; cannot verify membership without bot token.",
+            "action": "Settings → Telegram → Telegram Bot",
+        }
+
+    ok_status = await _check_bot_in_chat(
+        token, aff.vip_channel_id, http,
+        cache_key=("vip_member", aff.id, str(aff.vip_channel_id)),
+    )
+    if ok_status is True:
+        return {
+            "id": "vip_channel", "label": label, "status": "ok",
+            "detail": f"Linked: {aff.vip_channel_id}; bot has post access.",
+        }
+    if ok_status is False:
+        return {
+            "id": "vip_channel", "label": label, "status": "warn",
+            "detail": f"Linked: {aff.vip_channel_id} but bot is not a member or can't post.",
+            "action": "Add the bot to the VIP channel as an admin with post permission",
+        }
+    return {
+        "id": "vip_channel", "label": label, "status": "warn",
+        "detail": f"Linked: {aff.vip_channel_id}; could not verify bot membership right now.",
+    }
