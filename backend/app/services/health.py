@@ -335,11 +335,59 @@ async def check_signal_forwarding(
     }
 
 
+async def _meta_probe(
+    meta_token: str, account_id: str, path: str, http,
+) -> tuple[str, int, Optional[str]]:
+    """
+    Probe a /act_<id>/<path> endpoint. Returns (status, count, error_msg).
+      status='ok'           — rows returned
+      status='warn'         — Meta accepted the call but returned no rows
+      status='error'        — Meta returned a structured {error:...} response
+      status='unreachable'  — network/timeout failure
+    Caches everything except 'unreachable' for 5 min.
+    """
+    cache_key = ("meta_probe", _hash_token(meta_token), account_id, path)
+    cached = _probe_cache.get(cache_key)
+    if cached is not None:
+        return cached
+    try:
+        sep = "&" if "?" in path else "?"
+        url = (
+            f"{GRAPH_BASE}/act_{account_id}/{path}{sep}"
+            f"limit=5&access_token={urllib.parse.quote(meta_token)}"
+        )
+        r = await http.get(url)
+        data = r.json()
+    except (httpx.TimeoutException, httpx.NetworkError, httpx.HTTPError):
+        return ("unreachable", 0, None)
+    if "error" in data:
+        out = ("error", 0, (data["error"].get("message") or "")[:120])
+        _probe_cache.set(cache_key, out)
+        return out
+    rows = data.get("data", []) or []
+    out = ("ok", len(rows), None) if rows else ("warn", 0, None)
+    _probe_cache.set(cache_key, out)
+    return out
+
+
 async def check_meta(ws: Optional[Workspace], http) -> dict:
     """
-    Verify the Meta access token is valid AND has ads_management permission.
-    Missing ads_management is critical because CAPI rejection kills
-    conversion-based ad optimisation.
+    Five-stage Meta health probe:
+
+      1. Token saved?
+      2. Token accepted by /me?
+      3. ads_management permission granted?
+      4. Ad account ID configured?
+      5. Live data flowing — campaigns + creatives + recent insights all present?
+
+    Stage 5 hits three Graph endpoints in parallel:
+      - /act_<id>/campaigns — at least one campaign exists
+      - /act_<id>/adcreatives — at least one creative exists
+      - /act_<id>/insights?date_preset=last_3d — non-empty impressions in the
+        last 3 days (proves ads are actively delivering)
+
+    Any of those returning empty/error is reported in the detail so the
+    dashboard tells the user exactly which piece of the pipeline is dark.
     """
     label = "Meta Ads"
     meta_token = ws.meta_access_token if ws else None
@@ -385,11 +433,63 @@ async def check_meta(ws: Optional[Workspace], http) -> dict:
             "action": "Settings → Meta Ads — regenerate token with ads_management scope",
         }
 
-    detail = "Connected"
+    raw_account = (ws.meta_ad_account_id or "").strip() if ws else ""
+    account_id = raw_account[4:] if raw_account.startswith("act_") else raw_account
+    if not account_id:
+        return {
+            "id": "meta", "label": label, "status": "warn",
+            "detail": "Token connected, but ad account ID not set — can't verify campaigns or ads are running.",
+            "action": "Settings → Meta Ads — set ad account ID",
+        }
+
+    campaigns, creatives, insights = await asyncio.gather(
+        _meta_probe(meta_token, account_id,
+                    "campaigns?fields=id,name,effective_status", http),
+        _meta_probe(meta_token, account_id,
+                    "adcreatives?fields=id,name", http),
+        _meta_probe(meta_token, account_id,
+                    "insights?date_preset=last_3d&level=ad&fields=impressions,spend", http),
+    )
+
+    for probe_label, (status, _count, msg) in (
+        ("campaigns", campaigns),
+        ("ad creatives", creatives),
+        ("insights", insights),
+    ):
+        if status == "error":
+            return {
+                "id": "meta", "label": label, "status": "error",
+                "detail": f"Meta refused the {probe_label} request: {msg or 'unknown error'}",
+                "action": "Settings → Meta Ads — verify token scopes and ad account ID",
+            }
+
+    problems: list[str] = []
+    if campaigns[0] == "warn":
+        problems.append("no campaigns visible")
+    elif campaigns[0] == "unreachable":
+        problems.append("could not list campaigns right now")
+    if creatives[0] == "warn":
+        problems.append("no ad creatives visible")
+    elif creatives[0] == "unreachable":
+        problems.append("could not list creatives right now")
+    if insights[0] == "warn":
+        problems.append("no impressions in the last 3 days — ads not delivering")
+    elif insights[0] == "unreachable":
+        problems.append("could not load insights right now")
+
+    if problems:
+        return {
+            "id": "meta", "label": label, "status": "warn",
+            "detail": "Data not flowing: " + "; ".join(problems) + ".",
+            "action": "Verify campaigns are active and Meta has produced impressions",
+        }
+
+    detail = (
+        f"Connected · {campaigns[1]} campaigns, {creatives[1]} creatives, "
+        f"impressions in last 3 days"
+    )
     if ws and ws.landing_page_url:
         detail += " · landing page set"
-    else:
-        detail += " · no landing page URL yet"
     return {
         "id": "meta", "label": label, "status": "ok",
         "detail": detail + ".",
