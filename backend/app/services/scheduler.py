@@ -384,6 +384,28 @@ def start_scheduler() -> None:
     except Exception:
         logger.warning("Affiliate channel sync scheduler not loaded")
 
+    # Spec B — daily attribution-event TTL cleanup at 03:30 UTC.
+    def _attribution_cleanup_tick():
+        from app.database import SessionLocal
+        from app.services.attribution import cleanup_old_join_events
+        db = SessionLocal()
+        try:
+            n = cleanup_old_join_events(db, ttl_days=90)
+            if n:
+                logger.info("attribution: cleanup deleted %d old unclaimed join events", n)
+        except Exception:
+            logger.exception("attribution: cleanup failed")
+        finally:
+            db.close()
+
+    _scheduler.add_job(
+        _attribution_cleanup_tick,
+        "cron",
+        hour=3, minute=30,
+        id="attribution_cleanup",
+        replace_existing=True,
+    )
+
     _scheduler.start()
     logger.info("Follow-up scheduler started (5-minute tick, Dubai window %d–%d)", WINDOW_OPEN, WINDOW_CLOSE)
 
