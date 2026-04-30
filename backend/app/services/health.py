@@ -249,3 +249,87 @@ async def check_operator_account(ws: Optional[Workspace], workspace_id: int) -> 
         "id": "operator", "label": label, "status": "ok",
         "detail": "Telethon session connected and authorized.",
     }
+
+
+async def check_signal_forwarding(
+    ws: Optional[Workspace], workspace_id: int, http, db: Session,
+) -> dict:
+    """
+    Three layers, short-circuit on the first conclusive result:
+
+    1. Config gate — error/warn if source, destinations, or bot_token missing.
+    2. Observed-success bypass — ok if last forward < 5 min ago.
+    3. Per-destination getChatMember probe — warn listing the bad destinations.
+    """
+    label = "Signal Forwarding"
+    from app.services import forwarding as _fwd
+
+    source_id = ws.source_channel_id if ws else None
+    token = ws.bot_token if ws and ws.bot_token else None
+    destinations = _fwd.get_destinations_for_org(workspace_id, db) if ws else []
+
+    if not source_id:
+        return {
+            "id": "forwarding", "label": label, "status": "error",
+            "detail": "Source channel not configured — nothing to mirror.",
+            "action": "Settings → Telegram → Signal Forwarding",
+        }
+    if not destinations:
+        return {
+            "id": "forwarding", "label": label, "status": "warn",
+            "detail": "Source set, but no destination channels yet.",
+            "action": "Settings → Telegram → Signal Forwarding",
+        }
+    if not token:
+        return {
+            "id": "forwarding", "label": label, "status": "warn",
+            "detail": "Bot token missing — cannot deliver to destinations.",
+            "action": "Settings → Telegram → Telegram Bot",
+        }
+
+    # Layer 2: observed-success bypass
+    if ws.last_signal_forwarded_at:
+        age = (datetime.utcnow() - ws.last_signal_forwarded_at).total_seconds()
+        if age < 300:
+            mins = int(age // 60)
+            ago = f"{int(age)}s ago" if mins == 0 else f"{mins}m ago"
+            return {
+                "id": "forwarding", "label": label, "status": "ok",
+                "detail": f"Forwarded a signal {ago} — pipeline alive.",
+            }
+
+    # Layer 3: per-destination probe in parallel
+    async def probe(dest):
+        return await _check_bot_in_chat(
+            token, dest, http,
+            cache_key=("forwarding_membership", workspace_id, str(dest)),
+        )
+
+    results = await asyncio.gather(*(probe(d) for d in destinations))
+    bad = [str(d) for d, r in zip(destinations, results) if r is False]
+    inconclusive = [str(d) for d, r in zip(destinations, results) if r is None]
+
+    if bad:
+        listed = ", ".join(bad[:3])
+        more = f" (+{len(bad) - 3} more)" if len(bad) > 3 else ""
+        return {
+            "id": "forwarding", "label": label, "status": "warn",
+            "detail": f"Bot can't post in: {listed}{more}.",
+            "action": "Add the bot to those channels as an admin with post permission",
+        }
+    if all(r is None for r in results):
+        return {
+            "id": "forwarding", "label": label, "status": "warn",
+            "detail": "Could not verify destinations right now (Telegram unreachable).",
+            "action": "Retry; if persistent, check VPS network/DNS",
+        }
+    if inconclusive:
+        verified = len(results) - len(inconclusive)
+        return {
+            "id": "forwarding", "label": label, "status": "ok",
+            "detail": f"Verified {verified} of {len(results)} destinations; rest will retry.",
+        }
+    return {
+        "id": "forwarding", "label": label, "status": "ok",
+        "detail": f"Source channel set; bot has access to all {len(destinations)} destinations.",
+    }
