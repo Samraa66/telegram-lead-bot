@@ -240,6 +240,10 @@ class Workspace(Base):
     # Last "Sync Telegram history" run summary (timestamp + JSON-encoded counts)
     last_backfill_at = Column(DateTime, nullable=True)
     last_backfill_summary = Column(Text, nullable=True)  # JSON: {contacts_created, messages_replayed, skipped}
+    # Last time the signal-forwarding pipeline successfully copied a signal to at
+    # least one destination. Read by services/health.py:check_signal_forwarding
+    # for the observed-success bypass.
+    last_signal_forwarded_at = Column(DateTime, nullable=True)
 
 
 class PipelineStage(Base):
