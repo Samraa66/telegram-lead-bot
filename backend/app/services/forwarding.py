@@ -8,6 +8,7 @@ Destinations are the active affiliate VIP channel IDs scoped to the caller's org
 """
 
 import logging
+from datetime import datetime
 from typing import List
 
 import requests
@@ -121,10 +122,16 @@ def copy_signal_for_org(
         "Forwarding signal for ws=%s to %d channel(s)",
         workspace_id, len(destinations),
     )
+    any_success = False
     for dest_id in destinations:
-        copy_message(
+        if copy_message(
             from_chat_id=source_chat_id,
             message_id=message_id,
             destination_chat_id=dest_id,
             bot_token=ws.bot_token,
-        )
+        ):
+            any_success = True
+
+    if any_success:
+        ws.last_signal_forwarded_at = datetime.utcnow()
+        db.commit()
