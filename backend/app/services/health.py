@@ -546,3 +546,52 @@ async def check_vip_channel(
         "id": "vip_channel", "label": label, "status": "warn",
         "detail": f"Linked: {aff.vip_channel_id}; could not verify bot membership right now.",
     }
+
+
+# ---------------------------------------------------------------------------
+# Orchestrator
+# ---------------------------------------------------------------------------
+
+# (id, label) — order is preserved in the response
+_CHECKS_META = [
+    ("bot",         "Telegram Bot"),
+    ("operator",    "Operator Account"),
+    ("forwarding",  "Signal Forwarding"),
+    ("meta",        "Meta Ads"),
+    ("vip_channel", "VIP Channel"),
+]
+
+
+async def run_all_checks(ws: Optional[Workspace], workspace_id: int, db: Session) -> dict:
+    """
+    Run every check in parallel via asyncio.gather (return_exceptions=True so
+    individual failures don't crash the endpoint). Compose the response payload.
+    """
+    # Module-level lookup so tests can monkey-patch check_* and we still see it.
+    import sys as _sys
+    self_mod = _sys.modules[__name__]
+
+    async with httpx.AsyncClient(timeout=5.0) as http:
+        coroutines = [
+            self_mod.check_telegram_bot(ws, workspace_id, http),
+            self_mod.check_operator_account(ws, workspace_id),
+            self_mod.check_signal_forwarding(ws, workspace_id, http, db),
+            self_mod.check_meta(ws, http),
+            self_mod.check_vip_channel(ws, workspace_id, db, http),
+        ]
+        results = await asyncio.gather(*coroutines, return_exceptions=True)
+
+    checks: list[dict] = []
+    for i, r in enumerate(results):
+        check_id, label = _CHECKS_META[i]
+        if r is None:
+            continue  # check_vip_channel returns None for non-affiliate workspaces
+        if isinstance(r, BaseException):
+            checks.append(_exception_to_check(r, check_id, label))
+        else:
+            checks.append(r)
+
+    has_error = any(c["status"] == "error" for c in checks)
+    has_warn  = any(c["status"] == "warn"  for c in checks)
+    overall = "critical" if has_error else ("degraded" if has_warn else "healthy")
+    return {"overall": overall, "checks": checks}
