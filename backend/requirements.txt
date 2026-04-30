@@ -11,3 +11,4 @@ python-telegram-bot
 telethon
 python-jose[cryptography]
 slowapi
+httpx
