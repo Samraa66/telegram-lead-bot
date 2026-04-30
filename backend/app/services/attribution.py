@@ -36,7 +36,45 @@ def _extract_hash(invite_link: str) -> Optional[str]:
     return m.group(1) if m else None
 
 
-# resolve_attribution_channel — Task 4
+async def resolve_attribution_channel(
+    ws: Workspace, db: Optional[Session], client,
+) -> Optional[int]:
+    """
+    Return the numeric channel ID for the workspace's attribution channel.
+
+    - Reads from cached `Workspace.attribution_channel_id` when set.
+    - Otherwise resolves `main_channel_url` via Telethon, persists the result,
+      and returns it.
+    - Returns None when `main_channel_url` is unset or Telethon resolution fails.
+    """
+    if ws is None:
+        return None
+    if ws.attribution_channel_id:
+        return int(ws.attribution_channel_id)
+
+    url = (ws.main_channel_url or "").strip() if ws.main_channel_url else ""
+    if not url:
+        return None
+    if client is None:
+        return None
+
+    try:
+        entity = await client.get_entity(url)
+    except Exception as exc:
+        logger.warning("attribution: failed to resolve %s: %s", url, exc)
+        return None
+
+    chan_id = getattr(entity, "id", None)
+    if not chan_id:
+        return None
+    chan_id = int(chan_id)
+
+    ws.attribution_channel_id = chan_id
+    if db is not None:
+        db.commit()
+    return chan_id
+
+
 # mint_invite_link — Task 5
 # handle_channel_join — Task 7
 # claim_pending_attribution — Task 9
