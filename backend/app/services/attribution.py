@@ -234,4 +234,20 @@ def claim_pending_attribution(
     return pending.source_tag
 
 
-# cleanup_old_join_events — Task 10
+def cleanup_old_join_events(db: Session, *, ttl_days: int = 90) -> int:
+    """
+    Delete unclaimed ChannelJoinEvent rows older than ttl_days.
+    Claimed rows are kept indefinitely (they're part of contact attribution audit).
+    Returns the number of rows deleted.
+    """
+    cutoff = datetime.utcnow() - timedelta(days=ttl_days)
+    deleted = (
+        db.query(ChannelJoinEvent)
+          .filter(
+              ChannelJoinEvent.joined_at < cutoff,
+              ChannelJoinEvent.claimed_contact_id.is_(None),
+          )
+          .delete(synchronize_session=False)
+    )
+    db.commit()
+    return int(deleted or 0)
