@@ -1695,6 +1695,8 @@ def create_campaign(
         "meta_campaign_id": campaign.meta_campaign_id,
         "link": link,
         "landing_url": landing_url,
+        "invite_link": None,           # minted on first /attribution/invite call
+        "channel_join_count": 0,       # populated as joins happen
         "leads": 0,
         "deposits": 0,
         "created_at": campaign.created_at.isoformat(),
@@ -1708,7 +1710,9 @@ def list_campaigns(
     _=Depends(require_roles("developer", "admin")),
 ):
     """List all tracked campaigns with their attribution stats."""
-    from app.database.models import Campaign, Contact, StageHistory, Workspace
+    from app.database.models import (
+        Campaign, CampaignInviteLink, ChannelJoinEvent, Contact, Workspace,
+    )
     from app.config import BOT_USERNAME
 
     ws = db.query(Workspace).filter(Workspace.id == workspace_id).first()
@@ -1727,6 +1731,20 @@ def list_campaigns(
             )
             .count()
         )
+        invite_row = (
+            db.query(CampaignInviteLink)
+              .filter_by(workspace_id=workspace_id, campaign_id=c.id)
+              .filter(CampaignInviteLink.revoked_at.is_(None))
+              .first()
+        )
+        join_count = (
+            db.query(ChannelJoinEvent)
+              .filter(
+                  ChannelJoinEvent.workspace_id == workspace_id,
+                  ChannelJoinEvent.source_tag == c.source_tag,
+              )
+              .count()
+        )
         link = f"https://t.me/{BOT_USERNAME}?start={c.source_tag}" if BOT_USERNAME else None
         landing_url = f"{landing_base}?src={c.source_tag}" if landing_base else None
         result.append({
@@ -1736,6 +1754,8 @@ def list_campaigns(
             "meta_campaign_id": c.meta_campaign_id,
             "link": link,
             "landing_url": landing_url,
+            "invite_link": invite_row.invite_link if invite_row else None,
+            "channel_join_count": join_count,
             "leads": leads,
             "deposits": deposits,
             "is_active": c.is_active,
