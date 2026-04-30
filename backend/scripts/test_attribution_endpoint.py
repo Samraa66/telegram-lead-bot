@@ -100,7 +100,12 @@ def test_403_when_origin_not_allowed():
                           headers={"Origin": "https://evil.com"})
     finally:
         _restore_attribution(saved)
-    return check(f"status=403 (got {r.status_code})", r.status_code == 403)
+    ok1 = check(f"status=403 (got {r.status_code})", r.status_code == 403)
+    body = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
+    ok2 = check(f"body says origin_not_allowed (got {body!r})", body.get("error") == "origin_not_allowed")
+    ok3 = check(f"no CORS header on 403 (got {r.headers.get('access-control-allow-origin')!r})",
+                r.headers.get("access-control-allow-origin") is None)
+    return ok1 and ok2 and ok3
 
 
 def test_404_unknown_campaign():
@@ -130,7 +135,10 @@ def test_502_channel_unreachable():
                           headers={"Origin": "https://lp.example.com"})
     finally:
         _restore_attribution(saved)
-    return check(f"status=502 (got {r.status_code})", r.status_code == 502)
+    ok1 = check(f"status=502 (got {r.status_code})", r.status_code == 502)
+    body = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
+    ok2 = check(f"body says channel_unreachable (got {body!r})", body.get("error") == "channel_unreachable")
+    return ok1 and ok2
 
 
 def test_502_when_mint_returns_none():
@@ -144,7 +152,10 @@ def test_502_when_mint_returns_none():
                           headers={"Origin": "https://lp.example.com"})
     finally:
         _restore_attribution(saved)
-    return check(f"status=502 (got {r.status_code})", r.status_code == 502)
+    ok1 = check(f"status=502 (got {r.status_code})", r.status_code == 502)
+    body = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
+    ok2 = check(f"body says channel_unreachable (got {body!r})", body.get("error") == "channel_unreachable")
+    return ok1 and ok2
 
 
 def test_200_returns_invite_link():
@@ -193,7 +204,24 @@ def test_404_inactive_campaign():
                           headers={"Origin": "https://lp.example.com"})
     finally:
         _restore_attribution(saved)
-    return check(f"status=404 (got {r.status_code})", r.status_code == 404)
+    ok1 = check(f"status=404 (got {r.status_code})", r.status_code == 404)
+    body = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
+    ok2 = check(f"body says unknown_campaign (got {body!r})", body.get("error") == "unknown_campaign")
+    return ok1 and ok2
+
+
+def test_403_when_landing_page_url_unset():
+    print("\n=== Test 8: 403 when workspace has no landing_page_url set ===")
+    _setup_ws(landing_url=None)
+    _ensure_campaign(source_tag="cmp_n")
+    saved = _patch_attribution({"resolve": -1001, "mint": _stub_link("https://t.me/+x")})
+    try:
+        r = _client().get("/attribution/invite",
+                          params={"workspace_id": 1, "src": "cmp_n"},
+                          headers={"Origin": "https://anywhere.com"})
+    finally:
+        _restore_attribution(saved)
+    return check(f"status=403 (got {r.status_code})", r.status_code == 403)
 
 
 def main():
@@ -205,6 +233,7 @@ def main():
         test_200_returns_invite_link(),
         test_200_www_variant_allowed(),
         test_404_inactive_campaign(),
+        test_403_when_landing_page_url_unset(),
     ]
     passed = sum(results); total = len(results)
     print(f"\n{'='*45}")

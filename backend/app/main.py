@@ -1810,7 +1810,7 @@ async def attribution_invite(
 
     ws = db.query(Workspace).filter(Workspace.id == workspace_id).first()
     if not ws or not _origin_allowed_for_workspace(origin, ws.landing_page_url):
-        return _JSONResponse({"error": "origin_not_allowed"}, status_code=403)
+        return _attribution_error("", "origin_not_allowed", 403)
 
     campaign = (
         db.query(Campaign)
