@@ -23,10 +23,9 @@ export function CampaignLinkModal({ campaign, workspaceId, onClose }: CampaignLi
 
   useEffect(() => {
     if (campaign.invite_link) return;
-    const token = localStorage.getItem("auth_token") || "";
+    setInviteError(null);
     fetch(
       `${API_BASE}/attribution/invite?workspace_id=${workspaceId}&src=${encodeURIComponent(campaign.source_tag)}`,
-      { headers: { Origin: window.location.origin, Authorization: `Bearer ${token}` } },
     )
       .then(async r => {
         if (!r.ok) {
