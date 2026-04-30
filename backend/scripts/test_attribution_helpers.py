@@ -168,7 +168,15 @@ def test_mint_creates_row_first_call():
         ok2 = check(f"hash extracted = abc1XYZ (got {got.invite_link_hash!r})", got.invite_link_hash == "abc1XYZ")
         cnt = db.query(CampaignInviteLink).filter_by(campaign_id=c.id).count()
         ok3 = check(f"one row in db (got {cnt})", cnt == 1)
-        return ok1 and ok2 and ok3
+        ok4 = check(
+            f"client called with peer=-1001 (got {client.calls[0].peer})",
+            len(client.calls) == 1 and client.calls[0].peer == -1001,
+        )
+        ok5 = check(
+            f"client called with title (got {client.calls[0].title!r})",
+            client.calls[0].title == "t",
+        )
+        return ok1 and ok2 and ok3 and ok4 and ok5
     finally:
         db.close()
 
@@ -216,6 +224,44 @@ def test_mint_returns_none_on_telethon_failure():
         db.close()
 
 
+def test_mint_recovers_from_integrity_error_race():
+    print("\n=== Test 14: race-condition: another writer beats us, mint returns the winner's row ===")
+    import asyncio
+    from app.services.attribution import mint_invite_link
+    from app.database import init_db, SessionLocal
+    from app.database.models import CampaignInviteLink
+    init_db()
+    db = SessionLocal()
+    try:
+        ws = db.query(Workspace).filter(Workspace.id == 1).first()
+        c = _ensure_campaign(db, source_tag="cmp_race")
+
+        # Simulate another writer that has just inserted a row visible only AFTER
+        # our existing-row lookup but BEFORE our commit. We do this by inserting
+        # a revoked-row that the initial query filters out, then asserting that
+        # the second attempt's IntegrityError is recovered.
+        # First, insert a row with revoked_at set so the lookup misses it.
+        prior = CampaignInviteLink(
+            workspace_id=ws.id, campaign_id=c.id, source_tag=c.source_tag,
+            channel_id=-1001, invite_link="https://t.me/+revoked",
+            invite_link_hash="revoked", created_at=datetime.utcnow(),
+            revoked_at=datetime.utcnow(),
+        )
+        db.add(prior); db.commit()
+
+        client = _MockExportInviteClient(link="https://t.me/+SHOULD_COLLIDE")
+        got = asyncio.run(mint_invite_link(ws, c, db, client, channel_id=-1001))
+        ok1 = check(f"returns a row instead of raising (got {got is not None})", got is not None)
+        # The recovery query returns the row that wins the constraint — that's the prior (revoked) row.
+        ok2 = check(
+            f"recovery returns the existing (revoked) row (got hash={got.invite_link_hash!r})",
+            got.invite_link_hash == "revoked",
+        )
+        return ok1 and ok2
+    finally:
+        db.close()
+
+
 def main():
     results = [
         test_extract_hash_https_form(),
@@ -231,6 +277,7 @@ def main():
         test_mint_creates_row_first_call(),
         test_mint_idempotent(),
         test_mint_returns_none_on_telethon_failure(),
+        test_mint_recovers_from_integrity_error_race(),
     ]
     passed = sum(results); total = len(results)
     print(f"\n{'='*45}")

@@ -15,7 +15,10 @@ import re
 from datetime import datetime, timedelta
 from typing import Optional
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+
+from telethon.tl.functions.messages import ExportChatInviteRequest
 
 from app.database.models import (
     CampaignInviteLink, Campaign, ChannelJoinEvent, Contact, Workspace,
@@ -85,9 +88,6 @@ async def mint_invite_link(
 
     Idempotent — repeat calls reuse the cached row. Returns None if Telethon
     fails (rate limit, kicked from channel, etc.); caller should surface 502.
-
-    The Telethon import is inside the function so test files don't have to
-    install Telethon to import this module.
     """
     existing = (
         db.query(CampaignInviteLink)
@@ -101,18 +101,15 @@ async def mint_invite_link(
         return existing
 
     try:
-        from telethon.tl.functions.messages import ExportChatInviteRequest
+        # Telegram caps invite-link title at 32 chars.
         result = await client(ExportChatInviteRequest(
             peer=channel_id,
-            title=(campaign.name or campaign.source_tag)[:32],
+            title=(campaign.name or campaign.source_tag or "campaign")[:32],
         ))
-    except ImportError:
-        # Test path: tests pass a callable mock that ignores the request type.
-        result = await client(None)
     except Exception as exc:
         logger.warning(
-            "attribution: ExportChatInviteRequest failed for ws=%s campaign=%s: %s",
-            ws.id, campaign.source_tag, exc, exc_info=True,
+            "attribution: ExportChatInviteRequest failed for ws=%s campaign=%s (id=%s): %s",
+            ws.id, campaign.source_tag, campaign.id, exc, exc_info=True,
         )
         return None
 
@@ -135,7 +132,18 @@ async def mint_invite_link(
         created_at=datetime.utcnow(),
     )
     db.add(row)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        existing = (
+            db.query(CampaignInviteLink)
+              .filter_by(
+                  workspace_id=ws.id, campaign_id=campaign.id, channel_id=channel_id,
+              )
+              .first()
+        )
+        return existing
     db.refresh(row)
     return row
 
