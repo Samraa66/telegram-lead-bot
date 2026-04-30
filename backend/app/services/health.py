@@ -333,3 +333,64 @@ async def check_signal_forwarding(
         "id": "forwarding", "label": label, "status": "ok",
         "detail": f"Source channel set; bot has access to all {len(destinations)} destinations.",
     }
+
+
+async def check_meta(ws: Optional[Workspace], http) -> dict:
+    """
+    Verify the Meta access token is valid AND has ads_management permission.
+    Missing ads_management is critical because CAPI rejection kills
+    conversion-based ad optimisation.
+    """
+    label = "Meta Ads"
+    meta_token = ws.meta_access_token if ws else None
+    if not meta_token:
+        return {
+            "id": "meta", "label": label, "status": "warn",
+            "detail": "Not connected — campaign analytics and CAPI events won't run.",
+            "action": "Settings → Meta Ads",
+        }
+
+    cache_key = ("meta_me", _hash_token(meta_token))
+    data = _probe_cache.get(cache_key)
+    if data is None:
+        try:
+            url = (
+                f"{GRAPH_BASE}/me?fields=id,name,permissions"
+                f"&access_token={urllib.parse.quote(meta_token)}"
+            )
+            r = await http.get(url)
+            data = r.json()
+            _probe_cache.set(cache_key, data)
+        except (httpx.TimeoutException, httpx.NetworkError, httpx.HTTPError):
+            return {
+                "id": "meta", "label": label, "status": "warn",
+                "detail": "Could not reach Meta Graph API right now (will retry).",
+                "action": "If this persists, check VPS network/DNS",
+            }
+
+    if "error" in data:
+        msg = data["error"].get("message", "Token rejected by Meta")
+        return {
+            "id": "meta", "label": label, "status": "error",
+            "detail": f"Meta rejected the access token: {msg}",
+            "action": "Settings → Meta Ads — regenerate token",
+        }
+
+    perms_block = data.get("permissions", {}).get("data", []) or []
+    granted = {p.get("permission") for p in perms_block if p.get("status") == "granted"}
+    if "ads_management" not in granted:
+        return {
+            "id": "meta", "label": label, "status": "error",
+            "detail": "Token missing ads_management — CAPI events will be rejected; ads cannot optimise on conversion.",
+            "action": "Settings → Meta Ads — regenerate token with ads_management scope",
+        }
+
+    detail = "Connected"
+    if ws and ws.landing_page_url:
+        detail += " · landing page set"
+    else:
+        detail += " · no landing page URL yet"
+    return {
+        "id": "meta", "label": label, "status": "ok",
+        "detail": detail + ".",
+    }
