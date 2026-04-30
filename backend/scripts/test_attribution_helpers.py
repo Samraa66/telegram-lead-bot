@@ -7,6 +7,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ.setdefault("APP_ENV", "development")
 os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
 
+from datetime import datetime
+
 from app.services.attribution import _extract_hash
 from app.database.models import Workspace
 
@@ -123,6 +125,97 @@ def test_resolve_returns_none_when_client_is_none():
     return check(f"returns None (got {got!r})", got is None)
 
 
+class _MockExportInviteClient:
+    """
+    Mocks Telethon's call(ExportChatInviteRequest(...)) call pattern.
+    Returns a canned object with `.link` set to the provided URL.
+    """
+    def __init__(self, *, link=None, raises=None):
+        self._link = link
+        self._raises = raises
+        self.calls = []
+
+    async def __call__(self, request):
+        self.calls.append(request)
+        if self._raises:
+            raise self._raises
+        return type("Inv", (), {"link": self._link})()
+
+
+def _ensure_campaign(db, *, source_tag="cmp_test"):
+    from app.database.models import Campaign
+    c = db.query(Campaign).filter(Campaign.source_tag == source_tag).first()
+    if c is None:
+        c = Campaign(source_tag=source_tag, name="t", is_active=True)
+        db.add(c); db.commit(); db.refresh(c)
+    return c
+
+
+def test_mint_creates_row_first_call():
+    print("\n=== Test 11: first call creates a CampaignInviteLink row ===")
+    import asyncio
+    from app.services.attribution import mint_invite_link
+    from app.database import init_db, SessionLocal
+    from app.database.models import CampaignInviteLink
+    init_db()
+    db = SessionLocal()
+    try:
+        ws = db.query(Workspace).filter(Workspace.id == 1).first()
+        c = _ensure_campaign(db, source_tag="cmp_mint1")
+        client = _MockExportInviteClient(link="https://t.me/+abc1XYZ")
+        got = asyncio.run(mint_invite_link(ws, c, db, client, channel_id=-1001))
+        ok1 = check(f"returned link object", got is not None and got.invite_link == "https://t.me/+abc1XYZ")
+        ok2 = check(f"hash extracted = abc1XYZ (got {got.invite_link_hash!r})", got.invite_link_hash == "abc1XYZ")
+        cnt = db.query(CampaignInviteLink).filter_by(campaign_id=c.id).count()
+        ok3 = check(f"one row in db (got {cnt})", cnt == 1)
+        return ok1 and ok2 and ok3
+    finally:
+        db.close()
+
+
+def test_mint_idempotent():
+    print("\n=== Test 12: second call reuses existing row, doesn't call Telethon again ===")
+    import asyncio
+    from app.services.attribution import mint_invite_link
+    from app.database import init_db, SessionLocal
+    from app.database.models import CampaignInviteLink
+    init_db()
+    db = SessionLocal()
+    try:
+        ws = db.query(Workspace).filter(Workspace.id == 1).first()
+        c = _ensure_campaign(db, source_tag="cmp_mint2")
+        existing = CampaignInviteLink(
+            workspace_id=ws.id, campaign_id=c.id, source_tag=c.source_tag,
+            channel_id=-1001, invite_link="https://t.me/+pre",
+            invite_link_hash="pre", created_at=datetime.utcnow(),
+        )
+        db.add(existing); db.commit()
+        client = _MockExportInviteClient(link="https://t.me/+SHOULD_NOT_BE_USED")
+        got = asyncio.run(mint_invite_link(ws, c, db, client, channel_id=-1001))
+        ok1 = check(f"returns existing row (link={got.invite_link!r})", got.invite_link == "https://t.me/+pre")
+        ok2 = check(f"client not invoked (got {len(client.calls)} calls)", len(client.calls) == 0)
+        return ok1 and ok2
+    finally:
+        db.close()
+
+
+def test_mint_returns_none_on_telethon_failure():
+    print("\n=== Test 13: returns None when Telethon raises ===")
+    import asyncio
+    from app.services.attribution import mint_invite_link
+    from app.database import init_db, SessionLocal
+    init_db()
+    db = SessionLocal()
+    try:
+        ws = db.query(Workspace).filter(Workspace.id == 1).first()
+        c = _ensure_campaign(db, source_tag="cmp_mint3")
+        client = _MockExportInviteClient(raises=ValueError("flood"))
+        got = asyncio.run(mint_invite_link(ws, c, db, client, channel_id=-1001))
+        return check(f"returns None (got {got!r})", got is None)
+    finally:
+        db.close()
+
+
 def main():
     results = [
         test_extract_hash_https_form(),
@@ -135,6 +228,9 @@ def main():
         test_resolve_returns_none_on_missing_url(),
         test_resolve_returns_none_on_telethon_failure(),
         test_resolve_returns_none_when_client_is_none(),
+        test_mint_creates_row_first_call(),
+        test_mint_idempotent(),
+        test_mint_returns_none_on_telethon_failure(),
     ]
     passed = sum(results); total = len(results)
     print(f"\n{'='*45}")

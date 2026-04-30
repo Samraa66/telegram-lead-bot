@@ -76,7 +76,70 @@ async def resolve_attribution_channel(
     return chan_id
 
 
-# mint_invite_link — Task 5
+async def mint_invite_link(
+    ws: Workspace, campaign: Campaign, db: Session, client, *, channel_id: int,
+) -> Optional[CampaignInviteLink]:
+    """
+    Return the CampaignInviteLink for (workspace, campaign), minting one via
+    Telethon's ExportChatInviteRequest if it doesn't exist yet.
+
+    Idempotent — repeat calls reuse the cached row. Returns None if Telethon
+    fails (rate limit, kicked from channel, etc.); caller should surface 502.
+
+    The Telethon import is inside the function so test files don't have to
+    install Telethon to import this module.
+    """
+    existing = (
+        db.query(CampaignInviteLink)
+          .filter_by(
+              workspace_id=ws.id, campaign_id=campaign.id, channel_id=channel_id,
+          )
+          .filter(CampaignInviteLink.revoked_at.is_(None))
+          .first()
+    )
+    if existing is not None:
+        return existing
+
+    try:
+        from telethon.tl.functions.messages import ExportChatInviteRequest
+        result = await client(ExportChatInviteRequest(
+            peer=channel_id,
+            title=(campaign.name or campaign.source_tag)[:32],
+        ))
+    except ImportError:
+        # Test path: tests pass a callable mock that ignores the request type.
+        result = await client(None)
+    except Exception as exc:
+        logger.warning(
+            "attribution: ExportChatInviteRequest failed for ws=%s campaign=%s: %s",
+            ws.id, campaign.source_tag, exc, exc_info=True,
+        )
+        return None
+
+    link = getattr(result, "link", None)
+    if not link:
+        return None
+
+    invite_hash = _extract_hash(link)
+    if not invite_hash:
+        logger.warning("attribution: could not extract hash from %r", link)
+        return None
+
+    row = CampaignInviteLink(
+        workspace_id=ws.id,
+        campaign_id=campaign.id,
+        source_tag=campaign.source_tag,
+        channel_id=channel_id,
+        invite_link=link,
+        invite_link_hash=invite_hash,
+        created_at=datetime.utcnow(),
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return row
+
+
 # handle_channel_join — Task 7
 # claim_pending_attribution — Task 9
 # cleanup_old_join_events — Task 10
