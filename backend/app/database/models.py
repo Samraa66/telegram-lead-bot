@@ -13,7 +13,7 @@ User = Contact alias kept so existing code that imports User continues to work.
 
 from datetime import date, datetime
 
-from sqlalchemy import BigInteger, Boolean, Column, Date, DateTime, Float, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import BigInteger, Boolean, Column, Date, DateTime, Float, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.orm import relationship
 from sqlalchemy.ext.declarative import declarative_base
 
@@ -587,3 +587,66 @@ class AppMeta(Base):
     key = Column(String(64), primary_key=True)
     value = Column(Text, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class CampaignInviteLink(Base):
+    """
+    Per-(workspace, campaign, channel) Telegram invite link for attribution.
+    One row per campaign+channel combination — minted lazily on the first
+    /attribution/invite call, reused thereafter (idempotent).
+    invite_link_hash stores the unique suffix after the '+' in t.me/+<hash>
+    for fast reverse-lookup when a join event arrives.
+    """
+
+    __tablename__ = "campaign_invite_links"
+    __table_args__ = (
+        UniqueConstraint(
+            "workspace_id", "campaign_id", "channel_id",
+            name="uq_invite_per_campaign",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True)
+    workspace_id = Column(Integer, ForeignKey("workspaces.id"), nullable=False, index=True)
+    campaign_id = Column(Integer, ForeignKey("campaigns.id"), nullable=False)
+    source_tag = Column(String(255), nullable=False, index=True)  # denormalised from campaigns.source_tag
+    channel_id = Column(BigInteger, nullable=False)
+    invite_link = Column(Text, nullable=False)              # full https://t.me/+abc123
+    invite_link_hash = Column(String(64), nullable=False, index=True)  # suffix after the +
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    revoked_at = Column(DateTime, nullable=True)
+
+
+class ChannelJoinEvent(Base):
+    """
+    Append-only log of channel-join events for attribution.
+    A row is inserted by the Telethon ChatAction handler on every join we observe.
+    Claimed when the user later DMs the bot — claimed_contact_id + claimed_at
+    track the join-to-contact attribution mapping.
+
+    Cleanup: services/attribution.py:cleanup_old_join_events deletes rows
+    older than 90 days where claimed_contact_id IS NULL.
+    """
+
+    __tablename__ = "channel_join_events"
+
+    id = Column(Integer, primary_key=True)
+    workspace_id = Column(Integer, ForeignKey("workspaces.id"), nullable=False)
+    telegram_user_id = Column(BigInteger, nullable=False)
+    channel_id = Column(BigInteger, nullable=False)
+    source_tag = Column(String(255), nullable=True)         # NULL for organic joins (recorded for analytics)
+    invite_link_hash = Column(String(64), nullable=True)
+    joined_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    claimed_contact_id = Column(BigInteger, ForeignKey("contacts.id"), nullable=True)  # BigInteger matches contacts.id
+    claimed_at = Column(DateTime, nullable=True)
+
+
+# Index supporting last-touch lookup at claim time.
+Index(
+    "idx_join_events_user_lookup",
+    ChannelJoinEvent.workspace_id,
+    ChannelJoinEvent.telegram_user_id,
+    ChannelJoinEvent.joined_at.desc(),
+)
+# Index supporting TTL cleanup query.
+Index("idx_join_events_ttl", ChannelJoinEvent.joined_at)
