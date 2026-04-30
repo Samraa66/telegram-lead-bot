@@ -184,7 +184,7 @@ export default function Login() {
           <form className="space-y-4" onSubmit={handleSubmit}>
             <div className="space-y-1.5">
               <label className="block text-xs font-medium text-muted-foreground">
-                Username
+                Email or username
               </label>
               <input
                 type="text"
@@ -192,7 +192,7 @@ export default function Login() {
                 autoComplete="username"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
-                placeholder="Enter username"
+                placeholder="you@example.com"
                 required
                 className="w-full h-10 rounded-lg px-3.5 text-sm text-foreground placeholder:text-muted-foreground/60 bg-secondary/40 border border-border focus:border-primary focus:ring-2 focus:ring-primary/25 outline-none transition-colors"
               />
@@ -227,6 +227,12 @@ export default function Login() {
               {loading ? "Signing in…" : "Sign in"}
             </button>
           </form>
+
+          <p className="text-center text-xs text-muted-foreground">
+            <Link to="/forgot-password" className="text-primary hover:underline">
+              Forgot password?
+            </Link>
+          </p>
 
           <p className="text-center text-xs text-muted-foreground">
             Don't have an account?{" "}

@@ -10,6 +10,7 @@ import SettingsPage from "./pages/SettingsPage";
 import OnboardingPage from "./pages/OnboardingPage";
 import InvitePage from "./pages/InvitePage";
 import SignupPage from "./pages/SignupPage";
+import ForgotPasswordPage from "./pages/ForgotPasswordPage";
 import AffiliateInvitePage from "./pages/AffiliateInvitePage";
 
 function PrivateRoute({ element, roles }: { element: React.ReactElement; roles?: string[] }) {
@@ -36,6 +37,7 @@ const App = () => (
     <Routes>
       <Route path="/login" element={<Login />} />
       <Route path="/signup" element={<SignupPage />} />
+      <Route path="/forgot-password" element={<ForgotPasswordPage />} />
       <Route path="/affiliate-invite/:token" element={<AffiliateInvitePage />} />
       <Route path="/invite/:token" element={<InvitePage />} />
       <Route path="/onboarding" element={<OnboardingRoute element={<OnboardingPage />} />} />
