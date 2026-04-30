@@ -224,6 +224,38 @@ def test_403_when_landing_page_url_unset():
     return check(f"status=403 (got {r.status_code})", r.status_code == 403)
 
 
+def test_200_dashboard_origin_allowed():
+    print("\n=== Test 9: 200 when Origin is the dashboard's own host (APP_BASE_URL) ===")
+    os.environ["APP_BASE_URL"] = "https://telelytics.org"
+    # Force config reload so the helper sees the new APP_BASE_URL.
+    import importlib, app.config as _cfg
+    importlib.reload(_cfg)
+    _setup_ws(landing_url="https://lp.example.com")  # dashboard origin shouldn't need landing match
+    _ensure_campaign(source_tag="cmp_dash")
+    saved = _patch_attribution({"resolve": -1001, "mint": _stub_link("https://t.me/+dash")})
+    try:
+        r = _client().get("/attribution/invite",
+                          params={"workspace_id": 1, "src": "cmp_dash"},
+                          headers={"Origin": "https://telelytics.org"})
+    finally:
+        _restore_attribution(saved)
+    return check(f"status=200 (got {r.status_code})", r.status_code == 200)
+
+
+def test_200_localhost_dev_origin_allowed():
+    print("\n=== Test 10: 200 when Origin is localhost (dev) ===")
+    _setup_ws(landing_url="https://lp.example.com")
+    _ensure_campaign(source_tag="cmp_dev")
+    saved = _patch_attribution({"resolve": -1001, "mint": _stub_link("https://t.me/+dev")})
+    try:
+        r = _client().get("/attribution/invite",
+                          params={"workspace_id": 1, "src": "cmp_dev"},
+                          headers={"Origin": "http://localhost:5173"})
+    finally:
+        _restore_attribution(saved)
+    return check(f"status=200 (got {r.status_code})", r.status_code == 200)
+
+
 def main():
     results = [
         test_403_when_origin_not_allowed(),
@@ -234,6 +266,8 @@ def main():
         test_200_www_variant_allowed(),
         test_404_inactive_campaign(),
         test_403_when_landing_page_url_unset(),
+        test_200_dashboard_origin_allowed(),
+        test_200_localhost_dev_origin_allowed(),
     ]
     passed = sum(results); total = len(results)
     print(f"\n{'='*45}")

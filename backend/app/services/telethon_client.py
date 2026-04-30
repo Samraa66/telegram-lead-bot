@@ -330,8 +330,12 @@ async def start_workspace_client(
             )
 
     # Attribution channel join handler — Spec B.
-    # Bound only when the workspace has resolved an attribution_channel_id.
-    if ws and ws.attribution_channel_id:
+    # Registered unconditionally for any workspace that runs Telethon. The handler
+    # itself looks up Workspace.attribution_channel_id on each event and silently
+    # ignores joins to channels that aren't a workspace's attribution channel —
+    # so this is safe even before resolve_attribution_channel has lazily populated
+    # the column, and avoids a re-registration cycle when it does.
+    if ws:
         from app.services.attribution import handle_channel_join
 
         async def _on_chat_action(event):
@@ -343,9 +347,9 @@ async def start_workspace_client(
             finally:
                 db_local.close()
 
-        client.add_event_handler(_on_chat_action, events.ChatAction(chats=[int(ws.attribution_channel_id)]))
+        client.add_event_handler(_on_chat_action, events.ChatAction())
         logger.info(
-            "Registered attribution join handler for ws=%s on channel=%s",
+            "Registered attribution join handler for ws=%s (channel=%s)",
             workspace_id, ws.attribution_channel_id,
         )
 

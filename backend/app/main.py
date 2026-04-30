@@ -1675,6 +1675,7 @@ def create_campaign(
 
     source_tag = "cmp_" + uuid.uuid4().hex[:8]
     campaign = Campaign(
+        workspace_id=workspace_id,
         source_tag=source_tag,
         name=req.name.strip(),
         meta_campaign_id=req.meta_campaign_id,
@@ -1718,7 +1719,12 @@ def list_campaigns(
     ws = db.query(Workspace).filter(Workspace.id == workspace_id).first()
     landing_base = (ws.landing_page_url or "").strip().rstrip("/") if ws else ""
 
-    campaigns = db.query(Campaign).order_by(Campaign.created_at.desc()).all()
+    campaigns = (
+        db.query(Campaign)
+          .filter(Campaign.workspace_id == workspace_id)
+          .order_by(Campaign.created_at.desc())
+          .all()
+    )
     result = []
     for c in campaigns:
         leads = db.query(Contact).filter(Contact.source == c.source_tag).count()
@@ -1788,16 +1794,46 @@ async def health_workspace(
 
 
 def _origin_allowed_for_workspace(origin: str, landing_page_url: Optional[str]) -> bool:
-    """True if `origin` matches the host parsed from `landing_page_url` (or its www. variant)."""
-    if not origin or not landing_page_url:
+    """
+    True if `origin` matches one of:
+      - the host parsed from `landing_page_url` (or its www. variant) — the
+        external landing page calling /attribution/invite
+      - the dashboard's own origin (APP_BASE_URL host) — the workspace owner
+        previewing the link from inside Telelytics
+      - localhost on the Vite dev port — frontend development
+    """
+    if not origin:
         return False
     try:
         from urllib.parse import urlparse
-        lp_host = (urlparse(landing_page_url).hostname or "").lower()
         og_host = (urlparse(origin).hostname or "").lower()
     except Exception:
         return False
-    if not lp_host or not og_host:
+    if not og_host:
+        return False
+
+    # 1. Dashboard origin (same-origin admin previews).
+    try:
+        from app.config import APP_BASE_URL
+        dashboard_host = (urlparse(APP_BASE_URL).hostname or "").lower() if APP_BASE_URL else ""
+    except Exception:
+        dashboard_host = ""
+    if dashboard_host and (og_host == dashboard_host or og_host == f"www.{dashboard_host}"):
+        return True
+
+    # 2. Local dev (Vite default port).
+    if og_host == "localhost" or og_host == "127.0.0.1":
+        return True
+
+    # 3. Workspace's configured landing page.
+    if not landing_page_url:
+        return False
+    try:
+        from urllib.parse import urlparse as _u
+        lp_host = (_u(landing_page_url).hostname or "").lower()
+    except Exception:
+        return False
+    if not lp_host:
         return False
     return og_host == lp_host or og_host == f"www.{lp_host}" or lp_host == f"www.{og_host}"
 
@@ -1834,7 +1870,11 @@ async def attribution_invite(
 
     campaign = (
         db.query(Campaign)
-          .filter(Campaign.source_tag == src, Campaign.is_active == True)  # noqa: E712
+          .filter(
+              Campaign.source_tag == src,
+              Campaign.workspace_id == workspace_id,
+              Campaign.is_active == True,  # noqa: E712
+          )
           .first()
     )
     if not campaign:
