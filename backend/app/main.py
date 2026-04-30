@@ -395,21 +395,96 @@ def list_workspaces(
     db: Session = Depends(get_db),
     _=Depends(require_roles("developer")),
 ):
-    """List all workspaces (developer only)."""
-    from app.database.models import Workspace
+    """List all workspaces (developer only). Includes owner email so the
+    developer's workspace switcher can show 'Org Name — owner@email'."""
+    from app.database.models import Account, Organization, Workspace
     from app.services.telethon_client import get_client
+
     rows = db.query(Workspace).order_by(Workspace.id).all()
-    return [
-        {
+    out = []
+    for ws in rows:
+        owner = (
+            db.query(Account)
+              .filter(Account.workspace_id == ws.id, Account.is_active.is_(True))
+              .order_by(Account.id.asc())
+              .first()
+        )
+        org = db.query(Organization).filter(Organization.id == ws.org_id).first() if ws.org_id else None
+        out.append({
             "id": ws.id,
             "name": ws.name,
+            "org_id": ws.org_id,
+            "org_name": org.name if org else None,
+            "owner_email": owner.email if owner else None,
+            "owner_account_id": owner.id if owner else None,
+            "onboarding_complete": bool(ws.onboarding_complete),
             "created_at": ws.created_at.isoformat() if ws.created_at else None,
             "has_telethon": get_client(ws.id) is not None,
             "has_meta": bool(ws.meta_access_token),
             "has_bot_token": bool(ws.bot_token),
-        }
-        for ws in rows
-    ]
+        })
+    return out
+
+
+@app.post("/admin/impersonate/{workspace_id}")
+def admin_impersonate(
+    workspace_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    _=Depends(require_roles("developer")),
+):
+    """
+    Developer-only impersonation. Mints a JWT for the org-owner Account of the
+    target workspace so the developer can see exactly what that customer sees.
+    Audit-logged. Caller must already be authenticated as developer.
+    """
+    from app.database.models import Account, Workspace
+    from app.auth import create_access_token
+    from app.services.audit import log_audit
+
+    ws = db.query(Workspace).filter(Workspace.id == workspace_id).first()
+    if not ws:
+        raise HTTPException(status_code=404, detail="workspace not found")
+
+    acct = (
+        db.query(Account)
+          .filter(Account.workspace_id == workspace_id, Account.is_active.is_(True))
+          .order_by(Account.id.asc())
+          .first()
+    )
+    if not acct:
+        raise HTTPException(
+            status_code=404,
+            detail="no active Account row for this workspace; cannot impersonate",
+        )
+
+    org_role = acct.org_role or "org_owner"
+    token = create_access_token(
+        acct.email, acct.role,
+        workspace_id=ws.id,
+        org_id=ws.org_id,
+        org_role=org_role,
+        account_id=acct.id,
+    )
+
+    log_audit(
+        db, action="admin.impersonate", request=request,
+        target_type="workspace", target_id=ws.id,
+        detail=f"impersonating {acct.email} (account_id={acct.id})",
+    )
+
+    return {
+        "access_token": token,
+        "role": acct.role,
+        "username": acct.email,
+        "workspace_id": ws.id,
+        "workspace_name": ws.name,
+        "org_id": ws.org_id,
+        "org_role": org_role,
+        "account_id": acct.id,
+        "onboarding_complete": bool(ws.onboarding_complete),
+        "parent_bot_username": None,
+    }
 
 
 @app.post("/workspaces", status_code=201)

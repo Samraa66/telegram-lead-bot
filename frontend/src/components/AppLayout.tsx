@@ -1,5 +1,6 @@
 import { ReactNode, useState } from "react";
 import AppSidebar from "./AppSidebar";
+import DevWorkspaceSwitcher from "./DevWorkspaceSwitcher";
 import { Menu } from "lucide-react";
 import { useLocation } from "react-router-dom";
 
@@ -70,9 +71,12 @@ const AppLayout = ({ children, bare = false, title, subtitle }: AppLayoutProps) 
             children
           ) : (
             <div className="mx-auto w-full max-w-[1200px] px-5 md:px-8 py-6 md:py-8">
-              <header className="mb-6 md:mb-8 hidden md:block">
-                <h1 className="page-heading text-2xl">{resolvedTitle}</h1>
-                {resolvedSubtitle && <p className="page-subheading">{resolvedSubtitle}</p>}
+              <header className="mb-6 md:mb-8 hidden md:flex md:items-start md:justify-between gap-4">
+                <div>
+                  <h1 className="page-heading text-2xl">{resolvedTitle}</h1>
+                  {resolvedSubtitle && <p className="page-subheading">{resolvedSubtitle}</p>}
+                </div>
+                <DevWorkspaceSwitcher />
               </header>
               {children}
             </div>
