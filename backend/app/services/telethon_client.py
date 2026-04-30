@@ -329,6 +329,26 @@ async def start_workspace_client(
                 workspace_id, source_id_int,
             )
 
+    # Attribution channel join handler — Spec B.
+    # Bound only when the workspace has resolved an attribution_channel_id.
+    if ws and ws.attribution_channel_id:
+        from app.services.attribution import handle_channel_join
+
+        async def _on_chat_action(event):
+            db_local = SessionLocal()
+            try:
+                await handle_channel_join(event, db_local)
+            except Exception:
+                logger.exception("attribution: handle_channel_join failed for ws=%s", workspace_id)
+            finally:
+                db_local.close()
+
+        client.add_event_handler(_on_chat_action, events.ChatAction(chats=[int(ws.attribution_channel_id)]))
+        logger.info(
+            "Registered attribution join handler for ws=%s on channel=%s",
+            workspace_id, ws.attribution_channel_id,
+        )
+
     await client.connect()
     if not await client.is_user_authorized():
         logger.warning("Telethon session not authorized for ws=%s", workspace_id)
